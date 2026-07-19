@@ -4,14 +4,16 @@ pre-commit:
   parallel: true
   commands:
     ruff:
-      run: uv run ruff check --fix {staged_files}
+      glob: "*.py"
+      run: ~/.local/bin/uv run ruff check --fix {staged_files}
       stage_fixed: true
     ruff-format:
-      run: uv run ruff format {staged_files}
+      glob: "*.py"
+      run: ~/.local/bin/uv run ruff format {staged_files}
       stage_fixed: true
 
 pre-push:
   parallel: false
   commands:
     test:
-      run: uv run pytest tests/ -v
+      run: ~/.local/bin/uv run pytest tests/ -v
