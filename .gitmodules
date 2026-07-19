@@ -1,0 +1,15 @@
+[submodule "references/openevolve"]
+	path = references/openevolve
+	url = https://github.com/codelion/openevolve
+[submodule "references/EvoX"]
+	path = references/EvoX
+	url = https://github.com/EMI-Group/EvoX
+[submodule "references/MLEvolve"]
+	path = references/MLEvolve
+	url = https://github.com/InternScience/MLEvolve
+[submodule "references/ShinkaEvolve"]
+	path = references/ShinkaEvolve
+	url = https://github.com/SakanaAI/ShinkaEvolve
+[submodule "references/DGM"]
+	path = references/DGM
+	url = https://github.com/jennyzzt/dgm
