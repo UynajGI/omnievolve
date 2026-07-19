@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://json.schemastore.org/lefthook.json
+
+pre-commit:
+  parallel: true
+  commands:
+    ruff:
+      run: uv run ruff check --fix {staged_files}
+      stage_fixed: true
+    ruff-format:
+      run: uv run ruff format {staged_files}
+      stage_fixed: true
+
+pre-push:
+  parallel: false
+  commands:
+    test:
+      run: uv run pytest tests/ -v

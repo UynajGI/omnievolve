@@ -1,0 +1,28 @@
+{
+  "private": true,
+  "name": "omnievolve",
+  "scripts": {
+    "postinstall": "lefthook install"
+  },
+  "devDependencies": {
+    "@evilmartians/lefthook": "^2.1.10"
+  }
+}
+{
+  "name": "omnievolve",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@evilmartians/lefthook": "^2.1.10"
+  }
+}
