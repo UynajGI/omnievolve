@@ -43,7 +43,7 @@ extend-exclude = ["*.sql", "*.yml", "*.yaml", "*.toml"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501", "UP046"]  # E501: 行长度对 SQL 不实用; UP046: Generic[T] 更兼容
+ignore = ["E501", "UP046", "UP042"]  # E501: 行长度; UP046: Generic; UP042: str+Enum 兼容
 
 [tool.pytest.ini_options]
 minversion = "8.0"
