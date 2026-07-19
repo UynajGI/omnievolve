@@ -166,3 +166,6 @@ lefthook-local.yml
 logs/
 temp/
 tmp/
+
+# IDE / Agent
+.agents/

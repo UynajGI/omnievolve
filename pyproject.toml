@@ -1,20 +1,40 @@
 [project]
 name = "omnievolve"
 version = "0.1.0"
-description = "OmniEvolve - 受控元进化框架"
+description = "OmniEvolve - 受控元进化框架 (Controlled Meta-Evolution Framework)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "litellm>=1.40",
+    "networkx>=3.2",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "typer>=0.9",
+    "rich>=13.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+vector = ["zvec>=0.3"]
+local-embed = ["sentence-transformers>=2.3"]
+docker = ["docker>=7.0"]
+viz = ["pyvis>=0.3"]
+tuning = ["optuna>=3.6"]
+
+[project.scripts]
+omnievolve = "omnievolve.cli:app"
 
 [dependency-groups]
 dev = [
     "ruff>=0.9",
     "pytest>=8.0",
     "pytest-cov>=6.0",
+    "pytest-xdist>=3.5",
+    "hypothesis>=6.100",
+    "mypy>=1.10",
+    "marker-pdf>=1.6.1",
+    "pymupdf>=1.28.0",
 ]
-
-[project.scripts]
-omnievolve = "omnievolve.main:main"
 
 [tool.ruff]
 target-version = "py312"
