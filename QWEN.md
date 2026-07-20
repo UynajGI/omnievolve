@@ -6,7 +6,7 @@
 
 ```bash
 # Test
-.venv/bin/python -m pytest -q                    # 180 tests
+.venv/bin/python -m pytest -q                    # 188 tests
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
 # Lint / type
@@ -16,6 +16,10 @@
 # Run
 .venv/bin/python -m omnievolve.cli run <task.py> -e <module:Class> -c omnievolve.toml --trusted --gens 10
 .venv/bin/python -m omnievolve.cli doctor        # env check
+
+# Docker sandbox
+docker build -t omnievolve/sandbox:latest .      # build sandbox image
+.venv/bin/python -m omnievolve.cli run <task.py> -e <eval> -c omnievolve.toml --gens 30  # with Docker
 ```
 
 Python 3.12+. Virtualenv at `.venv/`. Config example at `configs/omnievolve.toml.example`.
@@ -38,7 +42,9 @@ docs/         User-facing docs (NOT project-design specs)
 docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
 reports/      Phase acceptance reports
 examples/     python_optimization demo project
-tests/        180 tests across 11 files
+tests/        188 tests across 11 files
+Dockerfile    Sandbox image (python:3.12-slim, non-root user)
+.github/      CI workflow (ruff + mypy + pytest + docker build)
 ```
 
 ## Design red-lines (do not cross)
