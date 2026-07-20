@@ -107,20 +107,24 @@ class BackendRegistry:
     def get_default_backend(self, **kwargs: Any) -> tuple[str, SandboxBackend]:
         """获取默认可用后端.
 
-        优先级：docker > monty > hardened > trusted_subprocess
-
-        注意：不会静默降级到 trusted_subprocess，
-        如果 Docker 不可用会尝试 Monty，仍不可用则抛出异常。
+        优先级：trusted_subprocess（本地）> docker > monty
 
         Returns:
             (后端名称, 后端实例)
         """
+        # 尝试本地（默认）
+        try:
+            backend = self.get_backend("trusted_subprocess", trusted=True, **kwargs)
+            return "trusted_subprocess", backend
+        except SandboxSetupError:
+            pass
+
         # 尝试 Docker
         try:
             backend = self.get_backend("docker", **kwargs)
             return "docker", backend
-        except SandboxSetupError as e:
-            docker_error = str(e)
+        except SandboxSetupError:
+            pass
 
         # 尝试 Monty
         try:
@@ -131,12 +135,11 @@ class BackendRegistry:
 
         # 都不可用
         raise SandboxSetupError(
-            f"Docker backend is not available: {docker_error}\n\n"
+            "No sandbox backend available.\n\n"
             "Options:\n"
-            "1. Install and start Docker\n"
-            "2. pip install omnievolve[monty] for Monty (fast Rust sandbox)\n"
+            "1. Install and start Docker: pip install omnievolve[docker]\n"
+            "2. pip install omnievolve[monty] for Monty (Rust sandbox)\n"
             "3. Use --trusted flag for TrustedSubprocessBackend (NOT SECURE)\n"
-            "4. Configure a hardened backend\n\n"
             "Run 'omnievolve doctor' for detailed diagnostics."
         )
 
@@ -170,8 +173,8 @@ def create_backend(
     """创建沙箱后端的便捷函数.
 
     Args:
-        backend_type: 后端类型 (docker / monty / trusted_subprocess)
-        trusted: 是否启用 trusted 模式（仅用于 trusted_subprocess）
+        backend_type: 后端类型 (trusted_subprocess / docker / monty)
+        trusted: 是否启用 trusted 模式（trusted_subprocess 自动启用）
         **kwargs: 后端参数
 
     Returns:
@@ -180,11 +183,6 @@ def create_backend(
     register_default_backends()
 
     if backend_type == "trusted_subprocess":
-        if not trusted:
-            raise ValueError(
-                "TrustedSubprocessBackend requires --trusted flag. "
-                "This backend does NOT provide security isolation."
-            )
         return _registry.get_backend("trusted_subprocess", trusted=True, **kwargs)
 
     return _registry.get_backend(backend_type, **kwargs)

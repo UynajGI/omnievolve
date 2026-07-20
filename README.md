@@ -79,11 +79,18 @@ class MyEvaluator:
 ### 3. 运行进化
 
 ```bash
-# Docker 安全模式（默认）
+# 本地模式（默认，无需 Docker）
 omnievolve run ./initial_code.py \
     --evaluator my_evaluator:MyEvaluator \
     --config omnievolve.toml \
     --gens 30
+
+# Docker 安全模式（需 Docker daemon）
+omnievolve run ./initial_code.py \
+    --evaluator my_evaluator:MyEvaluator \
+    --config omnievolve.toml \
+    --gens 30
+# (配置文件中 sandbox.backend = "docker")
 
 # Monty 安全模式（Rust 沙箱，微秒级启动，需 pip install omnievolve[monty]）
 omnievolve run ./initial_code.py \
@@ -91,11 +98,6 @@ omnievolve run ./initial_code.py \
     --config omnievolve.toml \
     --gens 30
 # (配置文件中 sandbox.backend = "monty")
-
-# 可信 subprocess 模式（开发/测试用，非隔离）
-omnievolve run ./initial_code.py \
-    --evaluator my_evaluator:MyEvaluator \
-    --trusted --gens 10
 
 # 断点续跑
 omnievolve run ./initial_code.py \

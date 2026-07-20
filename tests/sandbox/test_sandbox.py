@@ -175,10 +175,10 @@ class TestBackendRegistry:
 class TestCreateBackend:
     """create_backend 便捷函数测试."""
 
-    def test_trusted_requires_flag(self):
-        """trusted_subprocess 需要 --trusted 标志."""
-        with pytest.raises(ValueError, match="--trusted"):
-            create_backend("trusted_subprocess", trusted=False)
+    def test_trusted_subprocess_auto_enables_trusted(self):
+        """trusted_subprocess 自动启用 trusted 模式."""
+        backend = create_backend("trusted_subprocess", trusted=False)
+        assert backend is not None
 
     def test_create_trusted(self, tmp_path: Path):
         """创建 trusted 后端."""

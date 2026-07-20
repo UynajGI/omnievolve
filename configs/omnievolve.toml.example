@@ -61,7 +61,7 @@ borderline_low = 0.88
 borderline_high = 0.96
 
 [sandbox]
-backend = "docker"           # docker / monty / trusted_subprocess / hardened
+backend = "trusted_subprocess"  # trusted_subprocess / docker / monty
 timeout_sec = 30
 mem_limit_mb = 512
 cpu_limit = 1.0

@@ -121,7 +121,7 @@ class TestSandboxDockerSettings:
 class TestSandboxSettings:
     def test_defaults(self):
         s = SandboxSettings()
-        assert s.backend == "docker"
+        assert s.backend == "trusted_subprocess"
         assert s.network_mode == "none"
         assert s.read_only_root is True
         assert s.run_as_non_root is True
