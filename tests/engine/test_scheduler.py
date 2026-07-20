@@ -9,6 +9,8 @@ from omnievolve.storage.job_store import JobStore
 from omnievolve.storage.migrations import initialize_database
 from omnievolve.storage.repositories.candidate_repo import CandidateRepository
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def db():

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from omnievolve.utils.seed import (
     derive_component_seed,
     get_global_seed,
@@ -11,6 +13,8 @@ from omnievolve.utils.seed import (
     seed_context,
     set_global_seed,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestSeedManager:

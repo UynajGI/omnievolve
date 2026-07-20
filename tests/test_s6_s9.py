@@ -26,6 +26,8 @@ from omnievolve.storage.vector_indexer import VectorIndexer
 from omnievolve.utils.embedding import FakeEmbedder
 from omnievolve.utils.token_counter import BudgetGuard, BudgetState, TokenCounter
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def db():

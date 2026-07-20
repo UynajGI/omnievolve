@@ -26,6 +26,8 @@ from omnievolve.eval.task_evaluator import (
 from omnievolve.storage.db import create_memory_database
 from omnievolve.storage.migrations import initialize_database
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def db():

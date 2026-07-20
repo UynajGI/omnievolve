@@ -9,6 +9,8 @@ import pytest
 from omnievolve.storage.db import Database, create_memory_database
 from omnievolve.storage.migrations import get_schema_version, initialize_database
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def db():

@@ -30,6 +30,8 @@ from omnievolve.utils.config_snapshot import (
     validate_config_snapshot,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def db():

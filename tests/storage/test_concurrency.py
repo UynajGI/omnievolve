@@ -15,6 +15,8 @@ from omnievolve.storage.db import Database
 from omnievolve.storage.migrations import initialize_database
 from omnievolve.storage.uow import UnitOfWork, atomic
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def db_path(tmp_path: Path):

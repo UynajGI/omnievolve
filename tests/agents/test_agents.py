@@ -8,6 +8,8 @@ from omnievolve.agents.critic import Critic
 from omnievolve.agents.director import Director
 from omnievolve.agents.llm_gateway import FakeLLM
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def fake_llm():

@@ -17,6 +17,8 @@ from omnievolve.sandbox.base import (
 from omnievolve.sandbox.registry import BackendRegistry, create_backend
 from omnievolve.sandbox.subprocess_backend import TrustedSubprocessBackend
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def trusted_backend(tmp_path: Path):

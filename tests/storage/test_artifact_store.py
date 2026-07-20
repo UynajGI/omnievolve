@@ -19,6 +19,8 @@ from omnievolve.utils.hashing import (
     compute_sha256_str,
 )
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def db():

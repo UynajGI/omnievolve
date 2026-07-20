@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from omnievolve.plugins.base import BasePlugin
 from omnievolve.plugins.discovery import (
     clear_plugins,
@@ -12,6 +14,8 @@ from omnievolve.plugins.discovery import (
     get_plugin,
     list_plugins,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class _TestPlugin(BasePlugin):

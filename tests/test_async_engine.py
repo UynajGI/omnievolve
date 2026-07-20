@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from omnievolve.engine.async_engine import SlotPool
+
+pytestmark = pytest.mark.unit
 
 
 def _run_async(coro):
