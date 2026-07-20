@@ -118,6 +118,14 @@ class TelemetryAggregator:
 
         return metrics
 
+    def get_total_generations(self, experiment_id: str) -> int:
+        """获取实验的总代数."""
+        row = self._db.fetchone(
+            "SELECT MAX(generation) as max_gen FROM candidate WHERE experiment_id = ?",
+            (experiment_id,),
+        )
+        return (row["max_gen"] or 0) + 1 if row else 0
+
     def _get_memory_stats(
         self,
         experiment_id: str,
@@ -235,6 +243,97 @@ class HealthPolicy:
                 "api_cost_usd": metrics.api_cost_usd,
             },
         )
+
+
+class DashboardDataExporter:
+    """健康指标仪表板数据接口.
+
+    S8-15: 实现健康指标 dashboard 数据接口
+    为外部监控工具（Grafana/Prometheus/Datadog）提供结构化指标导出。
+    """
+
+    def __init__(
+        self,
+        aggregator: TelemetryAggregator,
+        health_policy: HealthPolicy,
+    ) -> None:
+        self._aggregator = aggregator
+        self._policy = health_policy
+
+    def get_snapshot(
+        self,
+        experiment_id: str,
+        generation_start: int,
+        generation_end: int,
+    ) -> dict[str, Any]:
+        """获取当前健康快照（适合轮询/仪表板）."""
+        metrics = self._aggregator.aggregate(experiment_id, generation_start, generation_end)
+        health = self._policy.assess(metrics)
+
+        return {
+            "experiment_id": experiment_id,
+            "window": {
+                "generation_start": generation_start,
+                "generation_end": generation_end,
+            },
+            "health": {
+                "roi_score": health.roi_score,
+                "coverage_entropy": health.coverage_entropy,
+                "memory_effectiveness": health.memory_effectiveness,
+                "pollution_ratio": health.pollution_ratio,
+                "alert_level": health.alert_level.value,
+                "should_trigger_meta": health.should_trigger_meta,
+                "recommendations": health.recommendations,
+            },
+            "metrics": {
+                "total_candidates": metrics.total_candidates,
+                "total_evaluations": metrics.total_evaluations,
+                "success_rate": metrics.success_rate,
+                "api_cost_usd": metrics.api_cost_usd,
+                "frontier_improvement": metrics.frontier_improvement,
+                "wall_time_sec": metrics.wall_time_sec,
+            },
+        }
+
+    def get_timeseries(
+        self,
+        experiment_id: str,
+        window_size: int = 5,
+    ) -> list[dict[str, Any]]:
+        """获取时间序列数据（适合折线图）."""
+        snapshots: list[dict[str, Any]] = []
+        total_gens = self._aggregator.get_total_generations(experiment_id)
+
+        for gen_start in range(0, total_gens, window_size):
+            gen_end = min(gen_start + window_size, total_gens)
+            snapshot = self.get_snapshot(experiment_id, gen_start, gen_end)
+            snapshots.append(snapshot)
+
+        return snapshots
+
+    def export_prometheus(self, experiment_id: str) -> str:
+        """导出 Prometheus 格式指标."""
+        snapshot = self.get_snapshot(experiment_id, 0, 999_999)
+        lines = [
+            "# HELP omnievolve_roi_score Return-on-investment score",
+            "# TYPE omnievolve_roi_score gauge",
+            f'omnievolve_roi_score{{experiment_id="{experiment_id}"}} {snapshot["health"]["roi_score"]}',
+            "# HELP omnievolve_coverage_entropy Search space coverage entropy",
+            "# TYPE omnievolve_coverage_entropy gauge",
+            f'omnievolve_coverage_entropy{{experiment_id="{experiment_id}"}} {snapshot["health"]["coverage_entropy"]}',
+            "# HELP omnievolve_success_rate Candidate success rate",
+            "# TYPE omnievolve_success_rate gauge",
+            f'omnievolve_success_rate{{experiment_id="{experiment_id}"}} {snapshot["metrics"]["success_rate"]}',
+            "# HELP omnievolve_alert_level Current alert level (0=OK,1=WARN,2=CRITICAL)",
+            "# TYPE omnievolve_alert_level gauge",
+            f'omnievolve_alert_level{{experiment_id="{experiment_id}"}} {_alert_to_num(snapshot["health"]["alert_level"])}',
+        ]
+        return "\n".join(lines) + "\n"
+
+
+def _alert_to_num(level: str) -> int:
+    """告警级别转数字."""
+    return {"ok": 0, "warn": 1, "critical": 2}.get(level, -1)
 
 
 class SelfEvaluator:

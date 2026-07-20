@@ -174,9 +174,13 @@ Promote / Reject / Rollback
 ## 测试
 
 ```bash
-pytest -q                    # 全部 155 测试
-pytest tests/test_evolution_engine_e2e.py  # 端到端集成
-pytest tests/test_new_modules.py           # 新增模块
+pytest -q                                    # 全部 211 测试（17 文件）
+pytest -q -m "not slow"                      # 快速子集（跳过 soak）
+pytest --cov=omnievolve --cov-report=term    # 覆盖率报告（当前 61%）
+pytest tests/test_p0_quality_gates.py        # 15 个 P0 架构门
+pytest tests/test_evolution_engine_e2e.py    # 端到端集成
+pytest -m e2e                                # 所有 E2E 标记测试
+pytest -m benchmark                          # 性能基准回归
 ```
 
 ## 设计文档

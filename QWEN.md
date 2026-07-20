@@ -6,7 +6,9 @@
 
 ```bash
 # Test
-.venv/bin/python -m pytest -q                    # 188 tests
+.venv/bin/python -m pytest -q                    # 211 tests
+.venv/bin/python -m pytest -q -m "not slow"      # fast subset
+.venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
 # Lint / type
@@ -28,23 +30,25 @@ Python 3.12+. Virtualenv at `.venv/`. Config example at `configs/omnievolve.toml
 
 ```
 src/omnievolve/
-  engine/     EvolutionEngine, MCTS, selection, mutation, crossover, novelty, memory, island, scheduler
+  engine/     EvolutionEngine, AsyncEngine, MCTS, selection, mutation, crossover, novelty, memory, island, scheduler
   agents/     Director, Coder, Critic, LLMGateway, ModelRouter, ContextBuilder
   eval/       TaskEvaluator (Protocol), EvaluatorRegistry, EvaluationRun, Telemetry, HealthPolicy, Metrics
   meta/       PolicyGenome, PolicyArchive, Governance (L0/L1/L2), InfraAdapter, AuditReport, PromptEvolver
   sandbox/    DockerBackend, TrustedSubprocessBackend, HardenedBackend (Protocol: SandboxBackend)
   storage/    SQLite DB, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, JobStore, UnitOfWork
-  plugins/    BasePlugin, QuantPlugin, GeoPlugin
-  utils/      Embedding, TokenCounter, ConfigSnapshot (secret masking), Hashing
+  plugins/    BasePlugin, QuantPlugin, GeoPlugin, PluginDiscovery (namespace autoload)
+  utils/      Embedding, TokenCounter, SeedManager, ConfigSnapshot, Hashing
   cli.py      Typer CLI (run/status/best/export/policy/audit/recover/doctor)
   config.py   OmniEvolveSettings (pydantic-settings)
+  exceptions.py  类型化异常层次 (OmniEvolveError → Sandbox/LLM/Evolution/…)
 docs/         User-facing docs (NOT project-design specs)
 docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
-reports/      Phase acceptance reports
-examples/     python_optimization demo project
-tests/        188 tests across 11 files
+reports/      Phase acceptance + gap analysis reports
+examples/     python_optimization + circle_packing demo projects
+tests/        211 tests across 17 files (pytest markers: unit/integration/llm/slow/e2e/benchmark)
+uv.lock       Deterministic dependency lock (159 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
-.github/      CI workflow (ruff + mypy + pytest + docker build)
+.github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
 ```
 
 ## Design red-lines (do not cross)

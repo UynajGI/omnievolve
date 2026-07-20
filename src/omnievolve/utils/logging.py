@@ -1,6 +1,7 @@
 """结构化日志 / provenance.
 
 统一的结构化日志工具，支持 provenance 追踪。
+支持标准 logging 和 structlog 两种后端。
 """
 
 from __future__ import annotations
@@ -38,6 +39,53 @@ class StructuredFormatter(logging.Formatter):
             log_data["exception"] = self.formatException(record.exc_info)
 
         return json.dumps(log_data, ensure_ascii=False)
+
+
+def setup_structlog(
+    level: str = "INFO",
+    *,
+    json_format: bool = True,
+) -> None:
+    """使用 structlog 配置结构化日志.
+
+    Gap P2: 结构化日志 — structlog 生产级配置。
+    若 structlog 未安装，回退到标准 StructuredFormatter。
+
+    Args:
+        level: 日志级别
+        json_format: True 输出 JSON，False 输出彩色 console
+    """
+    try:
+        import structlog
+
+        processors: list[Any] = [
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.dev.set_exc_info,
+        ]
+
+        if json_format:
+            processors.append(structlog.processors.JSONRenderer())
+        else:
+            processors.append(structlog.dev.ConsoleRenderer(colors=True))
+
+        structlog.configure(
+            processors=processors,
+            wrapper_class=structlog.stdlib.BoundLogger,
+            context_class=dict,
+            logger_factory=structlog.stdlib.LoggerFactory(),
+            cache_logger_on_first_use=True,
+        )
+
+        logging.basicConfig(
+            format="%(message)s",
+            stream=sys.stderr,
+            level=getattr(logging, level.upper()),
+        )
+
+    except ImportError:
+        setup_logging(level=level, structured=json_format)
 
 
 def setup_logging(

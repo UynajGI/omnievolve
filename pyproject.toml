@@ -30,7 +30,9 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "pytest-xdist>=3.5",
+    "pytest-benchmark>=4.0",
     "hypothesis>=6.100",
+    "structlog>=24.0",
     "mypy>=1.10",
     "marker-pdf>=1.6.1",
     "pymupdf>=1.28.0",
@@ -54,6 +56,7 @@ markers = [
     "llm: 需要 LLM API 调用（需要 secrets）",
     "slow: 运行时间 > 5 秒的性能/soak 测试",
     "e2e: 端到端全管线测试（含 fake LLM）",
+    "benchmark: 性能基准/回归测试",
 ]
 
 [build-system]
