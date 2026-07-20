@@ -136,7 +136,12 @@ def _build_engine_components(
     )
     l0_mutator = L0PolicyMutator(governance)
     tuner = BayesianTuner() if settings.meta_evolution.enabled else None
-    meta_planner = MetaPlanner(l0_mutator, tuner=tuner)
+    prompt_evolver = None
+    if settings.meta_evolution.enabled:
+        from omnievolve.meta.prompt_evolver import PromptEvolver
+
+        prompt_evolver = PromptEvolver(mutation_rate=settings.meta_evolution.prompt_mutation_rate)
+    meta_planner = MetaPlanner(l0_mutator, tuner=tuner, prompt_evolver=prompt_evolver)
     replay_evaluator = ReplayEvaluator(
         budget_ratio=settings.meta_evolution.meta_canary_budget_ratio,
         min_gain_threshold=settings.meta_evolution.promotion_min_gain,

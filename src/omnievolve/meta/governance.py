@@ -287,10 +287,12 @@ class MetaPlanner:
         *,
         max_actions_per_window: int = 3,
         tuner: Any = None,  # BayesianTuner | None
+        prompt_evolver: Any = None,  # PromptEvolver | None
     ) -> None:
         self._mutator = mutator
         self._max_actions = max_actions_per_window
         self._tuner = tuner
+        self._prompt_evolver = prompt_evolver
 
     def propose(
         self,
@@ -303,10 +305,30 @@ class MetaPlanner:
         优先使用贝叶斯优化（超参空间小、评估代价高）;
         未配置时回退到规则引擎。
         """
-        if self._tuner is not None:
-            return self._propose_bayesian(health, champion_genome)
+        actions: list[MetaAction] = []
 
-        return self._propose_rule_based(health, champion_genome)
+        if self._tuner is not None:
+            actions = self._propose_bayesian(health, champion_genome)
+        else:
+            actions = self._propose_rule_based(health, champion_genome)
+
+        # AM-04: 停滞检测 → prompt 进化（L1 级别）
+        if self._prompt_evolver is not None:
+            stagnation = health.get("stagnation_gens", 0)
+            roi = health.get("roi_score", 1.0)
+            if stagnation >= 3 or roi < 0.001:
+                actions.append(
+                    MetaAction(
+                        action_type="evolve_prompt",
+                        target="system_prompt",
+                        old_value="current",
+                        new_value="evolved",
+                        risk_level=RiskLevel.L1,
+                        rationale=f"Stagnation detected ({stagnation} gens, ROI={roi:.4f}) — evolve prompt",
+                    )
+                )
+
+        return actions
 
     def _propose_rule_based(
         self,

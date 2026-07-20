@@ -857,6 +857,28 @@ class EvolutionEngine:
                 # 反馈给贝叶斯优化器
                 self._record_tuner_feedback(action, decision.get("gain", -0.01))
 
+        elif action.action_type == "evolve_prompt":
+            # AM-04: Prompt 进化 — 变异 system prompt（L1 级别）
+            if self._meta_planner is not None and hasattr(self._meta_planner, "_prompt_evolver"):
+                evolver = self._meta_planner._prompt_evolver  # noqa: SLF001
+                if evolver is not None:
+                    # 获取当前 champion prompt
+                    current_prompt = self._load_champion_prompt("coder")
+                    if current_prompt:
+                        new_prompt, mutations = evolver.evolve(current_prompt)
+                        if mutations:
+                            # 存储新 prompt 版本
+                            prompt_hash = self._artifact_store.store_text(new_prompt, "prompt")
+                            self._prompt_repo.create_version(
+                                prompt_hash,
+                                experiment_id=self._experiment_id,
+                                role="coder",
+                                parent_version_id=current_prompt,
+                                mutations=mutations,
+                            )
+                            logger.info("Prompt evolved with mutations: %s", mutations)
+            return  # evolve_prompt 不走 Challenger 实验路径
+
     def _record_tuner_feedback(self, action: MetaAction, gain: float) -> None:
         """将 meta 动作结果反馈给贝叶斯优化器."""
         if self._meta_planner is None or self._meta_planner._tuner is None:  # noqa: SLF001
