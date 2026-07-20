@@ -1,6 +1,6 @@
 [project]
 name = "omnievolve"
-version = "0.1.0"
+version = "0.2.0"
 description = "OmniEvolve - 受控元进化框架 (Controlled Meta-Evolution Framework)"
 readme = "README.md"
 requires-python = ">=3.12"
