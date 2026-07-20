@@ -182,3 +182,36 @@
 | 参考模式采纳 | 12/13 (GPU/JIT 按设计延期) |
 | Ruff 错误 | 0 |
 | Mypy 错误 | 0 |
+| pytest markers applied | ✅ 12/12 modules (216 tests, 133 unit + 56 integration + 7 e2e + 5 benchmark + 15 slow) |
+
+---
+
+## 十、Subagent 独立审计发现 (2026-07-20 二次审计)
+
+独立 Explore 子代理从零审计，使用 102 次 codegraph 查询 + grep 验证。
+
+### 已修复
+
+| # | 发现 | 状态 |
+|---|------|------|
+| 1 | pytest markers 注册但未使用 — 0 个测试文件使用 @pytest.mark.unit/integration/llm/e2e | ✅ 已修复 (72b0883) |
+
+### 已知残余 (低优先级)
+
+| # | 发现 | 严重度 | 说明 |
+|---|------|--------|------|
+| 2 | 56 处 bare `except Exception` | 低 | 类型化异常体系存在但未全面采用，可渐进替换 |
+| 3 | 无增量 migration SQL 文件 | 低 | `migrations/` 仅 `__init__.py`，v002+ 迁移文件待首次 schema 变更时创建 |
+| 4 | S9-12 Champion 导出/导入未独立实现 | 中 | CLI `export` 输出 GraphML/JSON，`policy` 列出策略，但无 Champion-bundle 导出 (含 artifact/genome/eval) |
+| 5 | HardenedBackend 是占位 stub | 低 | 设计文档明确标注 "Adapter 占位，延期" |
+| 6 | 仅 2 个领域示例 | 低 | python_optimization + circle_packing，OpenEvolve 有 10+ |
+| 7 | kill-9 测试用租约过期模拟，非真实 SIGKILL | 低 | 租约模拟已验证恢复逻辑；真实信号测试在 CI 中难以自动化 |
+| 8 | S9-08 同预算 challenger 比较内嵌于 evolution_engine | 低 | ReplayEvaluator 存在但非独立模块 |
+
+### 不视为 gap 的项目
+
+- 需求追溯 20/20: 全部有 codegraph 验证的源码对应
+- 安全红线 8/8: 全部有源码级实现 (docker_backend/artifact_store/governance)
+- P0 全部完成: async_engine + CI matrix + seed manager
+- P1 全部完成: 10/10 (含 pytest markers 已修复)
+- P2 5/7: 突变测试 + GPU/JIT 按设计文档明确延期
