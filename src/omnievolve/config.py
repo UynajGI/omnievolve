@@ -29,6 +29,7 @@ class EvolutionSettings(BaseSettings):
     token_budget: int = 2_000_000
     compute_budget_sec: float = 0  # 0 表示不单独限制
     health_window_gens: int = 3
+    self_evolve_enabled: bool = True
 
 
 class SelectionSettings(BaseSettings):
@@ -314,6 +315,7 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         tournament_size=settings.selection.tournament_size,
         island_migration_interval=settings.selection.island_migration_interval,
         ucb_c=settings.models.routing.ucb_c,
+        self_evolve_enabled=e.self_evolve_enabled,
     )
 
 

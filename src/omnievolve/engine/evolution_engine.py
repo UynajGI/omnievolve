@@ -103,6 +103,7 @@ class EvolutionConfig:
     tournament_size: int = 3
     island_migration_interval: int = 5
     ucb_c: float = 1.414
+    self_evolve_enabled: bool = True
 
 
 @dataclass
@@ -337,7 +338,7 @@ class EvolutionEngine:
                 self._island_manager.migrate(gen)
 
             # Slow Loop：每 health_window_gens 代触发
-            if gen % self._config.health_window_gens == 0:
+            if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:
                 self._run_slow_loop(gen)
 
             logger.info(
@@ -398,7 +399,7 @@ class EvolutionEngine:
             self._step_generation(gen, task_name)
             if self._island_manager.should_migrate(gen):
                 self._island_manager.migrate(gen)
-            if gen % self._config.health_window_gens == 0:
+            if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:
                 self._run_slow_loop(gen)
 
         return self._finalize(task_name)

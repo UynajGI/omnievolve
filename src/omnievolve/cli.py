@@ -170,6 +170,9 @@ def run(
     resume: str | None = typer.Option(None, "--resume", help="恢复实验 ID"),
     generations: int | None = typer.Option(None, "--gens", "-g", help="最大代数"),
     trusted: bool = typer.Option(False, "--trusted", help="启用非隔离 subprocess 模式"),
+    no_self_evolve: bool = typer.Option(
+        False, "--no-self-evolve", help="关闭 Slow Loop 受控策略进化，仅运行 Fast Loop"
+    ),
 ) -> None:
     """启动候选进化；按健康窗口自动运行受控策略进化."""
     from omnievolve.utils.logging import setup_logging
@@ -183,6 +186,9 @@ def run(
     eval_config = build_evolution_config(settings)
     if generations is not None:
         eval_config.max_generations = generations
+    if no_self_evolve:
+        eval_config.self_evolve_enabled = False
+        console.print("[yellow]Self-evolve (Slow Loop) disabled — fast loop only[/yellow]")
 
     # 加载评估器
     evaluator_cls = load_evaluator(evaluator)
