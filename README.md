@@ -185,15 +185,72 @@ Promote / Reject / Rollback
 
 ## 测试
 
+分层策略（Tier 1 CI → Tier 2 smoke → Tier 3 手动）：
+
 ```bash
-pytest -q                                    # 全部 514 测试（33 文件）
-pytest -q -m "not slow"                      # 快速子集（跳过 soak）
-pytest --cov=omnievolve --cov-report=term    # 覆盖率报告（当前 75%）
-pytest tests/test_p0_quality_gates.py        # 15 个 P0 架构门
-pytest tests/test_evolution_engine_e2e.py    # 端到端集成
-pytest -m e2e                                # 所有 E2E 标记测试
-pytest -m benchmark                          # 性能基准回归
+make test              # Tier 1: 617 tests, FakeLLM, CI 默认
+make test-cov          # Tier 1 + 覆盖率 (~82%)
+make test-llm          # Tier 2: LLM 烟雾测试（需 API key）
+make test-slow         # 慢速/集成测试（Docker, soak）
+make test-all          # 全量（不含 LLM）
+
+# 等效 pytest 命令
+.venv/bin/python -m pytest -q -m "not slow and not llm"   # 617 tests
+.venv/bin/python -m pytest --cov=omnievolve --cov-report=term
+.venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 架构门
+.venv/bin/python -m pytest tests/test_soak.py -m slow      # 50代 soak
 ```
+
+## 生产部署
+
+### 最低要求
+
+- Python 3.12+
+- SQLite 3.35+（支持 FTS5）
+- LLM API key（DeepSeek / OpenAI / Anthropic）
+
+### 安全沙箱（推荐）
+
+```bash
+# Docker 安全沙箱（禁网、只读、降权、资源限制）
+docker build -t omnievolve/sandbox:latest .
+pip install -e ".[docker]"
+
+# Monty Rust 沙箱（微秒级启动，无需 Docker daemon）
+pip install -e ".[monty]"
+```
+
+### 熔断器配置
+
+默认内置：5 次连续失败 → 断开 60s → 半开试探。
+
+```python
+from omnievolve.agents.circuit_breaker import CircuitBreaker, TokenBucketRateLimiter
+from omnievolve.agents.llm_gateway import LLMGateway
+
+gateway = LLMGateway(
+    default_model="deepseek/deepseek-chat",
+    circuit_breaker=CircuitBreaker(failure_threshold=5, reset_timeout_sec=60),
+    rate_limiter=TokenBucketRateLimiter(capacity=10),  # 10 req/s
+)
+```
+
+### 检查点恢复
+
+每代自动持久化到 `experiment.checkpoint_data` 列。崩溃后：
+
+```bash
+omnievolve run ./code.py -e eval:MyEvaluator -c config.toml --resume <experiment_id>
+```
+
+### 可观测性（可选）
+
+```bash
+pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
+# 自动启用跨度跟踪和指标导出
+```
+
+详见 [PRODUCTION.md](./PRODUCTION.md)。
 
 ## 设计文档
 
