@@ -823,8 +823,24 @@ class EvolutionEngine:
                     current_gen,
                     decision.get("reason"),
                 )
+                # 反馈给贝叶斯优化器
+                self._record_tuner_feedback(action, decision.get("gain", 0.0))
             else:
                 self._policy_archive.reject(challenger.id, decision.get("reason", ""))
+                # 反馈给贝叶斯优化器
+                self._record_tuner_feedback(action, decision.get("gain", -0.01))
+
+    def _record_tuner_feedback(self, action: MetaAction, gain: float) -> None:
+        """将 meta 动作结果反馈给贝叶斯优化器."""
+        if self._meta_planner is None or self._meta_planner._tuner is None:  # noqa: SLF001
+            return
+        try:
+            params = {action.target: action.new_value}
+            self._meta_planner._tuner.update(  # noqa: SLF001
+                params, score=gain, generation=self._current_generation
+            )
+        except Exception:
+            logger.debug("Failed to record tuner feedback", exc_info=True)
 
     # ------------------------------------------------------------------ #
     #  辅助方法

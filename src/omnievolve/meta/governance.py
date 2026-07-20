@@ -277,7 +277,8 @@ class ReplayEvaluator:
 class MetaPlanner:
     """Meta 规划器.
 
-    S8-10: 只读诊断 + 受控动作提议
+    S8-10: 只读诊断 + 受控动作提议。
+    支持规则引擎（L0PolicyMutator）或贝叶斯优化（BayesianTuner）两种后端。
     """
 
     def __init__(
@@ -285,9 +286,11 @@ class MetaPlanner:
         mutator: L0PolicyMutator,
         *,
         max_actions_per_window: int = 3,
+        tuner: Any = None,  # BayesianTuner | None
     ) -> None:
         self._mutator = mutator
         self._max_actions = max_actions_per_window
+        self._tuner = tuner
 
     def propose(
         self,
@@ -295,10 +298,23 @@ class MetaPlanner:
         champion_genome: SearchPolicyGenome,
         history: list[dict],
     ) -> list[MetaAction]:
-        """提议优化动作."""
-        actions = []
+        """提议优化动作.
 
-        # 获取 L0 变异建议
+        优先使用贝叶斯优化（超参空间小、评估代价高）;
+        未配置时回退到规则引擎。
+        """
+        if self._tuner is not None:
+            return self._propose_bayesian(health, champion_genome)
+
+        return self._propose_rule_based(health, champion_genome)
+
+    def _propose_rule_based(
+        self,
+        health: dict[str, Any],
+        champion_genome: SearchPolicyGenome,
+    ) -> list[MetaAction]:
+        """规则引擎提议（原有逻辑）."""
+        actions = []
         suggestions = self._mutator.suggest_mutations(champion_genome, health)
 
         for field_name, new_value, rationale in suggestions[: self._max_actions]:
@@ -311,5 +327,37 @@ class MetaPlanner:
                 rationale=rationale,
             )
             actions.append(action)
+
+        return actions
+
+    def _propose_bayesian(
+        self,
+        health: dict[str, Any],
+        champion_genome: SearchPolicyGenome,
+    ) -> list[MetaAction]:
+        """贝叶斯优化提议."""
+        # suggest 下一组参数
+        suggested_params = self._tuner.suggest()
+
+        # → genome 更新字典
+        updates = self._tuner.params_to_genome_updates(suggested_params)
+
+        actions = []
+        for field_name, new_value in list(updates.items())[: self._max_actions]:
+            old_value = getattr(champion_genome, field_name, None)
+            rationale = f"Bayesian optimization: {field_name} = {new_value}"
+
+            action = MetaAction(
+                action_type="modify_field",
+                target=field_name,
+                old_value=old_value,
+                new_value=new_value,
+                risk_level=RiskLevel.L0,
+                rationale=rationale,
+            )
+            actions.append(action)
+
+        if not actions:
+            logger.info("BayesianTuner produced no actionable suggestions")
 
         return actions

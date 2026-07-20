@@ -99,6 +99,7 @@ def _build_engine_components(
         MetaPlanner,
         ReplayEvaluator,
     )
+    from omnievolve.meta.hyperparam_tuner import BayesianTuner
     from omnievolve.meta.policy_archive import PolicyArchive
     from omnievolve.storage.graph_store import GraphStore
 
@@ -133,7 +134,8 @@ def _build_engine_components(
         allow_l2_actions=settings.meta_evolution.allow_l2_actions,
     )
     l0_mutator = L0PolicyMutator(governance)
-    meta_planner = MetaPlanner(l0_mutator)
+    tuner = BayesianTuner() if settings.meta_evolution.enabled else None
+    meta_planner = MetaPlanner(l0_mutator, tuner=tuner)
     replay_evaluator = ReplayEvaluator(
         budget_ratio=settings.meta_evolution.meta_canary_budget_ratio,
         min_gain_threshold=settings.meta_evolution.promotion_min_gain,
