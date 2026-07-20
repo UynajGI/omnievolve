@@ -217,7 +217,7 @@ class CandidateRepository:
                 for order, (parent_id, relation_type) in enumerate(parents):
                     conn.execute(
                         """
-                        INSERT INTO candidate_lineage
+                        INSERT OR IGNORE INTO candidate_lineage
                             (child_id, parent_id, relation_type, parent_order)
                         VALUES (?, ?, ?, ?)
                         """,

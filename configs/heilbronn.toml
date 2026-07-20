@@ -1,8 +1,8 @@
-# OmniEvolve — matmul 矩阵乘法张量分解任务
-# 用法: omnievolve run ... -c configs/matmul.toml --no-self-evolve
+# OmniEvolve — Heilbronn Triangle 问题
+# 11 个点在等边三角形内最大化最小三角形面积
 
 [evolution]
-max_generations = 20
+max_generations = 10
 population_size = 4
 island_count = 2
 novelty_threshold = 0.92
@@ -10,12 +10,12 @@ novelty_retry_limit = 3
 mutation_rate = 0.3
 crossover_rate = 0.15
 max_stagnation_gens = 5
-token_budget = 4_000_000
+token_budget = 2_000_000
 compute_budget_sec = 0
-sandbox_timeout = 300
-sandbox_mem_limit_mb = 16384  # JAX/XLA 需要大虚拟地址空间
+sandbox_timeout = 15
+sandbox_mem_limit_mb = 512
 health_window_gens = 5
-self_evolve_enabled = false  # 先关闭 Slow Loop，纯测 Fast Loop
+self_evolve_enabled = false
 
 [selection]
 parent_selector = "progressive_mcgs"
@@ -60,20 +60,20 @@ borderline_low = 0.88
 borderline_high = 0.96
 
 [sandbox]
-backend = "trusted_subprocess"   # 开发阶段用本地，正式切 docker
-timeout_sec = 120               # JAX 80k 步优化，需要较长超时
-mem_limit_mb = 2048
-cpu_limit = 4.0
+backend = "trusted_subprocess"
+timeout_sec = 15
+mem_limit_mb = 512
+cpu_limit = 1.0
 pids_limit = 64
 network_mode = "none"
-read_only_root = false          # JAX 需要写缓存
+read_only_root = true
 run_as_non_root = true
 drop_capabilities = true
 no_new_privileges = true
 language = "python"
 
 [storage]
-db_path = ".omnievolve/matmul.db"
+db_path = ".omnievolve/heilbronn.db"
 vector_dir = ".omnievolve/vectors"
 artifact_dir = ".omnievolve/artifacts"
 export_dir = ".omnievolve/exports"
@@ -96,7 +96,7 @@ window_gens = 3
 require_confidence_interval = true
 
 [meta_evolution]
-enabled = false                 # 关闭 Slow Loop
+enabled = false
 prompt_mutation_rate = 0.2
 meta_canary_budget_ratio = 0.1
 promotion_min_gain = 0.02

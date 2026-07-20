@@ -28,6 +28,8 @@ class EvolutionSettings(BaseSettings):
     max_stagnation_gens: int = 5
     token_budget: int = 2_000_000
     compute_budget_sec: float = 0  # 0 表示不单独限制
+    sandbox_timeout: float = 30.0
+    sandbox_mem_limit_mb: int = 4096
     health_window_gens: int = 3
     self_evolve_enabled: bool = True
 
@@ -310,6 +312,8 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         max_stagnation_gens=e.max_stagnation_gens,
         token_budget=e.token_budget,
         compute_budget_sec=e.compute_budget_sec or None,
+        sandbox_timeout=e.sandbox_timeout,
+        sandbox_mem_limit_mb=e.sandbox_mem_limit_mb,
         health_window_gens=e.health_window_gens,
         meta_canary_budget_ratio=settings.meta_evolution.meta_canary_budget_ratio,
         tournament_size=settings.selection.tournament_size,

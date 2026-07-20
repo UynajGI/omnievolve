@@ -98,6 +98,7 @@ class EvolutionConfig:
     token_budget: int = 2_000_000
     compute_budget_sec: float | None = None
     sandbox_timeout: float = 30.0
+    sandbox_mem_limit_mb: int = 4096
     health_window_gens: int = 3
     meta_canary_budget_ratio: float = 0.1
     tournament_size: int = 3
@@ -641,7 +642,10 @@ class EvolutionEngine:
             return None
 
         # 步骤 10: sandbox 执行
-        policy = SandboxPolicy(timeout_sec=self._config.sandbox_timeout)
+        policy = SandboxPolicy(
+            timeout_sec=self._config.sandbox_timeout,
+            mem_limit_mb=self._config.sandbox_mem_limit_mb,
+        )
         try:
             result = self._sandbox.execute(plan, candidate_artifact, policy)
         except SandboxError:

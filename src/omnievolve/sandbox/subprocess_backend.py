@@ -176,24 +176,35 @@ class TrustedSubprocessBackend:
         policy: SandboxPolicy,
     ) -> subprocess.CompletedProcess:
         """运行单个命令."""
-        # 合并环境变量
-        run_env = os.environ.copy()
+        # 合并环境变量（仅必要变量，避免 Argument list too long）
+        run_env = {}
+        for key in (
+            "PATH",
+            "HOME",
+            "USER",
+            "LANG",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "VIRTUAL_ENV",
+            "PYTHONPATH",
+            "LD_LIBRARY_PATH",
+        ):
+            if key in os.environ:
+                run_env[key] = os.environ[key]
+        # 传递数值计算/OpenBLAS 控制变量
+        for key in os.environ:
+            if key.startswith(("OPENBLAS_", "OMP_", "MKL_", "XLA_", "JAX_", "TF_")):
+                run_env[key] = os.environ[key]
         run_env.update(env)
 
         # 设置资源限制的 preexec_fn
         def set_limits():
-            if hasattr(resource, "RLIMIT_AS"):
-                # 内存限制
+            if hasattr(resource, "RLIMIT_AS") and policy.mem_limit_mb > 0:
                 mem_bytes = policy.mem_limit_mb * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
 
-            if hasattr(resource, "RLIMIT_CPU"):
-                # CPU 时间限制
-                cpu_sec = int(policy.timeout_sec)
-                resource.setrlimit(resource.RLIMIT_CPU, (cpu_sec, cpu_sec))
-
-            if hasattr(resource, "RLIMIT_NPROC"):
-                # 进程数限制
+            if hasattr(resource, "RLIMIT_NPROC") and policy.pids_limit > 0:
                 resource.setrlimit(resource.RLIMIT_NPROC, (policy.pids_limit, policy.pids_limit))
 
         return subprocess.run(

@@ -171,3 +171,4 @@ tmp/
 
 # IDE / Agent
 .agents/
+.qoder/
