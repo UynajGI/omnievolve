@@ -186,7 +186,7 @@ Promote / Reject / Rollback
 ## 测试
 
 ```bash
-pytest -q                                    # 全部 497 测试（26 文件）
+pytest -q                                    # 全部 514 测试（33 文件）
 pytest -q -m "not slow"                      # 快速子集（跳过 soak）
 pytest --cov=omnievolve --cov-report=term    # 覆盖率报告（当前 75%）
 pytest tests/test_p0_quality_gates.py        # 15 个 P0 架构门

@@ -6,7 +6,7 @@
 
 ```bash
 # Test
-.venv/bin/python -m pytest -q                    # 497 tests
+.venv/bin/python -m pytest -q                    # 514 tests
 .venv/bin/python -m pytest -q -m "not slow"      # fast subset
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
@@ -45,7 +45,7 @@ docs/         User-facing docs (NOT project-design specs)
 docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
 reports/      Phase acceptance + gap analysis reports
 examples/     python_optimization + circle_packing demo projects
-tests/        497 tests across 26 files (pytest markers: unit/integration/llm/slow/e2e/benchmark)
+tests/        514 tests across 33 files (pytest markers: unit/integration/llm/slow/e2e/benchmark)
 uv.lock       Deterministic dependency lock (159 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
