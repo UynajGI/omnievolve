@@ -31,8 +31,11 @@ pip install -e ".[local-embed]"
 # Docker 沙箱
 pip install -e ".[docker]"
 
+# Monty 沙箱（Rust 实现，微秒级启动）
+pip install -e ".[monty]"
+
 # 全量
-pip install -e ".[vector,local-embed,docker,viz,tuning]"
+pip install -e ".[vector,local-embed,docker,monty,viz,tuning]"
 ```
 
 ## 快速开始
@@ -81,6 +84,13 @@ omnievolve run ./initial_code.py \
     --evaluator my_evaluator:MyEvaluator \
     --config omnievolve.toml \
     --gens 30
+
+# Monty 安全模式（Rust 沙箱，微秒级启动，需 pip install omnievolve[monty]）
+omnievolve run ./initial_code.py \
+    --evaluator my_evaluator:MyEvaluator \
+    --config omnievolve.toml \
+    --gens 30
+# (配置文件中 sandbox.backend = "monty")
 
 # 可信 subprocess 模式（开发/测试用，非隔离）
 omnievolve run ./initial_code.py \

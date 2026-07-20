@@ -107,10 +107,10 @@ class BackendRegistry:
     def get_default_backend(self, **kwargs: Any) -> tuple[str, SandboxBackend]:
         """获取默认可用后端.
 
-        优先级：docker > hardened > trusted_subprocess
+        优先级：docker > monty > hardened > trusted_subprocess
 
         注意：不会静默降级到 trusted_subprocess，
-        如果 Docker 不可用会抛出异常。
+        如果 Docker 不可用会尝试 Monty，仍不可用则抛出异常。
 
         Returns:
             (后端名称, 后端实例)
@@ -122,13 +122,21 @@ class BackendRegistry:
         except SandboxSetupError as e:
             docker_error = str(e)
 
-        # Docker 不可用，不静默降级
+        # 尝试 Monty
+        try:
+            backend = self.get_backend("monty", **kwargs)
+            return "monty", backend
+        except SandboxSetupError:
+            pass
+
+        # 都不可用
         raise SandboxSetupError(
             f"Docker backend is not available: {docker_error}\n\n"
             "Options:\n"
             "1. Install and start Docker\n"
-            "2. Use --trusted flag for TrustedSubprocessBackend (NOT SECURE)\n"
-            "3. Configure a hardened backend\n\n"
+            "2. pip install omnievolve[monty] for Monty (fast Rust sandbox)\n"
+            "3. Use --trusted flag for TrustedSubprocessBackend (NOT SECURE)\n"
+            "4. Configure a hardened backend\n\n"
             "Run 'omnievolve doctor' for detailed diagnostics."
         )
 
@@ -145,9 +153,11 @@ def get_registry() -> BackendRegistry:
 def register_default_backends() -> None:
     """注册默认后端."""
     from omnievolve.sandbox.docker_backend import DockerBackend
+    from omnievolve.sandbox.monty_backend import MontyBackend
     from omnievolve.sandbox.subprocess_backend import TrustedSubprocessBackend
 
     _registry.register("docker", DockerBackend)
+    _registry.register("monty", MontyBackend)
     _registry.register("trusted_subprocess", TrustedSubprocessBackend)
 
 
@@ -160,7 +170,7 @@ def create_backend(
     """创建沙箱后端的便捷函数.
 
     Args:
-        backend_type: 后端类型 (docker / trusted_subprocess)
+        backend_type: 后端类型 (docker / monty / trusted_subprocess)
         trusted: 是否启用 trusted 模式（仅用于 trusted_subprocess）
         **kwargs: 后端参数
 

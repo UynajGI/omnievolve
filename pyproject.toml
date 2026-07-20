@@ -18,6 +18,7 @@ dependencies = [
 vector = ["zvec>=0.3"]
 local-embed = ["sentence-transformers>=2.3"]
 docker = ["docker>=7.0"]
+monty = ["pydantic-monty>=0.0.18"]
 viz = ["pyvis>=0.3"]
 tuning = ["optuna>=3.6"]
 
