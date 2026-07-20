@@ -51,6 +51,13 @@ from omnievolve.eval.task_evaluator import (
     TaskEvaluator,
 )
 from omnievolve.eval.telemetry import HealthOutput, SelfEvaluator
+from omnievolve.exceptions import (
+    EvaluatorError,
+    EvolutionError,
+    LLMError,
+    SandboxError,
+    StorageError,
+)
 from omnievolve.meta.governance import (
     GovernancePolicy,
     L0PolicyMutator,
@@ -222,6 +229,12 @@ class EvolutionEngine:
             budget_ratio=self._config.meta_canary_budget_ratio,
         )
         self._l0_mutator = L0PolicyMutator(self._governance)
+
+        # 插件自动发现 — EvoX evox_ext 模式: 启动时扫描并加载所有已安装插件
+        from omnievolve.plugins.discovery import discover_plugins
+
+        discover_plugins()
+        logger.info("Engine initialized, plugins loaded")
 
         # 向量 Outbox + Prompt 版本化（延迟激活：需显式注入或 run 时注册）
         self._vector_indexer = vector_indexer
@@ -402,7 +415,7 @@ class EvolutionEngine:
             try:
                 island_id = f"island_{i % self._config.island_count}"
                 self._evolve_one(generation, task_name, island_id)
-            except Exception:
+            except (EvolutionError, LLMError, SandboxError, StorageError):
                 logger.exception("Evolution failed for candidate slot %d", i)
 
     def _select_parents(self, island_id: str) -> tuple[list[str], str]:
@@ -613,14 +626,14 @@ class EvolutionEngine:
                 environment_version_id=self._environment_version_id,
             )
             self._eval_repo.start(run.id)
-        except Exception:
+        except StorageError:
             logger.debug("Could not create evaluation_run record", exc_info=True)
             run = None
 
         # 步骤 9: build_plan
         try:
             plan = self._task_evaluator.build_plan(candidate_artifact, eval_context)
-        except Exception:
+        except EvaluatorError:
             logger.exception("Failed to build plan for %s", candidate_id)
             if run:
                 self._eval_repo.fail(run.id, "build_plan error")
@@ -630,7 +643,7 @@ class EvolutionEngine:
         policy = SandboxPolicy(timeout_sec=self._config.sandbox_timeout)
         try:
             result = self._sandbox.execute(plan, candidate_artifact, policy)
-        except Exception:
+        except SandboxError:
             logger.exception("Sandbox execution failed for %s", candidate_id)
             if run:
                 self._eval_repo.fail(run.id, "sandbox execution error")
@@ -651,7 +664,7 @@ class EvolutionEngine:
                     memory_peak_kb=result.memory_peak_kb,
                     cpu_time_ms=result.cpu_time_ms,
                 )
-            except Exception:
+            except StorageError:
                 logger.debug("Could not complete evaluation_run record", exc_info=True)
 
         # 更新 candidate 状态

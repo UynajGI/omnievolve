@@ -170,6 +170,9 @@ def run(
     trusted: bool = typer.Option(False, "--trusted", help="启用非隔离 subprocess 模式"),
 ) -> None:
     """启动候选进化；按健康窗口自动运行受控策略进化."""
+    from omnievolve.utils.logging import setup_logging
+
+    setup_logging()
     console.print("[bold green]OmniEvolve[/bold green] - Starting evolution")
     if trusted:
         console.print("[yellow]WARNING: trusted subprocess 模式（非隔离）[/yellow]")
