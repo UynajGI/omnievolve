@@ -122,7 +122,7 @@ class TestSentenceTransformerEmbedder:
         assert e.dimension == 384  # 缓存不变
 
     def test_fallback_to_modelscope_on_hf_failure(self):
-        """HF 失败时自动尝试 ModelScope."""
+        """HF 官方失败 → HF 镜像 → ModelScope 三级 fallback."""
         e = SentenceTransformerEmbedder(model="test-model")
 
         call_order = []
@@ -131,8 +131,12 @@ class TestSentenceTransformerEmbedder:
             call_order.append("hf")
             raise OSError("Connection refused")
 
+        def mock_hf_mirror_load(self):
+            call_order.append("hf-mirror")
+            raise OSError("mirror also unreachable")
+
         def mock_ms_load(self):
-            call_order.append("ms")
+            call_order.append("modelscope")
 
             class MockModel:
                 def get_sentence_embedding_dimension(self):
@@ -140,14 +144,29 @@ class TestSentenceTransformerEmbedder:
 
             return MockModel()
 
-        # Patch instance methods
         e._load_from_huggingface = mock_hf_load.__get__(e)  # noqa: SLF001
+        e._load_from_hf_mirror = mock_hf_mirror_load.__get__(e)  # noqa: SLF001
         e._load_from_modelscope = mock_ms_load.__get__(e)  # noqa: SLF001
         e._model = None  # noqa: SLF001
 
         e._ensure_loaded()  # noqa: SLF001
-        assert call_order == ["hf", "ms"]
+        assert call_order == ["hf", "hf-mirror", "modelscope"]
         assert e.dimension == 768
+
+    def test_all_three_sources_fail(self):
+        """三个源都失败时给出汇总错误."""
+        e = SentenceTransformerEmbedder(model="bad-model")
+
+        def fail(_self):
+            raise OSError("network error")
+
+        e._load_from_huggingface = fail.__get__(e)  # noqa: SLF001
+        e._load_from_hf_mirror = fail.__get__(e)  # noqa: SLF001
+        e._load_from_modelscope = fail.__get__(e)  # noqa: SLF001
+        e._model = None  # noqa: SLF001
+
+        with pytest.raises(RuntimeError, match="Failed to load"):
+            e._ensure_loaded()  # noqa: SLF001
 
 
 class TestCreateEmbedder:

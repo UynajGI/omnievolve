@@ -147,7 +147,7 @@ class SentenceTransformerEmbedder:
 
         errors: list[str] = []
 
-        # 1. 先尝试 HuggingFace
+        # 1. HuggingFace 官方
         try:
             self._model = self._load_from_huggingface()
             logger.info(
@@ -160,7 +160,20 @@ class SentenceTransformerEmbedder:
         except Exception as e:
             errors.append(f"HuggingFace: {e}")
 
-        # 2. 再尝试 ModelScope（魔塔）镜像
+        # 2. HF 镜像（hf-mirror.com）
+        try:
+            self._model = self._load_from_hf_mirror()
+            logger.info(
+                "Loaded local embedding model from HF mirror: %s (dim=%d, device=%s)",
+                self._model_name,
+                self._model.get_sentence_embedding_dimension(),
+                self._device,
+            )
+            return
+        except Exception as e:
+            errors.append(f"HF mirror: {e}")
+
+        # 3. ModelScope（魔塔）
         try:
             self._model = self._load_from_modelscope()
             logger.info(
@@ -179,28 +192,40 @@ class SentenceTransformerEmbedder:
         ) from None
 
     def _load_from_huggingface(self):
-        """从 HuggingFace 加载模型."""
+        """从 HuggingFace 官方加载模型."""
         from sentence_transformers import SentenceTransformer
 
         return SentenceTransformer(self._model_name, device=self._device)
 
-    def _load_from_modelscope(self):
-        """从 ModelScope（魔塔）加载模型.
-
-        通过设置 HF_ENDPOINT 指向 ModelScope 镜像实现透明下载。
-        """
+    def _load_from_hf_mirror(self):
+        """从 HF 镜像（hf-mirror.com）加载模型."""
         import os
 
         from sentence_transformers import SentenceTransformer
 
-        # ModelScope 镜像
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-
         try:
             return SentenceTransformer(self._model_name, device=self._device)
         finally:
-            # 恢复默认，避免影响后续操作
             os.environ.pop("HF_ENDPOINT", None)
+
+    def _load_from_modelscope(self):
+        """从 ModelScope（魔塔）加载模型.
+
+        使用 modelscope SDK 下载模型到本地缓存，再用 SentenceTransformer 加载。
+        """
+        from sentence_transformers import SentenceTransformer
+
+        try:
+            from modelscope import snapshot_download
+
+            model_dir = snapshot_download(self._model_name)
+            return SentenceTransformer(model_dir, device=self._device)
+        except ImportError:
+            raise ImportError(
+                "modelscope is required for ModelScope downloads. "
+                "Install with: pip install modelscope"
+            ) from None
 
 
 def create_embedder(
