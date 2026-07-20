@@ -38,3 +38,7 @@ def solve() -> float:
     ]
     radii = [radius] * n
     return pack_circles(n, positions, radii)
+
+
+if __name__ == "__main__":
+    print(solve())

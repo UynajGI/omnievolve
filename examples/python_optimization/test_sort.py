@@ -1,6 +1,6 @@
 """Correctness tests for sort implementations."""
 
-from initial_code import sort
+from main import sort
 
 
 def test_empty():

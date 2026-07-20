@@ -11,7 +11,7 @@ import time
 
 def run_benchmark():
     """Run benchmark and output results as JSON."""
-    from initial_code import sort
+    from main import sort
 
     # Generate test data
     data = [random.randint(0, 10000) for _ in range(1000)]
