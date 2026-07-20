@@ -628,13 +628,21 @@ class EvolutionEngine:
         output = self._evaluate_candidate(candidate.id, artifact_hash)
         self._island_manager.assign_candidate(candidate.id, island_id)
 
-        # Router 奖励更新（coder 维度，使用本候选实际选择的模型）
+        # Router 奖励更新（ShinkaEvolve 相对奖励公式）
         if self._router is not None and model and output is not None:
-            self._router.update(
-                model=model,
-                role="coder",
-                reward=output.score,
-            )
+            from omnievolve.agents.router import compute_shinka_reward
+
+            # parent_score: 取所有父代的最高分
+            parent_score = 0.0
+            if parent_ids:
+                parent_scores = [self._get_candidate_score(pid) for pid in parent_ids]
+                parent_score = max(parent_scores) if parent_scores else 0.0
+
+            # baseline_score: 初始候选分数
+            baseline_score = self._get_baseline_score()
+
+            reward = compute_shinka_reward(output.score, parent_score, baseline_score)
+            self._router.update(model=model, role="coder", reward=reward)
 
         return candidate.id, artifact_hash
 
@@ -1044,6 +1052,25 @@ class EvolutionEngine:
             return self._router.select(ctx)
         except Exception:
             return ""
+
+    def _get_candidate_score(self, candidate_id: str) -> float:
+        """获取候选的评估分数（用于 ShinkaEvolve reward 计算）."""
+        row = self._db.fetchone(
+            """
+            SELECT MAX(primary_score) as score
+            FROM evaluation_run
+            WHERE candidate_id = ? AND status = 'completed'
+            """,
+            (candidate_id,),
+        )
+        return float(row["score"]) if row and row["score"] else 0.0
+
+    def _get_baseline_score(self) -> float:
+        """获取实验基线分数（初始候选的分数）."""
+        exp = self._experiment_repo.get(self._experiment_id)
+        if exp and exp.baseline_candidate_id:
+            return self._get_candidate_score(exp.baseline_candidate_id)
+        return 0.0
 
     def _load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str]]:
         """加载父代代码与思想."""

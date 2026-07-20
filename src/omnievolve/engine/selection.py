@@ -1,10 +1,12 @@
 """父代选择策略.
 
 S4-09: 实现最小 ParentSelector（best/tournament/random）
+SA-01: ShinkaEvolve power law + weighted 采样
 """
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Any
 
@@ -12,7 +14,10 @@ from omnievolve.storage.db import Database
 
 
 class ParentSelector:
-    """父代选择器."""
+    """父代选择器.
+
+    支持策略: best, tournament, random, power_law, weighted
+    """
 
     def __init__(
         self,
@@ -20,16 +25,22 @@ class ParentSelector:
         *,
         strategy: str = "tournament",
         tournament_size: int = 3,
+        power_law_alpha: float = 1.0,
+        weighted_lambda: float = 10.0,
     ) -> None:
         """初始化.
 
         Args:
-            strategy: 选择策略 (best/tournament/random)
+            strategy: 选择策略 (best/tournament/random/power_law/weighted)
             tournament_size: 锦标赛大小
+            power_law_alpha: power law 强度（0=uniform, ∞=hill-climb）
+            weighted_lambda: weighted 选择压力
         """
         self._db = db
         self._strategy = strategy
         self._tournament_size = tournament_size
+        self._power_law_alpha = power_law_alpha
+        self._weighted_lambda = weighted_lambda
 
     def select(
         self,
@@ -39,19 +50,7 @@ class ParentSelector:
         count: int = 1,
         exclude_ids: list[str] | None = None,
     ) -> list[str]:
-        """选择父代.
-
-        Args:
-            experiment_id: 实验 ID
-            evaluator_version_id: 评估器版本 ID
-            environment_version_id: 环境版本 ID
-            count: 选择数量
-            exclude_ids: 排除的候选 ID
-
-        Returns:
-            父代候选 ID 列表
-        """
-        # 获取有分数的候选
+        """选择父代."""
         candidates = self._get_scored_candidates(
             experiment_id, evaluator_version_id, environment_version_id, exclude_ids
         )
@@ -63,6 +62,10 @@ class ParentSelector:
             return self._select_best(candidates, count)
         elif self._strategy == "tournament":
             return self._select_tournament(candidates, count)
+        elif self._strategy == "power_law":
+            return self._select_power_law(candidates, count)
+        elif self._strategy == "weighted":
+            return self._select_weighted(candidates, count)
         else:  # random
             return self._select_random(candidates, count)
 
@@ -116,6 +119,98 @@ class ParentSelector:
         """随机选择."""
         selected = random.sample(candidates, min(count, len(candidates)))
         return [c[0] for c in selected]
+
+    def _select_power_law(self, candidates: list[tuple[str, float]], count: int) -> list[str]:
+        """Power law 采样.
+
+        ShinkaEvolve: P(i) = rank_i^(-α) / Σ rank_j^(-α)
+        α=0 → uniform, α→∞ → hill-climbing
+        """
+        # 按分数降序排列（rank 1 = 最高分）
+        sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)
+        n = len(sorted_cands)
+        ranks = list(range(1, n + 1))
+        weights = [r ** (-self._power_law_alpha) for r in ranks]
+        total = sum(weights)
+        probs = [w / total for w in weights]
+
+        selected: list[int] = []
+        # 不放回采样
+        available = list(range(n))
+        for _ in range(min(count, n)):
+            cum = 0.0
+            r = random.random()
+            for idx in available:
+                cum += probs[idx]
+                if r <= cum:
+                    selected.append(idx)
+                    available.remove(idx)
+                    # 重新归一化
+                    remaining_probs = [probs[i] for i in available]
+                    rsum = sum(remaining_probs)
+                    probs = [p / rsum if i in available else 0.0 for i, p in enumerate(probs)]
+                    break
+
+        return [sorted_cands[i][0] for i in selected]
+
+    def _select_weighted(self, candidates: list[tuple[str, float]], count: int) -> list[str]:
+        """Weighted 采样 — 平衡性能与新颖性.
+
+        ShinkaEvolve:
+          s_i = sigmoid(λ·(F(P_i) - median))
+          h_i = 1 / (1 + offspring_count_i)
+          P(i) ∝ s_i · h_i
+        """
+        sorted_cands = sorted(candidates, key=lambda x: x[1])
+        scores = [c[1] for c in sorted_cands]
+        n = len(scores)
+        median = scores[n // 2] if n % 2 else (scores[n // 2 - 1] + scores[n // 2]) / 2
+
+        # 获取 offspring count
+        ids = [c[0] for c in sorted_cands]
+        offspring: dict[str, int] = {}
+        if ids:
+            placeholders = ",".join(["?"] * len(ids))
+            rows = self._db.fetchall(
+                f"""
+                SELECT candidate_id, offspring_count
+                FROM candidate_search_state
+                WHERE candidate_id IN ({placeholders})
+                """,
+                tuple(ids),
+            )
+            offspring = {r["candidate_id"]: (r["offspring_count"] or 0) for r in rows}
+
+        def sigmoid(x: float) -> float:
+            return 1.0 / (1.0 + math.exp(-x))
+
+        weights = []
+        for cid, score in sorted_cands:
+            s_i = sigmoid(self._weighted_lambda * (score - median))
+            h_i = 1.0 / (1.0 + offspring.get(cid, 0))
+            weights.append(s_i * h_i)
+
+        total = sum(weights)
+        probs = [w / total for w in weights] if total > 0 else [1.0 / n] * n
+
+        # 不放回采样
+        selected: list[int] = []
+        available = list(range(n))
+        for _ in range(min(count, n)):
+            cum = 0.0
+            r = random.random()
+            for idx in available:
+                cum += probs[idx]
+                if r <= cum:
+                    selected.append(idx)
+                    available.remove(idx)
+                    # 重新归一化
+                    remaining = [probs[i] for i in available]
+                    rsum = sum(remaining)
+                    probs = [p / rsum if i in available else 0.0 for i, p in enumerate(probs)]
+                    break
+
+        return [sorted_cands[i][0] for i in selected]
 
 
 class ExplorationSelector(ParentSelector):

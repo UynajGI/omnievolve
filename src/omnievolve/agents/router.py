@@ -253,3 +253,22 @@ def compute_critic_reward(
 ) -> float:
     """计算 Critic 奖励."""
     return 0.5 * defect_recall - 0.3 * false_rejection_rate + 0.2 * evaluator_cost_saved
+
+
+def compute_shinka_reward(
+    score: float,
+    parent_score: float,
+    baseline_score: float,
+) -> float:
+    """ShinkaEvolve 相对奖励公式.
+
+    r_u = exp(max(r_i - r_b, 0)) - 1
+    其中 r_b = max(parent_score, baseline_score)
+
+    奖励 LLM 产生大幅改进，惩罚 small tweaks。
+    """
+    import math
+
+    baseline = max(parent_score, baseline_score)
+    improvement = max(score - baseline, 0.0)
+    return math.exp(improvement) - 1.0
