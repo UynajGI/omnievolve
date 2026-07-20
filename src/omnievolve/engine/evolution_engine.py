@@ -18,11 +18,14 @@ Fast Loop 每一代：
 Slow Loop 每 health_window_gens 代：
     TelemetryAggregator → HealthPolicy.assess → MetaPlanner.propose
     → Governance 分类 → 创建 Challenger → Replay/Canary 比较 → Promote/Reject
+
+参考 OpenEvolve: 支持 SIGINT/SIGTERM 优雅关闭，保存当前状态后退出。
 """
 
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from dataclasses import dataclass, field
 
@@ -237,6 +240,8 @@ class EvolutionEngine:
         self._meta_scratchpad: str = ""
         # 失败方向追踪（用于 meta-scratchpad 更新）
         self._failed_directions: list[str] = []
+        # OpenEvolve: graceful shutdown flag (SIGINT/SIGTERM)
+        self._shutdown_requested = False
 
     # ------------------------------------------------------------------ #
     #  公共 API
@@ -254,8 +259,29 @@ class EvolutionEngine:
         return self._champion_policy_id
 
     def run(self, initial_code: str, task_name: str) -> EvolutionResult:
-        """启动进化循环（Fast Loop + 按窗口触发 Slow Loop）."""
+        """启动进化循环（Fast Loop + 按窗口触发 Slow Loop）.
+
+        支持 SIGINT/SIGTERM 优雅关闭（参考 OpenEvolve）。
+        """
         self._start_time = time.time()
+        self._shutdown_requested = False
+
+        # OpenEvolve: 信号处理器 — 优雅关闭
+        def _handle_shutdown(signum: int, frame: object) -> None:
+            logger.info("Received signal %d, initiating graceful shutdown...", signum)
+            self._shutdown_requested = True
+
+        prev_int = signal.signal(signal.SIGINT, _handle_shutdown)
+        prev_term = signal.signal(signal.SIGTERM, _handle_shutdown)
+        try:
+            result = self._run_evolution(initial_code, task_name)
+        finally:
+            signal.signal(signal.SIGINT, prev_int)
+            signal.signal(signal.SIGTERM, prev_term)
+        return result
+
+    def _run_evolution(self, initial_code: str, task_name: str) -> EvolutionResult:
+        """进化主循环（内部实现）."""
         logger.info("Starting evolution: %s", task_name)
 
         # 注册初始 Champion Policy
@@ -282,6 +308,9 @@ class EvolutionEngine:
 
         # 主循环
         for gen in range(1, self._config.max_generations + 1):
+            if self._shutdown_requested:
+                logger.warning("Shutdown requested, stopping evolution at gen %d", gen - 1)
+                break
             self._current_generation = gen
 
             if self._budget_guard.state.is_exhausted:
@@ -368,7 +397,7 @@ class EvolutionEngine:
     def _step_generation(self, generation: int, task_name: str) -> None:
         """执行一代进化（Fast Loop 11 步 × population_size 个候选）."""
         for i in range(self._config.population_size):
-            if not self._budget_guard.can_proceed():
+            if self._shutdown_requested or not self._budget_guard.can_proceed():
                 break
             try:
                 island_id = f"island_{i % self._config.island_count}"
