@@ -10,12 +10,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -23,7 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[docker]"
-          pip install ruff pytest mypy
+          pip install ruff pytest pytest-cov mypy
 
       - name: Ruff lint
         run: ruff check src/omnievolve/ tests/
@@ -31,8 +34,33 @@ jobs:
       - name: Mypy type check
         run: python -m mypy src/omnievolve/ --ignore-missing-imports
 
-      - name: Pytest
-        run: python -m pytest -q
+      - name: Pytest + Coverage
+        run: pytest -q --cov=omnievolve --cov-report=term-missing --cov-report=xml:coverage.xml -m "not llm and not slow"
+
+      - name: Upload Coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-py${{ matrix.python-version }}
+          path: coverage.xml
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[docker]"
+          pip install ruff pytest pytest-cov mypy
+
+      - name: Slow & E2E tests
+        run: pytest -q -m "slow or e2e"
 
   docker:
     runs-on: ubuntu-latest

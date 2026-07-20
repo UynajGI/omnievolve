@@ -38,6 +38,8 @@ from omnievolve.storage.graph_store import GraphStore
 from omnievolve.storage.migrations import initialize_database
 from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
 
+pytestmark = pytest.mark.e2e
+
 # --------------------------------------------------------------------------- #
 #  Test fixtures / fakes
 # --------------------------------------------------------------------------- #

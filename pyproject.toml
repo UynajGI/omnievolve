@@ -48,6 +48,13 @@ ignore = ["E501", "UP046", "UP042", "N806", "N803"]  # NetworkX 惯例使用 G �
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+markers = [
+    "unit: 纯单元测试，不依赖外部服务",
+    "integration: 集成测试，需要真实数据库/文件系统",
+    "llm: 需要 LLM API 调用（需要 secrets）",
+    "slow: 运行时间 > 5 秒的性能/soak 测试",
+    "e2e: 端到端全管线测试（含 fake LLM）",
+]
 
 [build-system]
 requires = ["hatchling"]

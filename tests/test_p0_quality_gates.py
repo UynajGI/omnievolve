@@ -355,6 +355,7 @@ class TestKill9Recovery:
 # =========================================================================== #
 
 
+@pytest.mark.slow
 class TestSoak500Candidates:
     """P0-8: 500 候选长时间稳定运行.
 
