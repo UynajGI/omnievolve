@@ -509,6 +509,34 @@ def recover(
 
 
 @app.command()
+def migrate(
+    config: str = typer.Option("omnievolve.toml", "--config", "-c", help="配置文件路径"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="仅检查版本，不执行迁移"),
+) -> None:
+    """执行数据库迁移."""
+    from omnievolve.storage.db import Database
+    from omnievolve.storage.migrations import CURRENT_VERSION, get_schema_version, migrate
+
+    settings, _, _ = _bootstrap(config, trusted=True)[:3]
+    db = Database(settings.storage.db_path)
+
+    current = get_schema_version(db)
+    console.print(f"Current schema version: {current}")
+    console.print(f"Target schema version:  {CURRENT_VERSION}")
+
+    if current >= CURRENT_VERSION:
+        console.print("[green]Database is up-to-date[/green]")
+    else:
+        if dry_run:
+            console.print(f"[yellow]Would migrate from {current} → {CURRENT_VERSION}[/yellow]")
+        else:
+            target = migrate(db)
+            console.print(f"[green]Migration complete: {current} → {target}[/green]")
+
+    db.close()
+
+
+@app.command()
 def doctor() -> None:
     """环境检测."""
     console.print("[bold]OmniEvolve Doctor[/bold]\n")

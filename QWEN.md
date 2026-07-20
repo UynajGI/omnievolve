@@ -38,7 +38,7 @@ src/omnievolve/
   storage/    SQLite DB, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, JobStore, UnitOfWork
   plugins/    BasePlugin, QuantPlugin, GeoPlugin, PluginDiscovery (namespace autoload)
   utils/      Embedding (SentenceTransformerEmbedder + LiteLLMEmbedder + FakeEmbedder, create_embedder factory, HF→hf-mirror→ModelScope auto-fallback), TokenCounter, SeedManager, ConfigSnapshot, Hashing
-  cli.py      Typer CLI (run/status/best/export/policy/audit/recover/doctor)
+  cli.py      Typer CLI (run/status/best/export/policy/audit/recover/migrate/doctor)
   config.py   OmniEvolveSettings (pydantic-settings)
   exceptions.py  类型化异常层次 (OmniEvolveError → Sandbox/LLM/Evolution/…)
 docs/         User-facing docs (NOT project-design specs)
