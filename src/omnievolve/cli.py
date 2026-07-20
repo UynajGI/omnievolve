@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
@@ -176,6 +177,10 @@ def run(
 ) -> None:
     """启动候选进化；按健康窗口自动运行受控策略进化."""
     from omnievolve.utils.logging import setup_logging
+
+    # 自动加载 .env / .local.env → os.environ（优先级: .local.env > .env > 环境变量）
+    load_dotenv(".env", override=False)
+    load_dotenv(".local.env", override=True)
 
     setup_logging()
     console.print("[bold green]OmniEvolve[/bold green] - Starting evolution")
