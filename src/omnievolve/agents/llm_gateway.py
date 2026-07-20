@@ -56,6 +56,8 @@ class LLMGateway:
     """LLM 网关 - 统一调用接口.
 
     使用 LiteLLM 连接各种 LLM API 和本地模型。
+
+    P1 韧性: 集成 CircuitBreaker 和 TokenBucketRateLimiter
     """
 
     def __init__(
@@ -68,6 +70,8 @@ class LLMGateway:
         max_retries: int = 3,
         retry_backoff_base: float = 1.0,
         fallback_model: str | None = None,
+        circuit_breaker: Any | None = None,
+        rate_limiter: Any | None = None,
     ) -> None:
         self._db = db
         self._default_model = default_model
@@ -78,6 +82,9 @@ class LLMGateway:
         self._fallback_model = fallback_model
         self._total_tokens = 0
         self._total_cost = 0.0
+        # P1: 熔断器 + 限流
+        self._circuit_breaker = circuit_breaker
+        self._rate_limiter = rate_limiter
 
     def chat(
         self,
@@ -106,6 +113,20 @@ class LLMGateway:
         """
         model = model or self._default_model
         start_time = time.time()
+
+        # P1: 熔断器检查 — OPEN 时快速失败（HALF_OPEN 允许试探）
+        if self._circuit_breaker and not self._circuit_breaker.can_execute():
+            logger.warning("Circuit breaker OPEN — rejecting LLM call")
+            raise RuntimeError(
+                "LLM gateway circuit breaker is OPEN. "
+                "All requests are rejected to protect cost/availability."
+            )
+
+        # P1: 速率限制
+        if self._rate_limiter:
+            waited = self._rate_limiter.acquire()
+            if waited > 0:
+                logger.debug("Rate limiter waited %.1fs", waited)
 
         # S5-10: retry/backoff/fallback
         last_error: Exception | None = None
@@ -145,6 +166,10 @@ class LLMGateway:
 
                     self._total_tokens += llm_response.total_tokens
 
+                    # P1: 熔断器 — 成功
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_success()
+
                     if self._db:
                         self._record_call(
                             experiment_id=experiment_id,
@@ -159,6 +184,8 @@ class LLMGateway:
 
                 except ImportError:
                     logger.warning("litellm not installed, using mock response")
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_failure("litellm not installed")
                     return self._mock_response(messages, try_model)
                 except Exception as e:
                     last_error = e
@@ -169,6 +196,9 @@ class LLMGateway:
                         try_model,
                         e,
                     )
+                    # P1: 熔断器 — 单次失败
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_failure(str(e))
                     if attempt < self._max_retries - 1:
                         backoff = self._retry_backoff_base * (2**attempt)
                         time.sleep(backoff)
