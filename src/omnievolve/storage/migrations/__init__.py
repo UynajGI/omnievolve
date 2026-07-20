@@ -17,7 +17,7 @@ from omnievolve.storage.db import Database
 logger = logging.getLogger(__name__)
 
 # 当前 schema 版本
-CURRENT_VERSION = 1
+CURRENT_VERSION = 2
 
 
 def get_schema_version(db: Database) -> int:

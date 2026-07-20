@@ -26,8 +26,10 @@ class TestSchemaCreation:
 
     def test_schema_version_created(self, db: Database):
         """schema_version 表应存在并有初始版本."""
+        from omnievolve.storage.migrations import CURRENT_VERSION
+
         version = get_schema_version(db)
-        assert version == 1
+        assert version == CURRENT_VERSION
 
     def test_all_tables_created(self, db: Database):
         """所有核心表应存在."""
@@ -62,11 +64,11 @@ class TestSchemaCreation:
 
     def test_migration_idempotent(self, db: Database):
         """迁移应幂等."""
-        from omnievolve.storage.migrations import migrate
+        from omnievolve.storage.migrations import CURRENT_VERSION, migrate
 
         # 再次运行迁移不应报错
         version = migrate(db)
-        assert version == 1
+        assert version == CURRENT_VERSION
 
 
 class TestForeignKeys:

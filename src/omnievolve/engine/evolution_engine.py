@@ -355,6 +355,9 @@ class EvolutionEngine:
                 f"{self._best_candidate[1]:.4f}" if self._best_candidate else "N/A",
             )
 
+            # P1: 检查点 — 每代结束时持久化易失状态（崩溃恢复）
+            self._save_checkpoint()
+
         return self._finalize(task_name)
 
     def resume(self, experiment_id: str) -> EvolutionResult:
@@ -363,6 +366,10 @@ class EvolutionEngine:
         重新认领租约过期的任务，从最大 generation + 1 继续。
         """
         self._experiment_id = experiment_id
+
+        # P1: 恢复检查点状态（meta_scratchpad 等易失状态）
+        self._load_checkpoint()
+
         exp = self._experiment_repo.get(experiment_id)
         if exp is None:
             raise ValueError(f"Experiment not found: {experiment_id}")
@@ -1251,12 +1258,63 @@ class EvolutionEngine:
         for row in rows:
             self._mcts.add_node(row["id"], parent=None, prior=0.5)
 
+    # P1: 检查点持久化 — 每代结束时保存易失状态
+
+    def _save_checkpoint(self) -> None:
+        """持久化当前易失状态到 experiment 表（崩溃恢复）."""
+        import json
+
+        checkpoint = {
+            "generation": self._current_generation,
+            "total_candidates": self._total_candidates,
+            "meta_scratchpad": self._meta_scratchpad,
+            "failed_directions": self._failed_directions,
+            "recent_scores": self._recent_scores[-20:],
+        }
+        try:
+            self._db.execute(
+                "UPDATE experiment SET checkpoint_data = ? WHERE id = ?",
+                (json.dumps(checkpoint, ensure_ascii=False), self._experiment_id),
+            )
+        except Exception:
+            logger.debug("Failed to save checkpoint (may be running v001 schema)", exc_info=True)
+
+    def _load_checkpoint(self) -> None:
+        """从 experiment 表恢复易失状态."""
+        import json
+
+        try:
+            row = self._db.fetchone(
+                "SELECT checkpoint_data FROM experiment WHERE id = ?",
+                (self._experiment_id,),
+            )
+            if row and row["checkpoint_data"]:
+                checkpoint = json.loads(row["checkpoint_data"])
+                self._meta_scratchpad = checkpoint.get("meta_scratchpad", "")
+                self._failed_directions = checkpoint.get("failed_directions", [])
+                self._recent_scores = checkpoint.get("recent_scores", [])
+                self._total_candidates = checkpoint.get("total_candidates", self._total_candidates)
+                logger.info(
+                    "Checkpoint loaded: gen=%d, candidates=%d, scratchpad=%d chars",
+                    checkpoint.get("generation", 0),
+                    self._total_candidates,
+                    len(self._meta_scratchpad),
+                )
+        except Exception:
+            logger.debug("No checkpoint found (fresh experiment or v001 schema)", exc_info=True)
+
     def _update_best(self, candidate_id: str, score: float) -> None:
         if self._best_candidate is None or score > self._best_candidate[1]:
             self._best_candidate = (candidate_id, score)
             logger.info("New best: %s score=%.4f", candidate_id, score)
 
     def _finalize(self, task_name: str) -> EvolutionResult:
+        """P1: 持久化最终检查点状态."""
+        # 确保最终检查点已写入
+        self._save_checkpoint()
+        return self._finalize_inner(task_name)
+
+    def _finalize_inner(self, task_name: str) -> EvolutionResult:
         """收尾：更新实验状态，构造 EvolutionResult."""
         elapsed = time.time() - self._start_time if self._start_time else 0.0
         stats = self._budget_guard.counter.get_stats()

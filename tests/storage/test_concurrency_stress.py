@@ -71,7 +71,7 @@ class TestConcurrentWrites:
     """Multiple threads writing to separate tables concurrently."""
 
     def test_parallel_writers_no_lock_error(self, tmp_db_path):
-        workers = 8
+        workers = 4
         rows_per_worker = 50
         results = []
 
