@@ -499,6 +499,21 @@ class EvolutionEngine:
         # 构建 AgentContext（S5-04: 注入 champion prompt 版本）
         # ShinkaEvolve/AlphaEvolve: inspiration programs（多样化的高分候选 + 随机样本）
         inspiration = self._collect_inspiration_programs(parent_ids)
+
+        # AM-01: 注入父代码到 inspiration 中，Coder 使用它作为 diff 基础
+        for i, pid in enumerate(parent_ids):
+            if i < len(parent_codes):
+                inspiration.insert(
+                    0,
+                    {
+                        "is_parent": True,
+                        "candidate_id": pid,
+                        "score": 0.0,
+                        "code": parent_codes[i],
+                        "source": "parent",
+                    },
+                )
+
         ctx = AgentContext(
             experiment_id=self._experiment_id,
             task_id=task_name,
@@ -531,9 +546,16 @@ class EvolutionEngine:
 
         # 步骤 6: Coder 生成代码（带 critic 重试）
         code = self._coder.generate_code(ctx, thought)
-        if base_code and not code.full_code.strip():
-            # crossover 已产出代码而 coder 失败时，回退使用融合代码
-            code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
+        if not code.full_code.strip():
+            # diff 可能已解析但无法 apply → 回退到父代码或 crossover 基线
+            if base_code:
+                code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
+            elif parent_codes:
+                code = type(code)(
+                    diff="",
+                    full_code=parent_codes[0],
+                    explanation="fallback to parent code (diff could not be applied)",
+                )
 
         passed, _ = self._critic.review(code, thought)
         retries = 0

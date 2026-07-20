@@ -1,6 +1,7 @@
-"""Coder Agent - 代码生成.
+"""Coder Agent — 代码生成（AlphaEvolve SEARCH/REPLACE diff 格式）.
 
-S5-07: 实现 CoderAgent diff/full rewrite
+S5-07: CoderAgent diff/full rewrite
+AM-01: SEARCH/REPLACE diff 格式 + EVOLVE-BLOCK 感知
 """
 
 from __future__ import annotations
@@ -14,22 +15,39 @@ from omnievolve.agents.llm_gateway import LLMGateway
 logger = logging.getLogger(__name__)
 
 CODER_SYSTEM_PROMPT = """You are the Coder Agent in an evolutionary code optimization system.
-Your role is to implement the improvement thought as code changes.
+Your role is to improve code by proposing targeted edits using SEARCH/REPLACE blocks.
 
-Given the parent code and the improvement thought, generate the modified code.
+Given the current code and an improvement thought, propose one or more SEARCH/REPLACE edits.
+
+Output format — use SEARCH/REPLACE blocks:
+
+<<<<<<< SEARCH
+# Exact code to find and replace
+=======
+# New code that replaces the original code
+>>>>>>> REPLACE
+
+Rules:
+- SEARCH must match EXACTLY (whitespace, indentation, everything).
+- Make minimal, focused changes — do not rewrite the entire code.
+- Each REPLACE block should be a meaningful improvement.
+- You may propose multiple SEARCH/REPLACE blocks for multiple changes."""
+
+
+CODER_FALLBACK_PROMPT = """You are the Coder Agent in an evolutionary code optimization system.
+Your role is to implement the improvement thought as code changes.
 
 Output format (JSON):
 {
     "full_code": "The complete modified code",
     "diff": "Summary of changes made",
-    "explanation": "How the changes implement the thought",
-    "touched_files": ["file1.py", "file2.py"]
+    "explanation": "How the changes implement the thought"
 }
 """
 
 
 class Coder:
-    """Coder Agent - 负责代码生成."""
+    """Coder Agent — 生成 SEARCH/REPLACE diff 或全量代码."""
 
     def __init__(
         self,
@@ -43,10 +61,7 @@ class Coder:
         self._system_prompt = system_prompt or CODER_SYSTEM_PROMPT
 
     def generate_code(self, ctx: AgentContext, thought: ThoughtOutput) -> CodeOutput:
-        """生成代码.
-
-        基于思想生成代码修改。
-        """
+        """生成代码 —— 优先 SEARCH/REPLACE diff，回退全量生成."""
         user_message = self._build_user_message(ctx, thought)
 
         messages = [
@@ -57,38 +72,74 @@ class Coder:
         response = self._llm.chat(
             messages,
             model=ctx.model or self._model,
-            temperature=0.3,  # 较低温度保证代码质量
+            temperature=0.3,
             experiment_id=ctx.experiment_id,
             agent_role="coder",
             prompt_version_id=ctx.prompt_version_id or None,
         )
 
-        return self._parse_response(response.content)
+        return self._parse_response(response.content, ctx)
 
     def _build_user_message(self, ctx: AgentContext, thought: ThoughtOutput) -> str:
-        """构建用户消息."""
+        """构建用户消息 — 含父代码 + 高分历史程序."""
         parts = [
             f"## Improvement Thought:\n{thought.thought}",
             f"\n## Rationale:\n{thought.rationale}",
         ]
 
-        if ctx.parent_artifact_hashes:
-            parts.append("\n## Parent Code Hashes:")
-            for h in ctx.parent_artifact_hashes[:2]:
-                parts.append(f"- {h}")
+        # 父代码（用于 diff 基础）
+        parent_code = self._get_parent_code(ctx)
+        if parent_code:
+            parts.append(f"\n## Current Code to Improve:\n```python\n{parent_code}\n```")
+
+        # Inspiration: 高分历史程序
+        if ctx.inspiration_programs:
+            parts.append("\n## High-Scoring Programs for Inspiration:")
+            for prog in ctx.inspiration_programs[:3]:
+                score = prog.get("score", "?")
+                code = prog.get("code", "")
+                if len(code) > 800:
+                    code = code[:800] + "\n... (truncated)"
+                parts.append(f"Score: {score}\n```python\n{code}\n```")
+
+        # 记忆摘要
+        if ctx.memory_hits:
+            parts.append("\n## Past Insights:")
+            for m in ctx.memory_hits[:3]:
+                parts.append(f"- {m.get('outcome_summary', '')[:200]}")
 
         parts.append("\n## Instructions:")
-        parts.append("Generate the complete modified code that implements this thought.")
+        parts.append(
+            "Propose targeted SEARCH/REPLACE edits to improve the current code. "
+            "Make minimal, focused changes."
+        )
 
         return "\n".join(parts)
 
-    def _parse_response(self, content: str) -> CodeOutput:
-        """解析 LLM 响应.
+    def _parse_response(self, content: str, ctx: AgentContext) -> CodeOutput:
+        """解析 LLM 响应 — 优先 SEARCH/REPLACE diff，回退 JSON/全量."""
+        from omnievolve.engine.diff import apply_diffs, parse_diffs
 
-        S5-09: 实现结构化输出校验与有限修复。
-        当 JSON 解析失败时，尝试提取代码块或裸代码作为 full_code。
-        """
-        # 尝试 1: 直接解析 JSON
+        # 尝试 1: SEARCH/REPLACE diff
+        diffs = parse_diffs(content)
+        if diffs:
+            parent_code = self._get_parent_code(ctx)
+            if parent_code:
+                result = apply_diffs(parent_code, diffs)
+                if result:
+                    return CodeOutput(
+                        diff=content[:500],
+                        full_code=result,
+                        explanation=f"Applied {len(diffs)} SEARCH/REPLACE block(s)",
+                        touched_files=[],
+                    )
+            return CodeOutput(
+                diff=content[:500],
+                full_code="",
+                explanation=f"Parsed {len(diffs)} diff block(s) but could not apply",
+            )
+
+        # 尝试 2: JSON 格式（回退）
         try:
             data = json.loads(content)
             return CodeOutput(
@@ -100,7 +151,7 @@ class Coder:
         except json.JSONDecodeError:
             pass
 
-        # 尝试 2 (repair): 提取 ```python ... ``` 代码块
+        # 尝试 3: 提取 ```python ... ``` 代码块
         import re
 
         code_blocks = re.findall(r"```(?:python)?\s*\n(.*?)```", content, re.DOTALL)
@@ -108,21 +159,20 @@ class Coder:
             return CodeOutput(
                 diff="",
                 full_code=code_blocks[-1].strip(),
-                explanation="Extracted from code block (JSON parse failed)",
+                explanation="Extracted from code block",
             )
 
-        # 尝试 3 (repair): 检查是否包含 full_code 字段但 JSON 不完整
-        full_code_match = re.search(r'"full_code"\s*:\s*"((?:[^"\\]|\\.)*)"', content)
-        if full_code_match:
-            return CodeOutput(
-                diff="",
-                full_code=full_code_match.group(1).encode().decode("unicode_escape"),
-                explanation="Extracted full_code field (partial JSON repair)",
-            )
-
-        # 回退：假设整个内容是代码
+        # 回退: 整个响应作为代码
         return CodeOutput(
             diff="",
             full_code=content,
-            explanation="Raw content used as code (no structured output detected)",
+            explanation="Raw content used as code",
         )
+
+    def _get_parent_code(self, ctx: AgentContext) -> str:
+        """从上下文获取父代码."""
+        if ctx.inspiration_programs:
+            for prog in ctx.inspiration_programs:
+                if prog.get("is_parent") and prog.get("code"):
+                    return prog["code"]
+        return ""
