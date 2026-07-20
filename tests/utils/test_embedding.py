@@ -114,7 +114,7 @@ class TestSentenceTransformerEmbedder:
         e = SentenceTransformerEmbedder(model="all-MiniLM-L6-v2")
 
         class MockModel:
-            def get_sentence_embedding_dimension(self):
+            def get_embedding_dimension(self):
                 return 384
 
         e._model = MockModel()  # noqa: SLF001
@@ -139,7 +139,7 @@ class TestSentenceTransformerEmbedder:
             call_order.append("modelscope")
 
             class MockModel:
-                def get_sentence_embedding_dimension(self):
+                def get_embedding_dimension(self):
                     return 768
 
             return MockModel()

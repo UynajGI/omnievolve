@@ -34,16 +34,19 @@ latency_weight = 0.1
 role_conditioned = true
 
 [embedding.code]
-provider = "voyage"
-model = "voyage-code-3"
+# 本地: Qwen3-Embedding-0.6B (2025 SOTA, Apache-2.0, ~1.2GB, 1024d)
+# API:  "voyage" → "voyage-code-3"
+provider = "local"
+model = "Qwen/Qwen3-Embedding-0.6B"
 revision = "default"
 dimension = 1024
 normalization = "provider_default"
 input_type = "document"
 
 [embedding.thought]
+# 与 code 共用 Qwen3-Embedding-0.6B，只需下载一次
 provider = "local"
-model = "bge-m3"
+model = "Qwen/Qwen3-Embedding-0.6B"
 revision = "default"
 dimension = 1024
 normalization = "l2"

@@ -62,8 +62,8 @@ class ModelsSettings(BaseSettings):
 class EmbeddingCodeSettings(BaseSettings):
     """代码嵌入配置."""
 
-    provider: str = "voyage"
-    model: str = "voyage-code-3"
+    provider: str = "local"
+    model: str = "Qwen/Qwen3-Embedding-0.6B"
     revision: str = "default"
     dimension: int = 1024
     normalization: str = "provider_default"
@@ -74,7 +74,7 @@ class EmbeddingThoughtSettings(BaseSettings):
     """思想嵌入配置."""
 
     provider: str = "local"
-    model: str = "bge-m3"
+    model: str = "Qwen/Qwen3-Embedding-0.6B"
     revision: str = "default"
     dimension: int = 1024
     normalization: str = "l2"

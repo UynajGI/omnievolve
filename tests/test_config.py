@@ -86,20 +86,21 @@ class TestModelsSettings:
 class TestEmbeddingCodeSettings:
     def test_defaults(self):
         s = EmbeddingCodeSettings()
-        assert s.provider == "voyage"
+        assert s.provider == "local"
+        assert "Qwen3-Embedding" in s.model
         assert s.dimension == 1024
 
     def test_local_config(self):
-        s = EmbeddingCodeSettings(provider="local", model="all-MiniLM-L6-v2", dimension=384)
-        assert s.provider == "local"
-        assert s.dimension == 384
+        s = EmbeddingCodeSettings(provider="api", model="voyage-code-3", dimension=1024)
+        assert s.provider == "api"
+        assert s.dimension == 1024
 
 
 class TestEmbeddingThoughtSettings:
     def test_defaults(self):
         s = EmbeddingThoughtSettings()
         assert s.provider == "local"
-        assert s.model == "bge-m3"
+        assert "Qwen3-Embedding" in s.model
 
 
 class TestNoveltySettings:

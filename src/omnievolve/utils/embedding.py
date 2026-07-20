@@ -129,7 +129,7 @@ class SentenceTransformerEmbedder:
     @property
     def dimension(self) -> int:
         self._ensure_loaded()
-        return self._model.get_sentence_embedding_dimension()
+        return self._model.get_embedding_dimension()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """使用本地模型嵌入."""
@@ -153,7 +153,7 @@ class SentenceTransformerEmbedder:
             logger.info(
                 "Loaded local embedding model from HuggingFace: %s (dim=%d, device=%s)",
                 self._model_name,
-                self._model.get_sentence_embedding_dimension(),
+                self._model.get_embedding_dimension(),
                 self._device,
             )
             return
@@ -166,7 +166,7 @@ class SentenceTransformerEmbedder:
             logger.info(
                 "Loaded local embedding model from HF mirror: %s (dim=%d, device=%s)",
                 self._model_name,
-                self._model.get_sentence_embedding_dimension(),
+                self._model.get_embedding_dimension(),
                 self._device,
             )
             return
@@ -179,7 +179,7 @@ class SentenceTransformerEmbedder:
             logger.info(
                 "Loaded local embedding model from ModelScope: %s (dim=%d, device=%s)",
                 self._model_name,
-                self._model.get_sentence_embedding_dimension(),
+                self._model.get_embedding_dimension(),
                 self._device,
             )
             return
@@ -193,8 +193,11 @@ class SentenceTransformerEmbedder:
 
     def _load_from_huggingface(self):
         """从 HuggingFace 官方加载模型."""
+        import os
+
         from sentence_transformers import SentenceTransformer
 
+        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "15")
         return SentenceTransformer(self._model_name, device=self._device)
 
     def _load_from_hf_mirror(self):
