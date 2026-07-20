@@ -2,12 +2,16 @@
 
 S6-01: 冻结 EmbeddingProfile 数据模型
 S6-02: 实现 Embedder Protocol 与 fake embedder
+S6-03: 实现 API/Local Embedder Adapter
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -56,15 +60,17 @@ class FakeEmbedder:
 
         vectors = []
         for text in texts:
-            # 使用文本哈希生成确定性向量
             h = hashlib.sha256(text.encode()).hexdigest()
-            vector = [int(h[i : i + 2], 16) / 255.0 for i in range(0, self._dimension * 2, 2)]
+            # 哈希只有 32 个 byte-pair；高维度时循环复用
+            byte_count = self._dimension * 2
+            h_cycled = h * (byte_count // len(h) + 1)
+            vector = [int(h_cycled[i : i + 2], 16) / 255.0 for i in range(0, byte_count, 2)]
             vectors.append(vector[: self._dimension])
         return vectors
 
 
 class LiteLLMEmbedder:
-    """LiteLLM Embedder Adapter."""
+    """LiteLLM Embedder Adapter — API 嵌入模型."""
 
     def __init__(
         self,
@@ -92,5 +98,133 @@ class LiteLLMEmbedder:
             )
             return [item["embedding"] for item in response.data]
         except ImportError:
-            # 回退到 FakeEmbedder
+            logger.warning("litellm not available, falling back to FakeEmbedder")
             return FakeEmbedder(self._dimension).embed(texts)
+        except Exception:
+            logger.exception("LiteLLM embedding failed, falling back to FakeEmbedder")
+            return FakeEmbedder(self._dimension).embed(texts)
+
+
+class SentenceTransformerEmbedder:
+    """本地 Embedder — 使用 sentence-transformers 模型.
+
+    S6-04: 实现本地 Embedder Adapter
+
+    支持所有 sentence-transformers 兼容模型：
+    - bge-m3, all-MiniLM-L6-v2, all-mpnet-base-v2, etc.
+    """
+
+    def __init__(
+        self,
+        model: str = "all-MiniLM-L6-v2",
+        *,
+        device: str = "cpu",
+        normalize: bool = True,
+    ) -> None:
+        self._model_name = model
+        self._device = device
+        self._normalize = normalize
+        self._model = None  # 延迟加载
+
+    @property
+    def dimension(self) -> int:
+        self._ensure_loaded()
+        return self._model.get_sentence_embedding_dimension()
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """使用本地模型嵌入."""
+        self._ensure_loaded()
+        embeddings = self._model.encode(
+            texts,
+            normalize_embeddings=self._normalize,
+            show_progress_bar=False,
+        )
+        return embeddings.tolist()
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
+
+        errors: list[str] = []
+
+        # 1. 先尝试 HuggingFace
+        try:
+            self._model = self._load_from_huggingface()
+            logger.info(
+                "Loaded local embedding model from HuggingFace: %s (dim=%d, device=%s)",
+                self._model_name,
+                self._model.get_sentence_embedding_dimension(),
+                self._device,
+            )
+            return
+        except Exception as e:
+            errors.append(f"HuggingFace: {e}")
+
+        # 2. 再尝试 ModelScope（魔塔）镜像
+        try:
+            self._model = self._load_from_modelscope()
+            logger.info(
+                "Loaded local embedding model from ModelScope: %s (dim=%d, device=%s)",
+                self._model_name,
+                self._model.get_sentence_embedding_dimension(),
+                self._device,
+            )
+            return
+        except Exception as e:
+            errors.append(f"ModelScope: {e}")
+
+        raise RuntimeError(
+            f"Failed to load embedding model '{self._model_name}' from any source:\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        ) from None
+
+    def _load_from_huggingface(self):
+        """从 HuggingFace 加载模型."""
+        from sentence_transformers import SentenceTransformer
+
+        return SentenceTransformer(self._model_name, device=self._device)
+
+    def _load_from_modelscope(self):
+        """从 ModelScope（魔塔）加载模型.
+
+        通过设置 HF_ENDPOINT 指向 ModelScope 镜像实现透明下载。
+        """
+        import os
+
+        from sentence_transformers import SentenceTransformer
+
+        # ModelScope 镜像
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
+        try:
+            return SentenceTransformer(self._model_name, device=self._device)
+        finally:
+            # 恢复默认，避免影响后续操作
+            os.environ.pop("HF_ENDPOINT", None)
+
+
+def create_embedder(
+    provider: str,
+    model: str,
+    *,
+    dimension: int = 1024,
+    api_key: str | None = None,
+    device: str = "cpu",
+) -> Embedder:
+    """根据 provider 创建 Embedder.
+
+    Args:
+        provider: "local" / "openai" / "voyage" / "litellm"
+        model: 模型名
+        dimension: 向量维度（API 模式用作 fallback）
+        api_key: API key（API 模式）
+        device: 设备（local 模式，"cpu" 或 "cuda"）
+
+    Returns:
+        Embedder 实例
+    """
+    if provider == "local":
+        return SentenceTransformerEmbedder(model=model, device=device)
+
+    # API 模式：统一走 LiteLLM
+    return LiteLLMEmbedder(model=model, dimension=dimension, api_key=api_key)
