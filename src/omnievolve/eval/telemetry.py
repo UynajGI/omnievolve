@@ -164,19 +164,29 @@ class HealthPolicy:
 
     def __init__(
         self,
+        db: Database | None = None,
         *,
         roi_warn_threshold: float = 0.001,
         entropy_warn_threshold: float = 0.35,
         stagnation_trigger: int = 3,
         pollution_warn_threshold: float = 0.3,
     ) -> None:
+        self._db = db
         self._roi_warn = roi_warn_threshold
         self._entropy_warn = entropy_warn_threshold
         self._stagnation_trigger = stagnation_trigger
         self._pollution_warn = pollution_warn_threshold
         self._history: list[HealthMetrics] = []
 
-    def assess(self, metrics: HealthMetrics) -> HealthOutput:
+    def assess(
+        self,
+        metrics: HealthMetrics,
+        *,
+        experiment_id: str | None = None,
+        generation_start: int = 0,
+        generation_end: int = 0,
+        search_policy_id: str = "default",
+    ) -> HealthOutput:
         """评估健康度."""
         recommendations = []
         alert_level = AlertLevel.OK
@@ -229,7 +239,7 @@ class HealthPolicy:
                 )
                 should_trigger_meta = True
 
-        return HealthOutput(
+        output = HealthOutput(
             roi_score=metrics.roi_score,
             coverage_entropy=metrics.coverage_entropy,
             memory_effectiveness=metrics.memory_effectiveness,
@@ -243,6 +253,33 @@ class HealthPolicy:
                 "api_cost_usd": metrics.api_cost_usd,
             },
         )
+
+        # S8-03: 写入 meta_evaluation_window 表
+        if self._db and experiment_id:
+            self._db.execute(
+                """
+                INSERT INTO meta_evaluation_window
+                    (experiment_id, generation_start, generation_end,
+                     search_policy_id, roi_score, coverage_entropy,
+                     memory_effectiveness, pollution_ratio, alert_level,
+                     should_trigger_meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    experiment_id,
+                    generation_start,
+                    generation_end,
+                    search_policy_id,
+                    output.roi_score,
+                    output.coverage_entropy,
+                    output.memory_effectiveness,
+                    output.pollution_ratio,
+                    output.alert_level.value,
+                    1 if output.should_trigger_meta else 0,
+                ),
+            )
+
+        return output
 
 
 class DashboardDataExporter:

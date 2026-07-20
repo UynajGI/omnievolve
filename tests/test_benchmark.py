@@ -11,6 +11,7 @@ import pytest
 
 from omnievolve.storage.artifact_store import ArtifactStore
 from omnievolve.storage.db import create_memory_database
+from omnievolve.storage.migrations import initialize_database
 from omnievolve.utils.hashing import compute_sha256
 
 pytestmark = pytest.mark.benchmark
@@ -22,6 +23,7 @@ class TestArtifactStorePerformance:
     def test_store_throughput(self, tmp_path):
         """验证存储吞吐量不低于基线（1000 次/秒）."""
         db = create_memory_database()
+        initialize_database(db)
         store = ArtifactStore(tmp_path / "perf_artifacts", db)
         data = b"x" * 1024  # 1KB payload
         count = 500
@@ -37,6 +39,7 @@ class TestArtifactStorePerformance:
     def test_load_throughput(self, tmp_path):
         """验证加载吞吐量不低于基线（5000 次/秒）."""
         db = create_memory_database()
+        initialize_database(db)
         store = ArtifactStore(tmp_path / "perf_artifacts", db)
         data = b"x" * 1024
         artifact_hash = store.store(data, "source")

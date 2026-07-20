@@ -67,6 +67,21 @@ class Database:
 
         return conn
 
+    @property
+    def fts5_available(self) -> bool:
+        """检测 FTS5 是否可用.
+
+        S1-12: 配置 SQLite FTS5 能力检测与降级
+        某些系统 SQLite 编译时未包含 FTS5 扩展。
+        """
+        conn = self.get_connection()
+        try:
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(content)")
+            conn.execute("DROP TABLE IF EXISTS _fts5_probe")
+            return True
+        except Exception:
+            return False
+
     def get_connection(self) -> sqlite3.Connection:
         """获取当前线程的连接（惰性创建）."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
