@@ -1,0 +1,3 @@
+# Sandbox runtime dependencies — pinned for reproducibility
+pytest==8.3.0
+numpy==1.26.4
