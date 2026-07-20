@@ -5,13 +5,21 @@
 ## Quick commands
 
 ```bash
-# Test
-.venv/bin/python -m pytest -q                    # 514 tests
-.venv/bin/python -m pytest -q -m "not slow"      # fast subset
+# Test — 分层策略（见 feedback/layered-llm-testing）
+make test                  # Tier 1: 快速单元测试（FakeLLM，CI 默认）
+make test-cov              # Tier 1 + 覆盖率
+make test-llm              # Tier 2: LLM 烟雾测试（2-3代真实进化，需 API key）
+make test-slow             # 慢速/集成测试（Docker, soak）
+make test-all              # 全量（不含 LLM）
+
+# 等效 pytest 命令
+.venv/bin/python -m pytest -q -m "not slow and not llm"   # 583 tests
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
 # Lint / type
+make lint                  # ruff check
+make type-check            # mypy
 .venv/bin/ruff check src/omnievolve/ tests/
 .venv/bin/python -m mypy src/omnievolve/ --ignore-missing-imports
 
@@ -45,7 +53,7 @@ docs/         User-facing docs (NOT project-design specs)
 docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
 reports/      Phase acceptance + gap analysis reports
 examples/     python_optimization + circle_packing demo projects
-tests/        514 tests across 33 files (pytest markers: unit/integration/llm/slow/e2e/benchmark)
+tests/        583 tests across 37 files (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
 uv.lock       Deterministic dependency lock (159 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
