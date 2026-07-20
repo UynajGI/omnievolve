@@ -302,3 +302,116 @@ class TestVectorIndexer:
 
         stats = indexer.get_stats()
         assert isinstance(stats, dict)
+
+
+class TestBetaBackpropagation:
+    """Beta 回传测试 — 验证 Bayesian 价值估计的核心性质."""
+
+    def test_beta_prior_is_uniform(self):
+        """新节点的 Beta(1,1) 先验均值为 0.5."""
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        assert node.alpha == 1.0
+        assert node.beta == 1.0
+        assert node.mean_value == 0.5  # Beta(1,1) 均值
+
+    def test_beta_update_high_reward(self):
+        """高分 → alpha 增加多，beta 增加少 → 均值上升."""
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        node.update_beta(0.9)  # 高分
+        assert node.alpha == 1.9  # 1 + 0.9
+        assert node.beta == 1.1  # 1 + 0.1
+        assert node.mean_value > 0.5
+
+    def test_beta_update_low_reward(self):
+        """低分 → alpha 增加少，beta 增加多 → 均值下降."""
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        node.update_beta(0.1)  # 低分
+        assert node.alpha == 1.1
+        assert node.beta == 1.9
+        assert node.mean_value < 0.5
+
+    def test_beta_resists_single_bad_score(self):
+        """核心性质：单次低分不应永久压低节点价值。
+
+        场景：一个候选单独测试得分 0.3（低），
+        但它可能在与特定组合器配对时达到 0.9。
+        Beta 回传应保留足够不确定性以允许重新探索。
+        """
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        node.update_beta(0.3)  # 单次低分
+
+        # Beta(1.3, 1.7) 均值 ≈ 0.43，仍接近先验 0.5
+        # Frequentist mean 会是 0.3（更低），更可能被剪枝
+        assert node.mean_value > 0.35  # 比 frequentist 0.3 更高
+        assert node.mean_value < 0.5  # 但仍低于先验
+
+        # Beta 方差仍较大 → 不确定性高 → UCB 会继续探索
+        assert node.beta_variance > 0.05
+
+    def test_beta_converges_with_many_visits(self):
+        """多次访问后 Beta 均值趋近真实值."""
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        # 模拟 20 次评分，平均 0.8
+        for _ in range(16):
+            node.update_beta(0.8)
+        for _ in range(4):
+            node.update_beta(0.8)  # 全部 0.8
+
+        # 20 次后 Beta(17, 5) 均值 ≈ 0.77
+        assert abs(node.mean_value - 0.77) < 0.05
+
+    def test_beta_vs_frequentist_after_one_visit(self):
+        """单次访问后 Beta 均值比 frequentist 更保守."""
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        node.visit_count = 1
+        node.value_sum = 0.0  # 极端低分
+        node.update_beta(0.0)
+
+        # Frequentist: 0.0 (完全悲观)
+        # Beta: 1/(1+2) ≈ 0.33 (保守但不绝望)
+        assert node.raw_mean == 0.0
+        assert node.mean_value > 0.2  # Beta 更乐观
+
+    def test_backpropagate_updates_beta_on_all_ancestors(self):
+        """回传时路径上所有祖先的 Beta 参数都应更新."""
+        from omnievolve.engine.mcts import ProgressiveMCGS
+
+        mcts = ProgressiveMCGS()
+        mcts.add_node("root", parent=None)
+        mcts.add_node("child", parent="root")
+        mcts.add_node("leaf", parent="child")
+
+        mcts.backpropagate("leaf", 0.8)
+
+        # 所有三个节点的 Beta 参数都应更新
+        for nid in ("root", "child", "leaf"):
+            node = mcts._nodes[nid]  # noqa: SLF001
+            assert node.alpha > 1.0  # 被更新过
+            assert node.visit_count == 1
+
+    def test_ucb1_uses_beta_mean(self):
+        """UCB1 的 exploitation 项应使用 Beta 均值而非 frequentist 均值."""
+        from omnievolve.engine.mcts import MCTSNode
+
+        node = MCTSNode(candidate_id="c1")
+        node.visit_count = 3
+        node.value_sum = 0.3  # frequentist mean = 0.1
+        node.update_beta(0.1)
+        node.update_beta(0.1)
+        node.update_beta(0.1)
+
+        # Beta(1.3, 2.7) 均值 ≈ 0.32, frequentist = 0.1
+        ucb = node.ucb1(exploration=0.0, total_visits=10)  # 纯 exploitation
+        assert ucb > 0.25  # 使用 Beta 均值（~0.32），不是 frequentist（0.1）
