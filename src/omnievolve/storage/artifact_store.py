@@ -216,7 +216,8 @@ class ArtifactStore:
         try:
             actual_hash = compute_sha256_file(path)
             return actual_hash == artifact_hash
-        except Exception:
+        except Exception as e:
+            logger.debug("Artifact integrity check failed for %s: %s", artifact_hash[:12], e)
             return False
 
     def delete(self, artifact_hash: str) -> bool:

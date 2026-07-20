@@ -129,11 +129,13 @@ class SentenceTransformerEmbedder:
     @property
     def dimension(self) -> int:
         self._ensure_loaded()
+        assert self._model is not None  # narrowed after _ensure_loaded
         return self._model.get_embedding_dimension()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """使用本地模型嵌入."""
         self._ensure_loaded()
+        assert self._model is not None  # narrowed after _ensure_loaded
         embeddings = self._model.encode(
             texts,
             normalize_embeddings=self._normalize,
@@ -150,6 +152,7 @@ class SentenceTransformerEmbedder:
         # 1. HuggingFace 官方
         try:
             self._model = self._load_from_huggingface()
+            assert self._model is not None
             logger.info(
                 "Loaded local embedding model from HuggingFace: %s (dim=%d, device=%s)",
                 self._model_name,
@@ -163,6 +166,7 @@ class SentenceTransformerEmbedder:
         # 2. HF 镜像（hf-mirror.com）
         try:
             self._model = self._load_from_hf_mirror()
+            assert self._model is not None
             logger.info(
                 "Loaded local embedding model from HF mirror: %s (dim=%d, device=%s)",
                 self._model_name,
@@ -176,6 +180,7 @@ class SentenceTransformerEmbedder:
         # 3. ModelScope（魔塔）
         try:
             self._model = self._load_from_modelscope()
+            assert self._model is not None
             logger.info(
                 "Loaded local embedding model from ModelScope: %s (dim=%d, device=%s)",
                 self._model_name,

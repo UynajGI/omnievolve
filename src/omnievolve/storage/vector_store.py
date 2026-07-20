@@ -311,5 +311,6 @@ class HybridRetriever:
             max_sim = hits[0].similarity
             return max_sim < threshold, max_sim
 
-        except Exception:
+        except Exception as e:
+            logger.warning("Novelty check failed, defaulting to novel: %s", e)
             return True, 0.0

@@ -238,13 +238,13 @@ class BayesianTuner:
                 idx = int(round(v * (len(spec.choices) - 1)))
                 params[spec.name] = spec.choices[max(0, min(idx, len(spec.choices) - 1))]
             elif spec.kind == "int":
-                val = int(round(spec.low + v * (spec.high - spec.low)))
-                params[spec.name] = max(int(spec.low), min(val, int(spec.high)))
+                ival = int(round(spec.low + v * (spec.high - spec.low)))
+                params[spec.name] = max(int(spec.low), min(ival, int(spec.high)))
             else:
-                val = spec.low + v * (spec.high - spec.low)
+                fval: float = spec.low + v * (spec.high - spec.low)
                 if spec.step:
-                    val = round(val / spec.step) * spec.step
-                params[spec.name] = max(spec.low, min(val, spec.high))
+                    fval = round(fval / spec.step) * spec.step
+                params[spec.name] = max(spec.low, min(fval, spec.high))
         return params
 
     # ------------------------------------------------------------------ #

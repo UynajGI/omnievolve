@@ -885,19 +885,19 @@ class EvolutionEngine:
             if self._meta_planner is not None and hasattr(self._meta_planner, "_prompt_evolver"):
                 evolver = self._meta_planner._prompt_evolver  # noqa: SLF001
                 if evolver is not None:
-                    # 获取当前 champion prompt
-                    current_prompt = self._load_champion_prompt("coder")
+                    # 获取当前 champion prompt 版本（用于 parent_id）
+                    champion = self._prompt_repo.get_latest("coder", "champion")
+                    parent_id = champion.id if champion else None
+                    # 获取实际 prompt 文本
+                    current_prompt = getattr(self._coder, "_system_prompt", "")  # noqa: SLF001
                     if current_prompt:
                         new_prompt, mutations = evolver.evolve(current_prompt)
                         if mutations:
-                            # 存储新 prompt 版本
-                            prompt_hash = self._artifact_store.store_text(new_prompt, "prompt")
-                            self._prompt_repo.create_version(
-                                prompt_hash,
-                                experiment_id=self._experiment_id,
-                                role="coder",
-                                parent_version_id=current_prompt,
-                                mutations=mutations,
+                            self._prompt_repo.create(
+                                agent_role="coder",
+                                content=new_prompt,
+                                parent_id=parent_id,
+                                artifact_store=self._artifact_store,
                             )
                             logger.info("Prompt evolved with mutations: %s", mutations)
             return  # evolve_prompt 不走 Challenger 实验路径
