@@ -202,7 +202,11 @@ class EvolutionEngine:
         )
 
         # 搜索组件
-        self._mcts = ProgressiveMCGS(exploration=self._config.ucb_c)
+        self._mcts = ProgressiveMCGS(
+            exploration=self._config.ucb_c,
+            schedule="progressive",
+            c_min=0.2,
+        )
         self._island_manager = island_manager or IslandManager(
             num_islands=self._config.island_count,
             migration_interval=self._config.island_migration_interval,
@@ -328,6 +332,9 @@ class EvolutionEngine:
                 break
             self._current_generation = gen
 
+            # P1: 更新 MCTS 探索进度（渐进衰减）
+            self._mcts.set_progress(gen, self._config.max_generations)
+
             if self._budget_guard.state.is_exhausted:
                 logger.warning("Budget exhausted, stopping evolution")
                 break
@@ -395,6 +402,7 @@ class EvolutionEngine:
         # 从下一代继续
         for gen in range(self._current_generation + 1, self._config.max_generations + 1):
             self._current_generation = gen
+            self._mcts.set_progress(gen, self._config.max_generations)
             if self._budget_guard.state.is_exhausted:
                 break
             self._step_generation(gen, task_name)
@@ -602,6 +610,13 @@ class EvolutionEngine:
         # S6-08: 为思想内容入队向量索引（novelty 语义检索依赖）
         thought_hash = self._artifact_store.store_text(thought.thought, "log")
         self._enqueue_vector_index("thought", thought_record.id, thought_hash)
+
+        # P0: Reference edges — 跨分支信息流
+        self._write_reference_edges(
+            candidate.id,
+            inspiration,
+            parent_ids=parent_ids,
+        )
 
         # MCTS 扩展（步骤 8 续）
         if parent_ids:
@@ -1046,6 +1061,41 @@ class EvolutionEngine:
             if cand.meta and isinstance(cand.meta.get("thought"), str):
                 thoughts.append(cand.meta["thought"])
         return codes, thoughts
+
+    def _write_reference_edges(
+        self,
+        child_id: str,
+        inspiration: list[dict],
+        *,
+        parent_ids: list[str],
+    ) -> None:
+        """P0: 写入跨分支引用边.
+
+        非父代来源的 inspiration（其他 island 的高分候选、memory 检索结果）
+        作为 reference edge 写入，区分于主血缘边。
+        """
+        parent_set = set(parent_ids)
+        for insp in inspiration:
+            src_id = insp.get("candidate_id", "")
+            if not src_id or src_id in parent_set or src_id == child_id:
+                continue
+            source = insp.get("source", "unknown")
+            ref_type = {
+                "top_k": "cross_branch",
+                "random_k": "exploration",
+                "memory": "memory",
+            }.get(source, "reference")
+            try:
+                self._db.execute(
+                    """
+                    INSERT OR IGNORE INTO candidate_reference_edge
+                        (src_candidate_id, dst_candidate_id, reference_type, detail)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (src_id, child_id, ref_type, f"source={source} score={insp.get('score', '?')}"),
+                )
+            except Exception:
+                logger.debug("Failed to write reference edge", exc_info=True)
 
     def _collect_inspiration_programs(
         self,

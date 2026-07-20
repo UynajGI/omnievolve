@@ -118,12 +118,36 @@ class ProgressiveMCGS:
         c_puct: float = 1.0,
         virtual_loss: float = 1.0,
         selection_policy: str = "ucb1",  # ucb1 / puct
+        schedule: str = "constant",  # constant / progressive
+        c_min: float = 0.2,
     ) -> None:
         self._exploration = exploration
+        self._c_max = exploration
+        self._c_min = c_min
         self._c_puct = c_puct
         self._virtual_loss = virtual_loss
         self._selection_policy = selection_policy
+        self._schedule = schedule
+        self._progress: float = 0.0  # 0.0 → 1.0
         self._nodes: dict[str, MCTSNode] = {}
+
+    @property
+    def effective_exploration(self) -> float:
+        """当前有效的 exploration 常数（考虑渐进衰减）."""
+        if self._schedule == "progressive":
+            # c(p) = c_max - (c_max - c_min) * progress
+            return self._c_max - (self._c_max - self._c_min) * self._progress
+        return self._exploration
+
+    def set_progress(self, generation: int, max_generations: int) -> None:
+        """设置搜索进度（0.0 → 1.0），用于渐进探索衰减.
+
+        由 EvolutionEngine 每代调用。
+        """
+        if max_generations > 0:
+            self._progress = min(1.0, generation / max_generations)
+        else:
+            self._progress = 0.0
 
     def add_node(
         self,
@@ -177,7 +201,7 @@ class ProgressiveMCGS:
                 if self._selection_policy == "puct":
                     score = child.ppt(self._c_puct, total_visits)
                 else:
-                    score = child.ucb1(self._exploration, total_visits)
+                    score = child.ucb1(self.effective_exploration, total_visits)
 
                 if score > best_score:
                     best_score = score

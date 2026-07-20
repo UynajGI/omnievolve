@@ -385,7 +385,7 @@ def export(
     from omnievolve.storage.graph_store import GraphStore
 
     gs = GraphStore(db)
-    graph = gs.load_subgraph(experiment_id)
+    graph = gs.load_subgraph(experiment_id, include_reference_edges=True)
 
     # GraphML 不支持 None 值，转换为空字符串
     for _, attrs in graph.nodes(data=True):
