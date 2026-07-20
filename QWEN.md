@@ -74,5 +74,10 @@ Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 | Architecture overview & CLI usage | `README.md` |
 | Health metrics formulas & limitations | `docs/health_metrics.md` |
 | Agent development (prompts, context, retry) | `docs/prompt_agent_guide.md` |
+| Evaluator development guide | `docs/evaluator_guide.md` |
+| Storage ADR & operations | `docs/storage_adr.md` |
+| Docker security baseline | `docs/docker_security_baseline.md` |
+| Vector config & migration | `docs/vector_configuration.md` |
 | Release notes (features, known limits) | `docs/release_notes_v0.2.md` |
+| Gap analysis & compliance audit | `reports/gap_analysis_v0.2.md`, `reports/checklist_v0.2.md` |
 | Design specification (frozen) | `docs/project-design/reference/OmniEvolve_v0.2_设计文档.md` |
