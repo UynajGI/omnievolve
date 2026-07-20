@@ -175,7 +175,7 @@ class ProgressiveMCGS:
             leaf_id: 叶节点 ID
             value: 评估值
         """
-        current = leaf_id
+        current: str | None = leaf_id
 
         while current is not None:
             node = self._nodes.get(current)

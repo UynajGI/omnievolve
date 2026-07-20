@@ -175,7 +175,7 @@ class IslandManager:
         Returns:
             迁移记录列表 [(candidate_id, from_island, to_island), ...]
         """
-        migrations = []
+        migrations: list[tuple[str, str, str]] = []
 
         # 收集每个岛屿的最佳候选
         island_bests = {}

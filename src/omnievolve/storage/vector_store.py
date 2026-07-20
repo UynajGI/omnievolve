@@ -189,7 +189,7 @@ class HybridRetriever:
                     JOIN {table} t ON f.content = t.{content_column}
                     WHERE {fts_table} MATCH ?
                 """
-                params: list[Any] = [query]
+                params = [query]
 
                 if experiment_id:
                     sql += " AND t.experiment_id = ?"

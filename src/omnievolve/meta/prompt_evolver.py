@@ -91,7 +91,7 @@ class PromptEvolver:
         elif mutation == "remove_redundancy":
             # 移除重复的空行
             lines = prompt.split("\n")
-            unique_lines = []
+            unique_lines: list[str] = []
             for line in lines:
                 stripped = line.strip()
                 if stripped or not unique_lines or unique_lines[-1].strip():

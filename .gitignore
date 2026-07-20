@@ -163,6 +163,7 @@ lefthook-local.yml
 # Project specific
 *.db
 *.sqlite
+.omnievolve/
 logs/
 temp/
 tmp/

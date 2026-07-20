@@ -39,7 +39,8 @@ class NoveltyGate:
 
     1. Embedding 相似度初筛
     2. AST/结构签名检查
-    3. 可选 LLM 判断
+    3. 可选行为签名
+    4. 可选 LLM 判断（borderline 时触发）
     """
 
     def __init__(
@@ -49,11 +50,13 @@ class NoveltyGate:
         borderline_low: float = 0.88,
         borderline_high: float = 0.96,
         use_ast_check: bool = True,
+        llm_judge: LLMNoveltyJudge | None = None,
     ) -> None:
         self._embedding_threshold = embedding_threshold
         self._borderline_low = borderline_low
         self._borderline_high = borderline_high
         self._use_ast_check = use_ast_check
+        self._llm_judge = llm_judge
 
     def check(
         self,
@@ -105,6 +108,29 @@ class NoveltyGate:
                 penalty=0.2,
             )
 
+        # 3.5 borderline 区域：可选 LLM 判断
+        if (
+            self._llm_judge is not None
+            and self._borderline_low <= max_similarity < self._embedding_threshold
+        ):
+            try:
+                llm_decision = self._llm_judge.judge(thought, code, max_similarity)
+                if llm_decision == "reject":
+                    return NoveltyResult(
+                        decision=NoveltyDecision.REJECT,
+                        similarity_score=max_similarity,
+                        reasons=["LLM novelty judge: reject"],
+                    )
+                elif llm_decision == "allow_with_penalty":
+                    return NoveltyResult(
+                        decision=NoveltyDecision.ALLOW_WITH_PENALTY,
+                        similarity_score=max_similarity,
+                        reasons=["LLM novelty judge: borderline"],
+                        penalty=0.15,
+                    )
+            except Exception:
+                logger.debug("LLM novelty judge failed, falling through", exc_info=True)
+
         return NoveltyResult(
             decision=NoveltyDecision.ALLOW,
             similarity_score=max_similarity,
@@ -143,3 +169,65 @@ def compute_code_signature(code: str) -> str:
         return hashlib.sha256("|".join(sorted(parts)).encode()).hexdigest()
     except SyntaxError:
         return hashlib.sha256(code.encode()).hexdigest()
+
+
+class LLMNoveltyJudge:
+    """LLM 辅助新颖性判断器.
+
+    S7-09: 在 borderline 区域（borderline_low ~ borderline_high）
+    调用 LLM 做最终新颖性判断，而非单一 Embedding 一票否决。
+
+    LLM 只需返回 allow / reject / allow_with_penalty 之一，
+    判断基于机制标签、算法类型和解决路径的差异。
+    """
+
+    JUDGE_PROMPT = """You are a novelty judge for an evolutionary code optimization system.
+
+Given an improvement thought and its embedding similarity score, determine if it
+represents a genuinely novel contribution or a minor rephrasing of existing work.
+
+Focus on mechanism differences, not surface text similarity.
+
+Thought: {thought}
+Similarity score: {similarity:.3f}
+Code preview: {code_preview}
+
+Respond with exactly one word: allow, reject, or allow_with_penalty"""
+
+    def __init__(self, llm: object | None = None) -> None:
+        self._llm = llm
+
+    def judge(
+        self,
+        thought: str,
+        code: str | None,
+        similarity: float,
+    ) -> str:
+        """判断新颖性.
+
+        Returns:
+            'allow' / 'reject' / 'allow_with_penalty'
+        """
+        if self._llm is None:
+            # 无 LLM 时默认放行 borderline
+            return "allow_with_penalty"
+
+        prompt = self.JUDGE_PROMPT.format(
+            thought=thought[:500],
+            similarity=similarity,
+            code_preview=(code or "")[:500],
+        )
+
+        try:
+            response = self._llm.chat(  # type: ignore[attr-defined]
+                [{"role": "user", "content": prompt}],
+                agent_role="meta",
+            )
+            decision = response.content.strip().lower()
+            for valid in ("allow", "reject", "allow_with_penalty"):
+                if valid in decision:
+                    return valid
+            return "allow_with_penalty"
+        except Exception:
+            logger.debug("LLM novelty judge failed", exc_info=True)
+            return "allow_with_penalty"

@@ -83,7 +83,12 @@ class Coder:
         return "\n".join(parts)
 
     def _parse_response(self, content: str) -> CodeOutput:
-        """解析 LLM 响应."""
+        """解析 LLM 响应.
+
+        S5-09: 实现结构化输出校验与有限修复。
+        当 JSON 解析失败时，尝试提取代码块或裸代码作为 full_code。
+        """
+        # 尝试 1: 直接解析 JSON
         try:
             data = json.loads(content)
             return CodeOutput(
@@ -93,9 +98,31 @@ class Coder:
                 touched_files=data.get("touched_files", []),
             )
         except json.JSONDecodeError:
-            # 回退：假设整个内容是代码
+            pass
+
+        # 尝试 2 (repair): 提取 ```python ... ``` 代码块
+        import re
+
+        code_blocks = re.findall(r"```(?:python)?\s*\n(.*?)```", content, re.DOTALL)
+        if code_blocks:
             return CodeOutput(
                 diff="",
-                full_code=content,
-                explanation="",
+                full_code=code_blocks[-1].strip(),
+                explanation="Extracted from code block (JSON parse failed)",
             )
+
+        # 尝试 3 (repair): 检查是否包含 full_code 字段但 JSON 不完整
+        full_code_match = re.search(r'"full_code"\s*:\s*"((?:[^"\\]|\\.)*)"', content)
+        if full_code_match:
+            return CodeOutput(
+                diff="",
+                full_code=full_code_match.group(1).encode().decode("unicode_escape"),
+                explanation="Extracted full_code field (partial JSON repair)",
+            )
+
+        # 回退：假设整个内容是代码
+        return CodeOutput(
+            diff="",
+            full_code=content,
+            explanation="Raw content used as code (no structured output detected)",
+        )

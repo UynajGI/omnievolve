@@ -8,6 +8,7 @@ S4-14: 实现基础 GraphStore 与子图加载
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import networkx as nx
 
@@ -230,7 +231,7 @@ class GraphStore:
             )
 
         # 简单多样化：按岛屿分组
-        selected = []
+        selected: list[Any] = []
         seen_islands = set()
 
         for row in rows:

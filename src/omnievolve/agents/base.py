@@ -20,8 +20,15 @@ class AgentContext:
     parent_candidate_ids: list[str] = field(default_factory=list)
     parent_thoughts: list[str] = field(default_factory=list)
     parent_artifact_hashes: list[str] = field(default_factory=list)
+    # ShinkaEvolve/AlphaEvolve pattern: inspiration programs (diverse high-scorers
+    # + random samples, distinct from direct parents) provide exemplars for
+    # creative recombination.
+    inspiration_programs: list[dict] = field(default_factory=list)
     memory_hits: list[dict] = field(default_factory=list)
     domain_hints: list[str] = field(default_factory=list)
+    # ShinkaEvolve meta-scratchpad: accumulates global insights across generations
+    # (e.g., "X direction consistently fails"), separate from per-candidate thoughts.
+    meta_scratchpad: str = ""
     search_policy_id: str = "default"
     evaluator_version_id: str = ""
     environment_version_id: str = ""

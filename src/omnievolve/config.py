@@ -283,3 +283,113 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
         meta_evolution=MetaEvolutionSettings(**data.get("meta_evolution", {})),
         evaluation_governance=EvaluationGovernanceSettings(**data.get("evaluation_governance", {})),
     )
+
+
+# --------------------------------------------------------------------------- #
+#  组件配置构造器：OmniEvolveSettings → 引擎可用的配置对象
+# --------------------------------------------------------------------------- #
+
+
+def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
+    """从 OmniEvolveSettings 构造 EvolutionConfig.
+
+    避免在引擎层重复定义默认值。
+    """
+    from omnievolve.engine.evolution_engine import EvolutionConfig
+
+    e = settings.evolution
+    return EvolutionConfig(
+        max_generations=e.max_generations,
+        population_size=e.population_size,
+        island_count=e.island_count,
+        novelty_threshold=e.novelty_threshold,
+        novelty_retry_limit=e.novelty_retry_limit,
+        mutation_rate=e.mutation_rate,
+        crossover_rate=e.crossover_rate,
+        max_stagnation_gens=e.max_stagnation_gens,
+        token_budget=e.token_budget,
+        compute_budget_sec=e.compute_budget_sec or None,
+        health_window_gens=e.health_window_gens,
+        meta_canary_budget_ratio=settings.meta_evolution.meta_canary_budget_ratio,
+        tournament_size=settings.selection.tournament_size,
+        island_migration_interval=settings.selection.island_migration_interval,
+        ucb_c=settings.models.routing.ucb_c,
+    )
+
+
+def build_sandbox_policy(settings: OmniEvolveSettings):  # -> SandboxPolicy
+    """从 OmniEvolveSettings 构造 SandboxPolicy."""
+    from omnievolve.sandbox.base import SandboxPolicy
+
+    s = settings.sandbox
+    return SandboxPolicy(
+        timeout_sec=s.timeout_sec,
+        mem_limit_mb=s.mem_limit_mb,
+        cpu_limit=s.cpu_limit,
+        pids_limit=s.pids_limit,
+        network_mode=s.network_mode,
+        read_only_root=s.read_only_root,
+        run_as_non_root=s.run_as_non_root,
+        drop_capabilities=s.drop_capabilities,
+        no_new_privileges=s.no_new_privileges,
+        tmpfs_mb=s.docker.tmpfs_mb,
+    )
+
+
+def build_model_slots(settings: OmniEvolveSettings):  # -> list[ModelSlot]
+    """从 OmniEvolveSettings 构造 ModelSlot 列表.
+
+    将配置中的 heavy/light 模型名映射为 ModelSlot。
+    真实定价由用户在配置中提供或使用占位值。
+    """
+    from omnievolve.agents.router import ModelSlot
+
+    slots: list[ModelSlot] = []
+    for name in settings.models.heavy:
+        slots.append(
+            ModelSlot(
+                name=name,
+                tier="heavy",
+                cost_per_1k_input=0.01,
+                cost_per_1k_output=0.03,
+                avg_latency_ms=2000.0,
+                capabilities={"reasoning", "code"},
+            )
+        )
+    for name in settings.models.light:
+        slots.append(
+            ModelSlot(
+                name=name,
+                tier="light",
+                cost_per_1k_input=0.0002,
+                cost_per_1k_output=0.0006,
+                avg_latency_ms=500.0,
+                capabilities={"code"},
+            )
+        )
+    return slots
+
+
+def load_evaluator(spec: str):
+    """从 "module:Class" 或 "module.path.Class" 字符串加载评估器.
+
+    Args:
+        spec: 例如 "omnievolve.eval.demo_evaluator:PythonUnitTestEvaluator"
+
+    Returns:
+        评估器类（未实例化）
+    """
+    import importlib
+
+    if ":" in spec:
+        module_path, class_name = spec.split(":", 1)
+    elif "." in spec:
+        module_path, class_name = spec.rsplit(".", 1)
+    else:
+        raise ValueError(
+            f"Invalid evaluator spec {spec!r}; expected 'module:Class' or 'module.path.Class'"
+        )
+
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls

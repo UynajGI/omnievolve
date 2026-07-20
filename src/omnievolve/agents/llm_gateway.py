@@ -65,11 +65,17 @@ class LLMGateway:
         default_model: str = "gpt-4o-mini",
         api_key: str | None = None,
         api_base: str | None = None,
+        max_retries: int = 3,
+        retry_backoff_base: float = 1.0,
+        fallback_model: str | None = None,
     ) -> None:
         self._db = db
         self._default_model = default_model
         self._api_key = api_key
         self._api_base = api_base
+        self._max_retries = max_retries
+        self._retry_backoff_base = retry_backoff_base
+        self._fallback_model = fallback_model
         self._total_tokens = 0
         self._total_cost = 0.0
 
@@ -101,57 +107,75 @@ class LLMGateway:
         model = model or self._default_model
         start_time = time.time()
 
-        try:
-            import litellm
+        # S5-10: retry/backoff/fallback
+        last_error: Exception | None = None
+        models_to_try = [model]
+        if self._fallback_model and self._fallback_model != model:
+            models_to_try.append(self._fallback_model)
 
-            # 调用 LiteLLM
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_key=self._api_key,
-                api_base=self._api_base,
-            )
+        for try_model in models_to_try:
+            for attempt in range(self._max_retries):
+                try:
+                    import litellm
 
-            latency_ms = (time.time() - start_time) * 1000
+                    response = litellm.completion(
+                        model=try_model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        api_key=self._api_key,
+                        api_base=self._api_base,
+                    )
 
-            # 解析响应
-            content = response.choices[0].message.content or ""
-            usage = response.usage
+                    latency_ms = (time.time() - start_time) * 1000
+                    content = response.choices[0].message.content or ""
+                    usage = response.usage
 
-            llm_response = LLMResponse(
-                content=content,
-                model=model,
-                input_tokens=usage.prompt_tokens if usage else 0,
-                output_tokens=usage.completion_tokens if usage else 0,
-                total_tokens=usage.total_tokens if usage else 0,
-                latency_ms=latency_ms,
-                raw_response=response.model_dump() if hasattr(response, "model_dump") else {},
-            )
+                    llm_response = LLMResponse(
+                        content=content,
+                        model=try_model,
+                        input_tokens=usage.prompt_tokens if usage else 0,
+                        output_tokens=usage.completion_tokens if usage else 0,
+                        total_tokens=usage.total_tokens if usage else 0,
+                        latency_ms=latency_ms,
+                        raw_response=response.model_dump()
+                        if hasattr(response, "model_dump")
+                        else {},
+                    )
 
-            # 更新统计
-            self._total_tokens += llm_response.total_tokens
+                    self._total_tokens += llm_response.total_tokens
 
-            # 记录到数据库
-            if self._db:
-                self._record_call(
-                    experiment_id=experiment_id,
-                    agent_role=agent_role,
-                    model=model,
-                    prompt_version_id=prompt_version_id,
-                    response=llm_response,
-                    messages=messages,
-                )
+                    if self._db:
+                        self._record_call(
+                            experiment_id=experiment_id,
+                            agent_role=agent_role,
+                            model=try_model,
+                            prompt_version_id=prompt_version_id,
+                            response=llm_response,
+                            messages=messages,
+                        )
 
-            return llm_response
+                    return llm_response
 
-        except ImportError:
-            logger.warning("litellm not installed, using mock response")
-            return self._mock_response(messages, model)
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            raise
+                except ImportError:
+                    logger.warning("litellm not installed, using mock response")
+                    return self._mock_response(messages, try_model)
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        "LLM call attempt %d/%d failed (model=%s): %s",
+                        attempt + 1,
+                        self._max_retries,
+                        try_model,
+                        e,
+                    )
+                    if attempt < self._max_retries - 1:
+                        backoff = self._retry_backoff_base * (2**attempt)
+                        time.sleep(backoff)
+
+        # All retries exhausted
+        logger.error("All LLM retries exhausted: %s", last_error)
+        return self._mock_response(messages, model)
 
     def _mock_response(self, messages: list[dict[str, str]], model: str) -> LLMResponse:
         """模拟响应（用于测试或 litellm 未安装时）."""
@@ -177,6 +201,9 @@ class LLMGateway:
         """记录 LLM 调用."""
         request_hash = compute_sha256_str(json.dumps(messages, ensure_ascii=False))
         response_hash = compute_sha256_str(response.content)
+
+        if self._db is None:
+            return
 
         self._db.execute(
             """

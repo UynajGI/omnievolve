@@ -156,7 +156,7 @@ class L0PolicyMutator:
         Returns:
             [(field_name, new_value, rationale), ...]
         """
-        suggestions = []
+        suggestions: list[tuple[str, Any, str]] = []
 
         # 低覆盖率时增加检索预算
         if health_indicators.get("coverage_entropy", 1.0) < 0.4:

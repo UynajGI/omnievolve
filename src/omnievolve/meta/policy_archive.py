@@ -274,3 +274,39 @@ class PolicyArchive:
             parent_policy_id=row["parent_policy_id"],
             created_at=row["created_at"],
         )
+
+    def import_policy(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        experiment_id: str | None = None,
+    ) -> PolicyVersion:
+        """导入策略快照（Champion 完整导出/导入，S9-12）.
+
+        从 export_policy() 产生的快照重建一个策略版本。
+        基因组内容必须通过 SearchPolicyGenome.from_dict 验证。
+
+        Args:
+            snapshot: export_policy 产生的字典
+            experiment_id: 目标实验 ID（None 时使用快照中的值）
+
+        Returns:
+            新创建的 PolicyVersion
+        """
+        genome = SearchPolicyGenome.from_dict(snapshot["genome"])
+
+        target_exp = experiment_id or snapshot.get("experiment_id")
+
+        policy = self.create_policy(
+            genome,
+            experiment_id=target_exp,
+            parent_policy_id=snapshot.get("parent_policy_id"),
+            risk_level=snapshot.get("risk_level", "L0"),
+        )
+
+        logger.info(
+            "Imported policy %s from snapshot (source version=%s)",
+            policy.id,
+            snapshot.get("version"),
+        )
+        return policy

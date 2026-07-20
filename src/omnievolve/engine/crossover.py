@@ -35,6 +35,11 @@ class CrossoverOperator:
         self._max_parents = max_parents
         self._similarity_threshold = similarity_threshold
 
+    @property
+    def min_parents(self) -> int:
+        """最少父代数（供引擎查询以决定选择数量）."""
+        return self._min_parents
+
     def select_parents(
         self,
         candidates: list[tuple[str, float]],
@@ -139,7 +144,8 @@ class CrossoverOperator:
         # 组装结果
         parts = list(imports)
         for func_name, func_code in all_functions.items():
-            parts.append(func_code)
+            if func_code is not None:
+                parts.append(func_code)
 
         return "\n\n".join(parts)
 

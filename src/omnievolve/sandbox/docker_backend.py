@@ -280,7 +280,7 @@ class DockerBackend:
 
     def _collect_outputs(self, container: Any, expected_outputs: list[str]) -> dict[str, str]:
         """收集预期输出产物."""
-        outputs = {}
+        outputs: dict[str, str] = {}
 
         if not expected_outputs or self._artifact_store is None:
             return outputs
