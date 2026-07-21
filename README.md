@@ -35,7 +35,7 @@ pip install -e ".[docker]"
 pip install -e ".[monty]"
 
 # 全量
-pip install -e ".[vector,local-embed,docker,monty,viz,tuning]"
+pip install -e ".[all]"
 ```
 
 ## 快速开始

@@ -21,6 +21,9 @@ docker = ["docker>=7.0"]
 monty = ["pydantic-monty>=0.0.18"]
 viz = ["pyvis>=0.3"]
 tuning = ["optuna>=3.6"]
+all = [
+    "omnievolve[vector,local-embed,docker,monty,viz,tuning]",
+]
 
 [project.scripts]
 omnievolve = "omnievolve.cli:app"
