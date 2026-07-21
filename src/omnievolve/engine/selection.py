@@ -2,6 +2,7 @@
 
 S4-09: 实现最小 ParentSelector（best/tournament/random）
 SA-01: ShinkaEvolve power law + weighted 采样
+P1-2: 探索-利用软切换 (MLEvolve select_with_soft_switch)
 """
 
 from __future__ import annotations
@@ -255,3 +256,74 @@ class ExplorationSelector(ParentSelector):
         )
 
         return [c[0] for c in sorted_candidates[:count]]
+
+
+def compute_exploration_weight(
+    progress_ratio: float,
+    *,
+    w_start: float = 1.0,
+    w_end: float = 0.2,
+    switch_start: float = 0.5,
+    switch_end: float = 0.7,
+) -> float:
+    """P1-2: 计算探索权重 w(t).
+
+    在 [switch_start, switch_end] 区间内从 w_start 线性衰减到 w_end。
+    - progress < switch_start: w = w_start（全探索）
+    - progress > switch_end: w = w_end（偏利用）
+
+    Args:
+        progress_ratio: 当前进度 0.0~1.0
+        w_start: 初始探索权重
+        w_end: 最终探索权重
+        switch_start: 衰减起始点
+        switch_end: 衰减结束点
+
+    Returns:
+        探索概率 w(t) ∈ [w_end, w_start]
+    """
+    if progress_ratio <= switch_start:
+        return w_start
+    if progress_ratio >= switch_end:
+        return w_end
+    # 线性插值
+    t = (progress_ratio - switch_start) / (switch_end - switch_start)
+    return w_start - (w_start - w_end) * t
+
+
+def select_top_k_exploitation(
+    candidates: list[tuple[str, float]],
+    *,
+    k: int = 5,
+) -> str:
+    """P1-2: Top-K 加权随机利用.
+
+    从全局最高分 top-K 中，按 1/rank 加权随机选择一个。
+
+    Args:
+        candidates: [(candidate_id, score), ...]
+        k: Top-K 窗口大小
+
+    Returns:
+        选中的 candidate_id
+    """
+    if not candidates:
+        return ""
+
+    # 取 top-K
+    sorted_cands = sorted(candidates, key=lambda x: x[1], reverse=True)
+    top_k = sorted_cands[:k]
+
+    # 1/rank 加权
+    weights = [1.0 / (i + 1) for i in range(len(top_k))]
+    total = sum(weights)
+    probs = [w / total for w in weights]
+
+    # 加权随机选择
+    r = random.random()
+    cum = 0.0
+    for i, prob in enumerate(probs):
+        cum += prob
+        if r <= cum:
+            return top_k[i][0]
+    return top_k[-1][0]  # fallback

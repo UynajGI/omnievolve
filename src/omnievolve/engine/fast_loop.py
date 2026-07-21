@@ -58,6 +58,14 @@ class FastLoopStep:
         # 步骤 2: 选择父代
         parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
 
+        # P1-3: 强制反向传播（后期加速收敛，跳过完整进化链）
+        if parent_ids and e._mcts.should_force_backprop():  # noqa: SLF001
+            e._mcts.force_backprop(parent_ids[0])  # noqa: SLF001
+            # 持久化到 candidate_search_state
+            e._candidate_repo.update_search_state(parent_ids[0], visit_delta=1)  # noqa: SLF001
+            logger.debug("P1-3: forced backprop on %s", parent_ids[0])
+            return None, ""
+
         # 加载父代代码 / 思想 / 评估失败信息（P0-1: 反馈闭环）
         parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
 
@@ -76,14 +84,32 @@ class FastLoopStep:
             success_only=True,
             limit=e._search_policy.retrieval_budget,  # noqa: SLF001
         )
-        memory_summaries = [
-            {
-                "outcome_summary": str(m.outcome_summary)[:200],
-                "scope_level": m.scope_level,
-                "success": m.success_flag,
-            }
-            for m in memory_hits
-        ]
+        # P2-3: 记忆格式化增强（含 score + diff 摘要 + outcome）
+        memory_summaries = []
+        for m in memory_hits:
+            score_str = ""
+            if isinstance(m.outcome_summary, dict):
+                score_str = f"score={m.outcome_summary.get('score', '?')}"
+            # 加载 code_diff_hash 对应的 diff 内容
+            diff_text = ""
+            if m.code_diff_hash:
+                try:
+                    raw = e._artifact_store.load_text(m.code_diff_hash)  # noqa: SLF001
+                    diff_text = raw[:200] if raw else ""
+                except Exception:
+                    pass
+            outcome_text = str(m.outcome_summary)[:150]
+            parts = [f"[L{m.scope_level}/{'SUCCESS' if m.success_flag else 'FAIL'}] {score_str}"]
+            if diff_text:
+                parts.append(f"改动: {diff_text}")
+            parts.append(f"效果: {outcome_text}")
+            memory_summaries.append(
+                {
+                    "outcome_summary": " → ".join(parts),
+                    "scope_level": m.scope_level,
+                    "success": m.success_flag,
+                }
+            )
 
         # inspiration programs
         inspiration = e._collect_inspiration_programs(parent_ids)  # noqa: SLF001
@@ -115,6 +141,10 @@ class FastLoopStep:
             meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
             # P0-1: 注入父代评估失败信息到 Coder 上下文
             last_eval_failure=_combine_failures(parent_failures),
+            # P2-1: 停滞等级（根据岛屿停滞计数自动升级）
+            stagnation_level=self._compute_stagnation_level(island_id),
+            # P2-2: 兄弟节点摘要
+            sibling_summaries=self._load_sibling_summaries(island_id, generation),
             search_policy_id=e._champion_policy_id,  # noqa: SLF001
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
@@ -143,12 +173,14 @@ class FastLoopStep:
                     explanation="fallback to parent code (diff could not be applied)",
                 )
 
-        passed, _ = e._critic.review(code, thought)  # noqa: SLF001
+        # P0-2: Critic 审查时注入上一轮执行失败信息
+        critic_stderr = ctx.last_eval_failure
+        passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
         retries = 0
         while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
             retries += 1
             code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-            passed, _ = e._critic.review(code, thought)  # noqa: SLF001
+            passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
 
         if not passed:
             logger.debug("Code rejected by critic after retries")
@@ -373,3 +405,58 @@ class FastLoopStep:
         reward = compute_shinka_reward(output.score, parent_score, baseline_score)
         assert e._router is not None  # noqa: SLF001 — guarded by caller
         e._router.update(model=model, role="coder", reward=reward)  # noqa: SLF001
+
+    def _compute_stagnation_level(self, island_id: str) -> int:
+        """P2-1: 计算停滞等级.
+
+        根据岛屿停滞计数与 max_stagnation_gens 的比值升级：
+        - 0: 正常（未停滞）
+        - 1: 停滞 >= 1x max_stagnation_gens（提示 Tier 2）
+        - 2: 停滞 >= 2x max_stagnation_gens（强制 Tier 2）
+        - 3: 停滞 >= 3x max_stagnation_gens（强制 Tier 3 范式转变）
+        """
+        e = self._e
+        island = e._island_manager.get_island(island_id)  # noqa: SLF001
+        if island is None:
+            return 0
+        threshold = e._config.max_stagnation_gens  # noqa: SLF001
+        if threshold <= 0:
+            return 0
+        count = island.stagnation_count
+        if count >= threshold * 3:
+            return 3
+        if count >= threshold * 2:
+            return 2
+        if count >= threshold:
+            return 1
+        return 0
+
+    def _load_sibling_summaries(self, island_id: str, generation: int) -> list[str]:
+        """P2-2: 加载兄弟节点摘要（同一 island，最近 2 代）."""
+        import json
+
+        e = self._e
+        try:
+            rows = e._db.fetchall(  # noqa: SLF001
+                """
+                SELECT c.id, c.generation, c.meta
+                FROM candidate c
+                WHERE c.experiment_id = ?
+                  AND c.island_id = ?
+                  AND c.generation >= ?
+                ORDER BY c.generation DESC, c.created_at DESC
+                LIMIT 5
+                """,
+                (e._experiment_id, island_id, max(0, generation - 2)),  # noqa: SLF001
+            )
+            summaries = []
+            for row in rows:
+                raw_meta = row["meta"]
+                meta = json.loads(raw_meta) if isinstance(raw_meta, str) and raw_meta else {}
+                thought = meta.get("thought", "")[:200] if meta else ""
+                if thought:
+                    summaries.append(f"[gen {row['generation']}] {thought}")
+            return summaries[:3]
+        except Exception:
+            logger.debug("Failed to load sibling summaries", exc_info=True)
+            return []

@@ -6,11 +6,14 @@ S7-15: 实现轻量 Progressive MCGS
 - 虚拟损失
 - 子图回写
 
+P1-1: 分段衰减探索常数 C(t)
+P1-3: 强制反向传播（后期加速收敛 + 多样性）
+
 Beta 回传（Bayesian backpropagation）是核心设计原则：
 不使用 frequentist mean (value_sum / visit_count)，而是维护 Beta 分布
 参数 alpha / beta。这使得：
 1. 少量访问的节点保留不确定性（宽后验），不会因单次低分被剪枝
-2. UCB exploration term + Beta uncertainty → 自然探索"1+1>2"组合分支
+2. UCB exploration term + Beta uncertainty → 自然探索“1+1>2”组合分支
 3. 高分组合（单独差但配对好）不会被过早收敛
 """
 
@@ -18,6 +21,8 @@ from __future__ import annotations
 
 import logging
 import math
+import random
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -123,11 +128,13 @@ class ProgressiveMCGS:
         selection_policy: str = "ucb1",  # ucb1 / puct
         schedule: str = "constant",  # constant / progressive
         c_min: float = 0.2,
+        decay_point: float = 0.5,  # P1-1: 衰减完成点（进度比例）
         max_nodes: int = 5000,
     ) -> None:
         self._exploration = exploration
         self._c_max = exploration
         self._c_min = c_min
+        self._decay_point = decay_point  # P1-1
         self._c_puct = c_puct
         self._virtual_loss = virtual_loss
         self._selection_policy = selection_policy
@@ -135,13 +142,20 @@ class ProgressiveMCGS:
         self._progress: float = 0.0  # 0.0 → 1.0
         self._nodes: dict[str, MCTSNode] = {}
         self._max_nodes = max_nodes
+        # P1-3: 强制反向传播计数器
+        self._nodes_since_backprop: int = 0
+        self._backprop_lock = threading.Lock()
 
     @property
     def effective_exploration(self) -> float:
-        """当前有效的 exploration 常数（考虑渐进衰减）."""
+        """P1-1: 当前有效的 exploration 常数（分段衰减）.
+
+        C(t) = C_max - (C_max - C_min) * min(progress / decay_point, 1.0)
+        当 progress >= decay_point 时，C 达到 C_min 并保持不变。
+        """
         if self._schedule == "progressive":
-            # c(p) = c_max - (c_max - c_min) * progress
-            return self._c_max - (self._c_max - self._c_min) * self._progress
+            decay_ratio = min(self._progress / max(self._decay_point, 1e-9), 1.0)
+            return self._c_max - (self._c_max - self._c_min) * decay_ratio
         return self._exploration
 
     def set_progress(self, generation: int, max_generations: int) -> None:
@@ -153,6 +167,45 @@ class ProgressiveMCGS:
             self._progress = min(1.0, generation / max_generations)
         else:
             self._progress = 0.0
+
+    def should_force_backprop(self) -> bool:
+        """P1-3: 判断是否应强制反向传播.
+
+        策略（参考 MLEvolve）：
+        - 后期（>80% progress）：50% 概率直接反向传播
+        - 中期（>40% progress）：每 3 个节点反向传播一次
+        - 早期：不强制
+
+        前置条件：搜索树必须有足够节点（>=5），避免小规模运行被跳过。
+        """
+        # 前置条件：搜索树节点不足时不触发（避免跳过早期候选）
+        if len(self._nodes) < 5:
+            return False
+        if self._progress > 0.8:
+            return random.random() < 0.5
+        if self._progress > 0.4:
+            with self._backprop_lock:
+                self._nodes_since_backprop += 1
+                if self._nodes_since_backprop >= 3:
+                    self._nodes_since_backprop = 0
+                    return True
+        return False
+
+    def force_backprop(self, node_id: str, value: float = 0.0) -> None:
+        """P1-3: 强制反向传播（不继续 improve 链，直接回传）.
+
+        对节点及其祖先链执行 visit_count += 1 更新，
+        不改变 Beta 参数（因为无真实评估结果）。
+        """
+        current: str | None = node_id
+        while current is not None:
+            node = self._nodes.get(current)
+            if node is None:
+                break
+            node.visit_count += 1
+            # 清除 select() 期间累加的虚拟损失
+            node.virtual_loss = max(0.0, node.virtual_loss - self._virtual_loss)
+            current = node.parent
 
     def add_node(
         self,

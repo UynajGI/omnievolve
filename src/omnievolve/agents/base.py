@@ -33,6 +33,11 @@ class AgentContext:
     # Lets Coder see why the last attempt failed and avoid repeating the same mistake.
     # Empty for root candidates and successful parents.
     last_eval_failure: str = ""
+    # P2-1: 停滞等级（0=正常, 1=微调, 2=架构变更, 3=范式转变）
+    # 由引擎根据岛屿停滞计数自动升级，Director 据此调整改进策略层级。
+    stagnation_level: int = 0
+    # P2-2: 兄弟节点摘要（同一 island，最近 2 代）
+    sibling_summaries: list[str] = field(default_factory=list)
     search_policy_id: str = "default"
     evaluator_version_id: str = ""
     environment_version_id: str = ""
@@ -83,10 +88,20 @@ class CoderAgent(Protocol):
 
 @runtime_checkable
 class CriticAgent(Protocol):
-    """Critic Agent Protocol - 静态审查."""
+    """Critic Agent Protocol - 静态审查 + 执行反馈审查."""
 
-    def review(self, code: CodeOutput, thought: ThoughtOutput) -> tuple[bool, str]:
+    def review(
+        self,
+        code: CodeOutput,
+        thought: ThoughtOutput,
+        last_eval_stderr: str = "",
+    ) -> tuple[bool, str]:
         """审查代码.
+
+        Args:
+            code: 待审查代码.
+            thought: 改进思想.
+            last_eval_stderr: P0-2 — 上一轮沙箱 stderr，非空时启用执行反馈增强审查.
 
         Returns:
             (passed, feedback)

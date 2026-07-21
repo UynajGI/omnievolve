@@ -1,6 +1,7 @@
 """Director Agent - 思想进化.
 
 S5-06: 实现 DirectorAgent 最小版本
+P2-1: 分层改进策略 + 停滞检测升级
 """
 
 from __future__ import annotations
@@ -18,13 +19,33 @@ Your role is to propose innovative ideas for improving the candidate code.
 
 Analyze the parent code, past experiences, and domain hints to generate a creative improvement thought.
 
+## Improvement Strategy Tiers (P2-1)
+
+Classify your thought into one of these tiers based on the stagnation level:
+
+**Tier 1: Optimization (The "How")**
+- Keep the algorithm/architecture fixed. Only change HOW it runs.
+- Scope: hyperparameters, constants, loop bounds, data structures, caching.
+- Use when: stagnation_level = 0 or 1.
+
+**Tier 2: Representation & Components (The "What")**
+- Change specific modules/algorithms, but keep the overall paradigm.
+- Scope: different algorithm, new data structure, alternative approach for a sub-problem.
+- Use when: stagnation_level = 2.
+
+**Tier 3: Paradigm Shift (The "Why")**
+- Fundamentally rethink the approach. Change the underlying paradigm.
+- Scope: completely different algorithm family, mathematical reformulation.
+- Use when: stagnation_level >= 3.
+
 Output format (JSON):
 {
     "thought": "Your main improvement idea",
     "rationale": "Why this should work",
     "risk_notes": "Potential risks or downsides",
     "confidence": 0.0-1.0,
-    "mechanism_tags": ["tag1", "tag2"]
+    "mechanism_tags": ["tag1", "tag2"],
+    "tier": 1-3
 }
 """
 
@@ -69,24 +90,38 @@ class Director:
         return self._parse_response(response.content)
 
     def _build_user_message(self, ctx: AgentContext) -> str:
-        """构建用户消息."""
+        """构建用户消息 — P2-1: 含停滞层级 + 反例集合."""
         parts = [
             f"## Task: {ctx.task_id}",
             f"## Generation: {ctx.generation}",
         ]
 
+        # P2-1: 停滞层级指导
+        if ctx.stagnation_level > 0:
+            tier = min(ctx.stagnation_level + 1, 3)  # level 1→Tier2, level 2+→Tier3
+            parts.append(
+                f"\n## ⚠️ Stagnation Detected (level={ctx.stagnation_level})\n"
+                f"Recent attempts have NOT improved scores. "
+                f"You MUST propose a **Tier {tier}** change (see system prompt).\n"
+                f"Do NOT repeat minor tweaks — make a {'fundamental' if tier >= 3 else 'significant'} change."
+            )
+
         if ctx.parent_thoughts:
-            parts.append("## Parent Thoughts:")
+            parts.append("\n## Parent Thoughts:")
             for i, thought in enumerate(ctx.parent_thoughts[:3]):
                 parts.append(f"{i + 1}. {thought[:500]}")
 
         if ctx.memory_hits:
-            parts.append("## Relevant Memories:")
+            parts.append("\n## Relevant Memories:")
             for mem in ctx.memory_hits[:3]:
                 parts.append(f"- {mem.get('outcome_summary', '')[:200]}")
 
+        # P2-1: 反例集合（从 meta_scratchpad 取失败方向）
+        if ctx.meta_scratchpad:
+            parts.append(f"\n## Failed Directions (AVOID repeating):\n{ctx.meta_scratchpad[:500]}")
+
         if ctx.domain_hints:
-            parts.append("## Domain Hints:")
+            parts.append("\n## Domain Hints:")
             for hint in ctx.domain_hints[:3]:
                 parts.append(f"- {hint}")
 

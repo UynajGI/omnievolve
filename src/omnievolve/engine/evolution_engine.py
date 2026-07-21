@@ -98,6 +98,8 @@ class EvolutionConfig:
     tournament_size: int = 3
     island_migration_interval: int = 5
     ucb_c: float = 1.414
+    uct_decay_progress: float = 0.5  # P1-1: 探索衰减完成点
+    uct_c_min: float = 0.2  # P1-1: 探索常数下限
     self_evolve_enabled: bool = True
 
 
@@ -199,7 +201,8 @@ class EvolutionEngine:
         self._mcts = ProgressiveMCGS(
             exploration=self._config.ucb_c,
             schedule="progressive",
-            c_min=0.2,
+            c_min=self._config.uct_c_min,  # P1-1
+            decay_point=self._config.uct_decay_progress,  # P1-1
         )
         self._island_manager = island_manager or IslandManager(
             num_islands=self._config.island_count,
@@ -470,11 +473,25 @@ class EvolutionEngine:
                 logger.exception("Evolution failed for candidate slot %d", i)
 
     def _select_parents(self, island_id: str) -> tuple[list[str], str]:
-        """选择父代（步骤 2）：MCTS 引导 + ParentSelector 兜底.
+        """选择父代（步骤 2）：P1-2 软切换 + MCTS 引导 + ParentSelector 兖底.
+
+        P1-2: 探索-利用软切换
+        - w(t) 概率用 MCTS 探索（前期）
+        - 1-w(t) 概率用 Top-K 利用（后期）
 
         Returns:
             (parent_ids, relation_type)  relation_type ∈ {mutate, crossover}
         """
+        import random
+
+        from omnievolve.engine.selection import (
+            compute_exploration_weight,
+            select_top_k_exploitation,
+        )
+
+        # P1-2: 计算探索权重
+        w = compute_exploration_weight(self._mcts._progress)  # noqa: SLF001
+
         # 1. 尝试 MCTS 选择：从该岛屿的最佳候选出发下降到叶节点
         island = self._island_manager.get_island(island_id)
         mcts_parent: str | None = None
@@ -483,7 +500,7 @@ class EvolutionEngine:
             if root in self._mcts._nodes:  # noqa: SLF001 - 检查节点是否已注册
                 mcts_parent = self._mcts.select(root)
 
-        # 2. ParentSelector 兜底（需要有评估分数的候选）
+        # 2. ParentSelector 兖底（需要有评估分数的候选）
         min_parents = getattr(self._crossover, "min_parents", 2)
         scored = self._parent_selector.select(
             self._experiment_id,
@@ -492,9 +509,22 @@ class EvolutionEngine:
             count=min_parents,
         )
 
-        # 3. 决定 mutate vs crossover
-        import random
+        # 3. P1-2: 软切换决策
+        use_exploitation = random.random() > w and scored
 
+        if use_exploitation:
+            # Top-K 利用模式：从全局最高分中加权选择
+            all_scored = self._parent_selector._get_scored_candidates(  # noqa: SLF001
+                self._experiment_id,
+                self._evaluator_version_id,
+                self._environment_version_id,
+                None,
+            )
+            top_k_id = select_top_k_exploitation(all_scored, k=5)
+            if top_k_id:
+                return [top_k_id], "mutate"
+
+        # 4. 探索模式（默认）
         use_crossover = len(scored) >= 2 and random.random() < self._config.crossover_rate
 
         if use_crossover:

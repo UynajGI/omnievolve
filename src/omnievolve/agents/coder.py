@@ -105,9 +105,15 @@ class Coder:
             for prog in ctx.inspiration_programs[:3]:
                 score = prog.get("score", "?")
                 code = prog.get("code", "")
-                if len(code) > 800:
-                    code = code[:800] + "\n... (truncated)"
+                if len(code) > 1500:  # P2-2: 截断从 800 提升到 1500
+                    code = code[:1500] + "\n... (truncated)"
                 parts.append(f"Score: {score}\n```python\n{code}\n```")
+
+        # P2-2: 兄弟节点摘要
+        if ctx.sibling_summaries:
+            parts.append("\n## Sibling Approaches (same island, recent):")
+            for s in ctx.sibling_summaries[:3]:
+                parts.append(f"- {s}")
 
         # 记忆摘要
         if ctx.memory_hits:
