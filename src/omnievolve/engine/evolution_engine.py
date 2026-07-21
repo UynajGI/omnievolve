@@ -29,7 +29,6 @@ import signal
 import time
 from dataclasses import dataclass, field
 
-from omnievolve.agents.base import AgentContext
 from omnievolve.agents.coder import Coder
 from omnievolve.agents.context_builder import ContextBuilder
 from omnievolve.agents.critic import Critic
@@ -40,19 +39,16 @@ from omnievolve.engine.crossover import CrossoverOperator
 from omnievolve.engine.island import IslandManager
 from omnievolve.engine.mcts import ProgressiveMCGS
 from omnievolve.engine.memory import MemoryStore
-from omnievolve.engine.novelty import NoveltyDecision, NoveltyGate
+from omnievolve.engine.novelty import NoveltyGate
 from omnievolve.engine.selection import ParentSelector
 from omnievolve.eval.evaluation_run import EvaluationRunRepository
 from omnievolve.eval.evaluator_registry import EvaluatorRegistry
 from omnievolve.eval.task_evaluator import (
-    CandidateArtifact,
     EvalOutput,
-    EvaluationContext,
     TaskEvaluator,
 )
 from omnievolve.eval.telemetry import HealthOutput, SelfEvaluator
 from omnievolve.exceptions import (
-    EvaluatorError,
     EvolutionError,
     LLMError,
     SandboxError,
@@ -68,7 +64,6 @@ from omnievolve.meta.policy_archive import PolicyArchive
 from omnievolve.meta.policy_genome import SearchPolicyGenome
 from omnievolve.sandbox.base import (
     SandboxBackend,
-    SandboxPolicy,
 )
 from omnievolve.storage.artifact_store import ArtifactStore
 from omnievolve.storage.db import Database
@@ -246,10 +241,15 @@ class EvolutionEngine:
         self._prompt_repo = prompt_repo or PromptVersionRepository(db)
         self._code_profile_id: str | None = None  # run() 时注册
 
-        # T1: 提取 InspirationCollector — 上下文收集委托给独立组件
+        # T1: 提取 InspirationCollector
         from omnievolve.engine.inspiration import InspirationCollector
 
         self._inspiration = InspirationCollector(db, self._candidate_repo, artifact_store)
+
+        # T1: 提取 FastLoopStep — 11步候选进化委托给独立组件
+        from omnievolve.engine.fast_loop import FastLoopStep
+
+        self._fast_loop: FastLoopStep | None = None  # 延迟设置（需要 self 引用）
 
         # T1: 提取 SlowLoopController — 慢循环逻辑委托给独立组件
         from omnievolve.engine.slow_loop import SlowLoopController
@@ -281,6 +281,9 @@ class EvolutionEngine:
         self._failed_directions: list[str] = []
         # OpenEvolve: graceful shutdown flag (SIGINT/SIGTERM)
         self._shutdown_requested = False
+
+        # T1: FastLoopStep 需要完整的 self，在所有字段初始化后创建
+        self._fast_loop = FastLoopStep(self)
 
     # ------------------------------------------------------------------ #
     #  公共 API
@@ -501,326 +504,16 @@ class EvolutionEngine:
         task_name: str,
         island_id: str,
     ) -> tuple[str | None, str]:
-        """执行单个候选的完整进化链（步骤 1-11）.
-
-        包含生成、评估与全部状态更新。
-        """
-        # 步骤 2: 选择父代
-        parent_ids, relation = self._select_parents(island_id)
-
-        # 加载父代代码 / 思想
-        parent_codes, parent_thoughts = self._load_parents(parent_ids)
-
-        # 步骤 1: Router 选择模型
-        model = self._select_model(generation)
-
-        # 步骤 3/可选 crossover: 多父代融合产生基础代码
-        base_code: str | None = None
-        if relation == "crossover" and len(parent_codes) >= 2:
-            base_code = self._crossover.combine(parent_codes, strategy="segment")
-
-        # 检索记忆（步骤 1 上下文构建）
-        memory_hits = self._memory_store.retrieve(
-            experiment_id=self._experiment_id,
-            task_id=task_name,
-            success_only=True,
-            limit=self._search_policy.retrieval_budget,
-        )
-        memory_summaries = [
-            {
-                "outcome_summary": str(m.outcome_summary)[:200],
-                "scope_level": m.scope_level,
-                "success": m.success_flag,
-            }
-            for m in memory_hits
-        ]
-
-        # 构建 AgentContext（S5-04: 注入 champion prompt 版本）
-        # ShinkaEvolve/AlphaEvolve: inspiration programs（多样化的高分候选 + 随机样本）
-        inspiration = self._collect_inspiration_programs(parent_ids)
-
-        # AM-01: 注入父代码到 inspiration 中，Coder 使用它作为 diff 基础
-        for i, pid in enumerate(parent_ids):
-            if i < len(parent_codes):
-                inspiration.insert(
-                    0,
-                    {
-                        "is_parent": True,
-                        "candidate_id": pid,
-                        "score": 0.0,
-                        "code": parent_codes[i],
-                        "source": "parent",
-                    },
-                )
-
-        ctx = AgentContext(
-            experiment_id=self._experiment_id,
-            task_id=task_name,
-            generation=generation,
-            island_id=island_id,
-            parent_candidate_ids=parent_ids,
-            parent_thoughts=parent_thoughts,
-            parent_artifact_hashes=[],
-            inspiration_programs=inspiration,
-            memory_hits=memory_summaries,
-            meta_scratchpad=self._meta_scratchpad,
-            search_policy_id=self._champion_policy_id,
-            evaluator_version_id=self._evaluator_version_id,
-            environment_version_id=self._environment_version_id,
-            model=model,
-            prompt_version_id=self._load_champion_prompt("director"),
-        )
-
-        # 步骤 4: Director 进化思想
-        thought = self._director.evolve_thought(ctx)
-
-        # 步骤 5: NoveltyGate 多级新颖性检查
-        novelty_result = self._novelty_gate.check(
-            thought=thought.thought,
-            code=base_code,
-        )
-        if novelty_result.decision == NoveltyDecision.REJECT:
-            logger.debug("Thought rejected by novelty gate")
-            return None, ""
-
-        # 步骤 6: Coder 生成代码（带 critic 重试）
-        code = self._coder.generate_code(ctx, thought)
-        if not code.full_code.strip():
-            # diff 可能已解析但无法 apply → 回退到父代码或 crossover 基线
-            if base_code:
-                code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
-            elif parent_codes:
-                code = type(code)(
-                    diff="",
-                    full_code=parent_codes[0],
-                    explanation="fallback to parent code (diff could not be applied)",
-                )
-
-        passed, _ = self._critic.review(code, thought)
-        retries = 0
-        while not passed and retries < self._config.novelty_retry_limit:
-            retries += 1
-            code = self._coder.generate_code(ctx, thought)
-            passed, _ = self._critic.review(code, thought)
-
-        if not passed:
-            logger.debug("Code rejected by critic after retries")
-            return None, ""
-
-        # 步骤 7: 存储 Artifact
-        artifact_hash = self._artifact_store.store_text(code.full_code, "source")
-
-        # 步骤 8: 创建候选（含多父代血缘）
-        parents_with_relation = [(pid, relation) for pid in parent_ids]
-        candidate = self._candidate_repo.create_candidate(
-            experiment_id=self._experiment_id,
-            task_id=task_name,
-            generation=generation,
-            artifact_hash=artifact_hash,
-            search_policy_id=self._champion_policy_id,
-            island_id=island_id,
-            parents=parents_with_relation or None,
-            meta={"thought": thought.thought[:500], "relation": relation, "model": model},
-        )
-        self._total_candidates += 1
-
-        # S6-08: 向量 Outbox — 为候选代码入队索引任务
-        self._enqueue_vector_index("candidate", candidate.id, artifact_hash)
-
-        # 记录思想
-        thought_record = self._candidate_repo.create_thought(
-            experiment_id=self._experiment_id,
-            task_id=task_name,
-            content=thought.thought,
-            rationale=thought.rationale,
-            risk_notes=thought.risk_notes,
-            confidence=thought.confidence,
-            mechanism_tags=thought.mechanism_tags,
-        )
-
-        # S6-08: 为思想内容入队向量索引（novelty 语义检索依赖）
-        thought_hash = self._artifact_store.store_text(thought.thought, "log")
-        self._enqueue_vector_index("thought", thought_record.id, thought_hash)
-
-        # P0: Reference edges — 跨分支信息流
-        self._write_reference_edges(
-            candidate.id,
-            inspiration,
-            parent_ids=parent_ids,
-        )
-
-        # MCTS 扩展（步骤 8 续）
-        if parent_ids:
-            self._mcts.expand(parent_ids[0], [(candidate.id, thought.confidence)])
-        else:
-            self._mcts.add_node(candidate.id, parent=None, prior=thought.confidence)
-
-        # 步骤 9-11: 评估并更新状态
-        output = self._evaluate_candidate(candidate.id, artifact_hash)
-        self._island_manager.assign_candidate(candidate.id, island_id)
-
-        # Router 奖励更新（ShinkaEvolve 相对奖励公式）
-        if self._router is not None and model and output is not None:
-            from omnievolve.agents.router import compute_shinka_reward
-
-            # parent_score: 批量查询所有父代分数（1 次 IN 查询代替 N 次）
-            parent_score = 0.0
-            if parent_ids:
-                placeholders = ",".join(["?"] * len(parent_ids))
-                score_rows = self._db.fetchall(
-                    f"""
-                    SELECT candidate_id, MAX(primary_score) as score
-                    FROM evaluation_run
-                    WHERE candidate_id IN ({placeholders})
-                      AND status = 'completed' AND passed = 1
-                    GROUP BY candidate_id
-                    """,
-                    tuple(parent_ids),
-                )
-                parent_scores = [r["score"] for r in score_rows if r["score"]]
-                parent_score = max(parent_scores) if parent_scores else 0.0
-
-            # baseline_score: 初始候选分数
-            baseline_score = self._get_baseline_score()
-
-            reward = compute_shinka_reward(output.score, parent_score, baseline_score)
-            self._router.update(model=model, role="coder", reward=reward)
-
-        return candidate.id, artifact_hash
+        """执行单个候选的完整进化链（T1: 委托给 FastLoopStep）."""
+        return self._fast_loop.evolve_one(generation, task_name, island_id)
 
     def _evaluate_candidate(
         self,
         candidate_id: str,
         artifact_hash: str,
     ) -> EvalOutput | None:
-        """评估候选（步骤 9-11）+ 记录 evaluation_run."""
-        candidate_artifact = CandidateArtifact(
-            candidate_id=candidate_id,
-            source_hash=artifact_hash,
-            manifest_hash=None,
-            language="python",
-        )
-        eval_context = EvaluationContext(
-            experiment_id=self._experiment_id,
-            evaluator_version_id=self._evaluator_version_id,
-            environment_version_id=self._environment_version_id,
-        )
-
-        # 创建评估运行记录
-        try:
-            run = self._eval_repo.create(
-                experiment_id=self._experiment_id,
-                candidate_id=candidate_id,
-                evaluator_version_id=self._evaluator_version_id,
-                environment_version_id=self._environment_version_id,
-            )
-            self._eval_repo.start(run.id)
-        except StorageError:
-            logger.debug("Could not create evaluation_run record", exc_info=True)
-            run = None
-
-        # 步骤 9: build_plan
-        try:
-            plan = self._task_evaluator.build_plan(candidate_artifact, eval_context)
-        except EvaluatorError:
-            logger.exception("Failed to build plan for %s", candidate_id)
-            if run:
-                self._eval_repo.fail(run.id, "build_plan error")
-            return None
-
-        # 步骤 10: sandbox 执行
-        policy = SandboxPolicy(
-            timeout_sec=self._config.sandbox_timeout,
-            mem_limit_mb=self._config.sandbox_mem_limit_mb,
-        )
-        try:
-            result = self._sandbox.execute(plan, candidate_artifact, policy)
-        except SandboxError:
-            logger.exception("Sandbox execution failed for %s", candidate_id)
-            if run:
-                self._eval_repo.fail(run.id, "sandbox execution error")
-            return None
-
-        # 步骤 11: parse + 更新状态
-        output = self._task_evaluator.parse_result(result, eval_context)
-
-        # 完成评估运行记录
-        if run:
-            try:
-                self._eval_repo.complete(
-                    run.id,
-                    passed=output.passed,
-                    primary_score=output.score,
-                    metrics=output.metrics,
-                    execution_time_ms=result.execution_time_ms,
-                    memory_peak_kb=result.memory_peak_kb,
-                    cpu_time_ms=result.cpu_time_ms,
-                )
-            except StorageError:
-                logger.debug("Could not complete evaluation_run record", exc_info=True)
-
-        # 更新 candidate 状态
-        self._candidate_repo.update_status(candidate_id, "evaluated" if output.passed else "failed")
-
-        # 更新 best
-        if output.passed:
-            self._update_best(candidate_id, output.score)
-
-        # 记录分数供 Slow Loop
-        self._recent_scores.append(output.score)
-
-        # ShinkaEvolve meta-scratchpad: 更新失败方向追踪
-        thought_text = ""
-        cand_meta = self._candidate_repo.get_candidate(candidate_id)
-        if cand_meta and cand_meta.meta:
-            thought_text = cand_meta.meta.get("thought", "")
-        self._update_meta_scratchpad(thought_text, output.score)
-
-        # MCTS 回传
-        self._mcts.backpropagate(candidate_id, output.score)
-
-        # 岛屿精英更新
-        island_id = self._lookup_island(candidate_id)
-        if island_id:
-            island = self._island_manager.get_island(island_id)
-            if island:
-                island.update_elite(candidate_id, output.score)
-                if output.passed:
-                    self._island_manager.reset_stagnation(island_id)
-                else:
-                    self._island_manager.increment_stagnation(island_id)
-
-        # 搜索状态更新
-        self._candidate_repo.update_search_state(
-            candidate_id,
-            visit_delta=1,
-            value_delta=output.score,
-            frontier_status="elite" if output.passed else "closed",
-        )
-
-        # 成功记忆
-        if output.passed:
-            self._memory_store.add_memory(
-                scope_level=1,
-                outcome_summary={
-                    "candidate_id": candidate_id,
-                    "score": output.score,
-                    "metrics": output.metrics,
-                },
-                success_flag=True,
-                experiment_id=self._experiment_id,
-                candidate_id=candidate_id,
-            )
-
-        # 预算记账（沙箱执行耗时）
-        self._budget_guard.consume(
-            model="sandbox",
-            input_tokens=0,
-            output_tokens=0,
-            compute_sec=result.execution_time_ms / 1000,
-        )
-
-        return output
+        """评估候选（T1: 委托给 FastLoopStep）."""
+        return self._fast_loop.evaluate_candidate(candidate_id, artifact_hash)
 
     # ------------------------------------------------------------------ #
     #  Slow Loop
