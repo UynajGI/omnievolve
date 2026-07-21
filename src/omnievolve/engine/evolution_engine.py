@@ -643,10 +643,21 @@ class EvolutionEngine:
         if self._router is not None and model and output is not None:
             from omnievolve.agents.router import compute_shinka_reward
 
-            # parent_score: 取所有父代的最高分
+            # parent_score: 批量查询所有父代分数（1 次 IN 查询代替 N 次）
             parent_score = 0.0
             if parent_ids:
-                parent_scores = [self._get_candidate_score(pid) for pid in parent_ids]
+                placeholders = ",".join(["?"] * len(parent_ids))
+                score_rows = self._db.fetchall(
+                    f"""
+                    SELECT candidate_id, MAX(primary_score) as score
+                    FROM evaluation_run
+                    WHERE candidate_id IN ({placeholders})
+                      AND status = 'completed' AND passed = 1
+                    GROUP BY candidate_id
+                    """,
+                    tuple(parent_ids),
+                )
+                parent_scores = [r["score"] for r in score_rows if r["score"]]
                 parent_score = max(parent_scores) if parent_scores else 0.0
 
             # baseline_score: 初始候选分数
@@ -1039,6 +1050,20 @@ class EvolutionEngine:
         )
         return profile_id
 
+    def _batch_load_artifacts(self, artifact_hashes: list[str]) -> list[str]:
+        """批量加载 artifact 内容（T3: 避免 N+1 文件读取）.
+
+        对每个 hash 调用 load_text，但统一异常处理。
+        返回与输入等长的列表，失败的位置为空字符串。
+        """
+        results: list[str] = []
+        for h in artifact_hashes:
+            try:
+                results.append(self._artifact_store.load_text(h))
+            except Exception:
+                results.append("")
+        return results
+
     def _enqueue_vector_index(
         self,
         entity_type: str,
@@ -1118,20 +1143,45 @@ class EvolutionEngine:
         return 0.0
 
     def _load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str]]:
-        """加载父代代码与思想."""
+        """加载父代代码与思想（批量查询，避免 N+1）."""
+        if not parent_ids:
+            return [], []
+
+        # 批量获取候选行 — 1 次 IN 查询代替 N 次 get_candidate()
+        placeholders = ",".join(["?"] * len(parent_ids))
+        rows = self._db.fetchall(
+            f"""
+            SELECT id, artifact_hash, meta
+            FROM candidate
+            WHERE id IN ({placeholders})
+            """,
+            tuple(parent_ids),
+        )
+        # 保持 parent_ids 顺序
+        row_map = {row["id"]: row for row in rows}
+
         codes: list[str] = []
         thoughts: list[str] = []
         for pid in parent_ids:
-            cand = self._candidate_repo.get_candidate(pid)
-            if cand is None:
+            row = row_map.get(pid)
+            if row is None:
                 continue
             try:
-                code = self._artifact_store.load_text(cand.artifact_hash)
+                code = self._artifact_store.load_text(row["artifact_hash"])
                 codes.append(code)
             except Exception:
-                logger.debug("Cannot load artifact %s", cand.artifact_hash)
-            if cand.meta and isinstance(cand.meta.get("thought"), str):
-                thoughts.append(cand.meta["thought"])
+                logger.debug("Cannot load artifact %s", row["artifact_hash"])
+            # 解析 meta 中的 thought
+            meta_str = row["meta"]
+            if meta_str:
+                import json as _json
+
+                try:
+                    meta = _json.loads(meta_str)
+                    if isinstance(meta.get("thought"), str):
+                        thoughts.append(meta["thought"])
+                except (ValueError, TypeError):
+                    pass
         return codes, thoughts
 
     def _write_reference_edges(
@@ -1186,7 +1236,7 @@ class EvolutionEngine:
         inspirations: list[dict] = []
         exclude = set(exclude_parent_ids)
 
-        # Top-K 高分候选
+        # Top-K 高分候选 — 批量加载代码
         try:
             bests = self._candidate_repo.get_best_candidates(
                 self._experiment_id,
@@ -1194,23 +1244,22 @@ class EvolutionEngine:
                 self._environment_version_id,
                 limit=top_k * 2,
             )
-            for cand, score in bests:
-                if cand.id in exclude:
-                    continue
-                try:
-                    code = self._artifact_store.load_text(cand.artifact_hash)
-                    inspirations.append(
-                        {
-                            "candidate_id": cand.id,
-                            "score": score,
-                            "code_preview": code[:500],
-                            "source": "top_k",
-                        }
-                    )
-                except Exception:
-                    pass
-                if len([i for i in inspirations if i["source"] == "top_k"]) >= top_k:
-                    break
+            # T3: 批量预加载 artifact 内容（避免逐个 load_text）
+            top_candidates = [(cand, score) for cand, score in bests if cand.id not in exclude]
+            if top_candidates:
+                top_codes = self._batch_load_artifacts([c.artifact_hash for c, _ in top_candidates])
+                for (cand, score), code in zip(top_candidates, top_codes, strict=False):
+                    if code:
+                        inspirations.append(
+                            {
+                                "candidate_id": cand.id,
+                                "score": score,
+                                "code_preview": code[:500],
+                                "source": "top_k",
+                            }
+                        )
+                    if len([i for i in inspirations if i["source"] == "top_k"]) >= top_k:
+                        break
         except Exception:
             logger.debug("Failed to collect top-K inspirations", exc_info=True)
 
