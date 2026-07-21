@@ -37,6 +37,7 @@ class Database:
         self._busy_timeout = busy_timeout
         self._local = threading.local()
         self._lock = threading.Lock()
+        self._all_connections: list[sqlite3.Connection] = []
 
         # 确保父目录存在
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +86,10 @@ class Database:
     def get_connection(self) -> sqlite3.Connection:
         """获取当前线程的连接（惰性创建）."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = self._create_connection()
+            conn = self._create_connection()
+            self._local.conn = conn
+            with self._lock:
+                self._all_connections.append(conn)
         return self._local.conn
 
     @contextmanager
@@ -149,8 +153,15 @@ class Database:
             self._local.conn = None
 
     def close_all(self) -> None:
-        """关闭所有连接（用于清理）."""
-        self.close()
+        """关闭所有线程的连接（用于多线程清理）."""
+        with self._lock:
+            for conn in self._all_connections:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._all_connections.clear()
+        self._local.conn = None
 
     def __enter__(self) -> Database:
         return self

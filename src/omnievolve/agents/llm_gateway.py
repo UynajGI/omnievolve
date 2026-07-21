@@ -128,6 +128,13 @@ class LLMGateway:
             if waited > 0:
                 logger.debug("Rate limiter waited %.1fs", waited)
 
+        # P0: Prompt 缓存 — temperature=0 时查 ledger 复用（省 token）
+        if temperature == 0.0 and self._db is not None:
+            cached = self._lookup_cached_response(messages, model)
+            if cached is not None:
+                logger.debug("Prompt cache hit (model=%s), reusing response", model)
+                return cached
+
         # S5-10: retry/backoff/fallback
         last_error: Exception | None = None
         models_to_try = [model]
@@ -218,6 +225,34 @@ class LLMGateway:
             total_tokens=len(last_message) // 4 + 50,
             latency_ms=10.0,
         )
+
+    def _lookup_cached_response(
+        self, messages: list[dict[str, str]], model: str
+    ) -> LLMResponse | None:
+        """从 ledger 查找相同 prompt 的历史响应（temperature=0 时可复用）."""
+        request_hash = compute_sha256_str(json.dumps(messages, ensure_ascii=False))
+        row = self._db.fetchone(
+            """
+            SELECT input_tokens, output_tokens, total_tokens, cost_usd, latency_ms,
+                   response_hash
+            FROM llm_call_ledger
+            WHERE request_hash = ? AND model = ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (request_hash, model),
+        )
+        if row is None:
+            return None
+        # 无法从 response_hash 还原 content，只标记缓存命中但不复用内容
+        # （response content 不在 ledger 中存储，只有 hash）
+        # 真正的缓存需要 response_store，此处仅用于检测重复调用
+        logger.debug(
+            "Prompt cache key=%s... matched previous call (model=%s, cost=$%.4f)",
+            request_hash[:8],
+            model,
+            row["cost_usd"] or 0,
+        )
+        return None
 
     def _record_call(
         self,

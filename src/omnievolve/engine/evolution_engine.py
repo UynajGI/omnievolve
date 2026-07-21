@@ -919,7 +919,7 @@ class EvolutionEngine:
                 params, score=gain, generation=self._current_generation
             )
         except Exception:
-            logger.debug("Failed to record tuner feedback", exc_info=True)
+            logger.warning("Failed to record tuner feedback", exc_info=True)
 
     # ------------------------------------------------------------------ #
     #  辅助方法
@@ -949,11 +949,44 @@ class EvolutionEngine:
             except Exception:
                 logger.debug("Could not set champion_policy_id on experiment")
 
+    def _verify_evaluator_immutability(self) -> None:
+        """L2 红线：验证评估器实现未被篡改.
+
+        若版本行是由 EvaluatorRegistry.register() 创建的（有真实 implementation_hash），
+        重新计算当前评估器哈希并比对。不匹配时抛出 ImmutabilityViolationError。
+        """
+        from omnievolve.eval.evaluator_registry import (
+            EvaluatorRegistry,
+            ImmutabilityViolationError,
+        )
+
+        row = self._db.fetchone(
+            "SELECT implementation_hash, immutable_core FROM task_evaluator_version WHERE id = ?",
+            (self._evaluator_version_id,),
+        )
+        if row is None or not row["immutable_core"]:
+            return
+
+        # 只有当存储的 hash 不是占位符（_ensure_version_rows 写入的 version_id 本身）时才验证
+        stored_hash = row["implementation_hash"]
+        if stored_hash == self._evaluator_version_id:
+            return  # 占位行，跳过
+
+        registry = EvaluatorRegistry(self._db)
+        if not registry.verify_immutability(self._evaluator_version_id, self._task_evaluator):
+            raise ImmutabilityViolationError(
+                f"Evaluator implementation has changed for version "
+                f"{self._evaluator_version_id}. Task semantics are immutable (L2). "
+                "Register a new version if intentional."
+            )
+
     def _ensure_version_rows(self) -> None:
         """确保 evaluator/environment version 行存在以满足 FK 约束.
 
         若 CLI 已通过 EvaluatorRegistry 注册完整版本，INSERT OR IGNORE 不覆盖；
         若未注册（直接使用引擎），写入最小行满足外键。
+
+        L2 红线：若版本已注册（immutable_core=1），验证实现哈希未被篡改。
         """
         if self._evaluator_version_id:
             name = (
@@ -973,6 +1006,8 @@ class EvolutionEngine:
                     self._evaluator_version_id,
                 ),
             )
+            # L2 红线：验证评估器不可变性（若已通过 registry 注册）
+            self._verify_evaluator_immutability()
         if self._environment_version_id:
             self._db.execute(
                 "INSERT OR IGNORE INTO execution_environment_version"
@@ -1022,7 +1057,7 @@ class EvolutionEngine:
                 (entity_type, entity_id, self._code_profile_id, content_hash),
             )
         except Exception:
-            logger.debug("vector_index_job insert failed", exc_info=True)
+            logger.warning("vector_index_job insert failed (P0 outbox)", exc_info=True)
 
     def _load_champion_prompt(self, role: str) -> str:
         """加载角色的 Champion Prompt（S5-04 Prompt 版本化）.
@@ -1032,13 +1067,12 @@ class EvolutionEngine:
         version_field = f"{role}_prompt_version"
         prompt_version_id = getattr(self._search_policy, version_field, "default")
         if prompt_version_id == "default":
-            # 从 Repository 获取 champion prompt
             try:
                 champion = self._prompt_repo.get_latest(role, "champion")
                 if champion:
-                    return ""  # content_hash 指向 artifact；实际内容由 Agent 自行加载
+                    return champion.id
             except Exception:
-                pass
+                logger.debug("Failed to load champion prompt for role %s", role, exc_info=True)
             return ""
         return prompt_version_id
 
@@ -1129,7 +1163,7 @@ class EvolutionEngine:
                     (src_id, child_id, ref_type, f"source={source} score={insp.get('score', '?')}"),
                 )
             except Exception:
-                logger.debug("Failed to write reference edge", exc_info=True)
+                logger.warning("Failed to write reference edge (P0 cross-branch)", exc_info=True)
 
     def _collect_inspiration_programs(
         self,
@@ -1277,7 +1311,7 @@ class EvolutionEngine:
                 (json.dumps(checkpoint, ensure_ascii=False), self._experiment_id),
             )
         except Exception:
-            logger.debug("Failed to save checkpoint (may be running v001 schema)", exc_info=True)
+            logger.warning("Failed to save checkpoint", exc_info=True)
 
     def _load_checkpoint(self) -> None:
         """从 experiment 表恢复易失状态."""
