@@ -132,58 +132,69 @@ class VectorIndexer:
             (self._worker_id, lease_expires.isoformat(), now_iso(), *job_ids),
         )
 
-        # 处理每个任务
-        processed = 0
+        # 处理任务 — 批量 embedding 优化
+        # 1. 收集所有待处理内容的文本
+        contents: list[tuple[Any, str]] = []
         for row in rows:
             try:
-                self._process_job(row)
+                if self._artifact_store is None:
+                    raise RuntimeError("ArtifactStore not set")
+                content = self._artifact_store.load(row["content_hash"])
+                content_text = (
+                    content.decode("utf-8", errors="replace")
+                    if isinstance(content, bytes)
+                    else str(content)
+                )
+                contents.append((row, content_text))
+            except Exception as e:
+                logger.error("Failed to load content for job %s: %s", row["id"], e)
+                self._mark_failed(row["id"], str(e))
+
+        if not contents:
+            return 0
+
+        # 2. 批量生成 embeddings（一次 API 调用代替 N 次）
+        texts = [c[1] for c in contents]
+        try:
+            vectors = self._embedder.embed(texts)
+        except Exception as e:
+            logger.error("Batch embedding failed: %s — falling back to per-job", e)
+            vectors = None
+
+        # 3. 逐个存储结果
+        processed = 0
+        for i, (row, content_text) in enumerate(contents):
+            try:
+                if vectors is not None:
+                    vector = vectors[i]
+                else:
+                    # 回退：逐条 embed
+                    vector = self._embedder.embed([content_text])[0]
+
+                collection = f"{row['entity_type']}_{row['embedding_profile_id']}"
+                self._backend.create_or_open(collection, self._embedder.dimension)
+
+                if row["operation"] == "upsert":
+                    record = VectorRecord(
+                        id=row["entity_id"],
+                        vector=vector,
+                        metadata={
+                            "entity_type": row["entity_type"],
+                            "content_hash": row["content_hash"],
+                            "profile_id": row["embedding_profile_id"],
+                        },
+                    )
+                    self._backend.upsert(collection, [record])
+                elif row["operation"] == "delete":
+                    self._backend.delete(collection, [row["entity_id"]])
+
+                self._mark_done(row["id"])
                 processed += 1
             except Exception as e:
-                logger.error(f"Failed to process job {row['id']}: {e}")
+                logger.error("Failed to process job %s: %s", row["id"], e)
                 self._mark_failed(row["id"], str(e))
 
         return processed
-
-    def _process_job(self, row: Any) -> None:
-        """处理单个索引任务."""
-        if self._artifact_store is None:
-            raise RuntimeError("ArtifactStore not set")
-
-        # 读取内容
-        content = self._artifact_store.load(row["content_hash"])
-
-        if isinstance(content, bytes):
-            content_text = content.decode("utf-8", errors="replace")
-        else:
-            content_text = str(content)
-
-        # 生成 embedding
-        vectors = self._embedder.embed([content_text])
-        vector = vectors[0]
-
-        # 确定集合名
-        collection = f"{row['entity_type']}_{row['embedding_profile_id']}"
-
-        # 确保集合存在
-        self._backend.create_or_open(collection, self._embedder.dimension)
-
-        # 操作类型
-        if row["operation"] == "upsert":
-            record = VectorRecord(
-                id=row["entity_id"],
-                vector=vector,
-                metadata={
-                    "entity_type": row["entity_type"],
-                    "content_hash": row["content_hash"],
-                    "profile_id": row["embedding_profile_id"],
-                },
-            )
-            self._backend.upsert(collection, [record])
-        elif row["operation"] == "delete":
-            self._backend.delete(collection, [row["entity_id"]])
-
-        # 标记完成
-        self._mark_done(row["id"])
 
     def _mark_done(self, job_id: int) -> None:
         """标记任务完成."""

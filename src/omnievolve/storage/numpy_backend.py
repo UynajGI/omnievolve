@@ -48,7 +48,10 @@ class NumpyVectorBackend:
         top_k: int,
         filters: dict | None = None,
     ) -> list[VectorHit]:
-        """精确 KNN 查询."""
+        """精确 KNN 查询（矩阵向量化优化）.
+
+        P2: 使用 np.stack + 单次 dot product 代替逐条循环。
+        """
         if collection not in self._collections:
             return []
 
@@ -57,28 +60,55 @@ class NumpyVectorBackend:
             return []
 
         query_vec = np.array(vector, dtype=np.float32)
+        norm_query = np.linalg.norm(query_vec)
 
-        # 计算余弦相似度
-        hits = []
-        for id, (vec, metadata) in items.items():
-            # 应用过滤器
-            if filters:
-                if not all(metadata.get(k) == v for k, v in filters.items()):
-                    continue
+        # 分离 ID、向量、元数据
+        ids = list(items.keys())
+        matrices = []
+        metadatas = []
+        for id_ in ids:
+            vec, meta = items[id_]
+            matrices.append(vec)
+            metadatas.append(meta)
 
-            # 余弦相似度
-            norm_query = np.linalg.norm(query_vec)
-            norm_vec = np.linalg.norm(vec)
-            if norm_query > 0 and norm_vec > 0:
-                similarity = float(np.dot(query_vec, vec) / (norm_query * norm_vec))
-            else:
-                similarity = 0.0
+        # 堆叠为矩阵 [n, dim]
+        matrix = np.stack(matrices)  # [n, dim]
 
-            hits.append(VectorHit(id=id, similarity=similarity, metadata=metadata))
+        # 预过滤：应用 filters
+        keep_mask: list[bool] = []
+        if filters:
+            keep_mask = [all(meta.get(k) == v for k, v in filters.items()) for meta in metadatas]
+            if not any(keep_mask):
+                return []
+            # 应用 mask
+            keep_idx = [i for i, k in enumerate(keep_mask) if k]
+            matrix = matrix[keep_idx]
+            ids = [ids[i] for i in keep_idx]
+            metadatas = [metadatas[i] for i in keep_idx]
+
+        # 批量余弦相似度 — 单次矩阵乘法代替 N 次循环
+        if norm_query > 0:
+            norms = np.linalg.norm(matrix, axis=1)  # [n]
+            # 避免除零
+            valid = norms > 0
+            sims = np.zeros(matrix.shape[0], dtype=np.float32)
+            if valid.any():
+                dots = matrix[valid] @ query_vec  # [n_valid]
+                sims[valid] = dots / (norms[valid] * norm_query)
+        else:
+            sims = np.zeros(matrix.shape[0], dtype=np.float32)
 
         # 排序并返回 top_k
-        hits.sort(key=lambda x: x.similarity, reverse=True)
-        return hits[:top_k]
+        top_indices = np.argsort(sims)[::-1][:top_k]
+        hits = [
+            VectorHit(
+                id=ids[i],
+                similarity=float(sims[i]),
+                metadata=metadatas[i],
+            )
+            for i in top_indices
+        ]
+        return hits
 
     def delete(self, collection: str, ids: list[str]) -> None:
         """删除向量."""

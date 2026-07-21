@@ -223,8 +223,14 @@ class ArtifactStore:
     def delete(self, artifact_hash: str) -> bool:
         """删除 Artifact（仅当无引用时）.
 
-        注意：当前实现不检查引用，谨慎使用。
+        P2: 引用计数检查 — 如果任何 candidate/evaluation_run/llm_call_ledger
+        引用此 hash，则不删除。
         """
+        # 引用检查
+        if self._has_references(artifact_hash):
+            logger.debug("Artifact %s still referenced, skipping delete", artifact_hash[:12])
+            return False
+
         path = self._artifact_path(artifact_hash)
         if path.exists():
             path.unlink()
@@ -232,6 +238,63 @@ class ArtifactStore:
         with self._db.transaction() as conn:
             cursor = conn.execute("DELETE FROM artifact WHERE hash = ?", (artifact_hash,))
             return cursor.rowcount > 0
+
+    def _has_references(self, artifact_hash: str) -> bool:
+        """检查是否有数据库行引用此 artifact hash."""
+        ref_columns = [
+            ("candidate", "artifact_hash"),
+            ("candidate", "diff_artifact_hash"),
+            ("candidate", "manifest_hash"),
+            ("evaluation_run", "stdout_hash"),
+            ("evaluation_run", "stderr_hash"),
+            ("evaluation_run", "result_hash"),
+            ("llm_call_ledger", "response_hash"),
+        ]
+        for table, col in ref_columns:
+            row = self._db.fetchone(
+                f"SELECT 1 FROM {table} WHERE {col} = ? LIMIT 1",
+                (artifact_hash,),
+            )
+            if row is not None:
+                return True
+        return False
+
+    def garbage_collect(self, *, dry_run: bool = False) -> dict[str, int]:
+        """垃圾回收：删除无引用的 artifact.
+
+        扫描所有 artifact，删除没有被任何数据库行引用的。
+
+        Returns:
+            {"scanned": N, "deleted": M, "retained": K}
+        """
+        rows = self._db.fetchall("SELECT hash FROM artifact")
+        scanned = len(rows)
+        deleted = 0
+        retained = 0
+
+        for row in rows:
+            artifact_hash = row["hash"]
+            if self._has_references(artifact_hash):
+                retained += 1
+                continue
+            if dry_run:
+                deleted += 1
+                continue
+            # 删除文件和 DB 行
+            path = self._artifact_path(artifact_hash)
+            if path.exists():
+                path.unlink(missing_ok=True)
+            self._db.execute("DELETE FROM artifact WHERE hash = ?", (artifact_hash,))
+            deleted += 1
+
+        logger.info(
+            "Artifact GC: scanned=%d, deleted=%d, retained=%d%s",
+            scanned,
+            deleted,
+            retained,
+            " (dry-run)" if dry_run else "",
+        )
+        return {"scanned": scanned, "deleted": deleted, "retained": retained}
 
     def _atomic_write(self, target_path: Path, data: bytes) -> None:
         """原子写入文件.
