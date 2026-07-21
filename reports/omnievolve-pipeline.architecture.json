@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OmniEvolve Evolution Pipeline",
+    "subtitle": "Fast Loop (11-step) + Slow Loop + P0-1 Feedback Loop",
+    "output": "omnievolve-pipeline.html"
+  },
+  "components": [
+    { "id": "select", "type": "backend", "label": "Selection", "sublabel": "Router + MCTS", "pos": [40, 60], "size": [110, 50] },
+    { "id": "director", "type": "backend", "label": "Director", "sublabel": "thought + rationale", "pos": [200, 60], "size": [110, 50] },
+    { "id": "coder", "type": "backend", "label": "Coder", "sublabel": "SEARCH/REPLACE diff", "pos": [360, 60], "size": [110, 50] },
+    { "id": "critic", "type": "backend", "label": "Critic", "sublabel": "static + LLM review", "pos": [520, 60], "size": [110, 50] },
+    { "id": "sandbox", "type": "security", "label": "Sandbox", "sublabel": "subprocess / Docker", "pos": [680, 60], "size": [110, 50] },
+    { "id": "evaluator", "type": "backend", "label": "Evaluator", "sublabel": "score + metrics", "pos": [840, 60], "size": [110, 50] },
+
+    { "id": "telemetry", "type": "backend", "label": "Telemetry", "sublabel": "aggregate metrics", "pos": [40, 200], "size": [110, 50] },
+    { "id": "health", "type": "backend", "label": "HealthPolicy", "sublabel": "alert + ROI", "pos": [200, 200], "size": [110, 50] },
+    { "id": "metaplanner", "type": "backend", "label": "MetaPlanner", "sublabel": "propose actions", "pos": [360, 200], "size": [110, 50] },
+    { "id": "governance", "type": "security", "label": "Governance", "sublabel": "L0 / L1 / L2", "pos": [520, 200], "size": [110, 50] },
+    { "id": "challenger", "type": "backend", "label": "Challenger", "sublabel": "replay + promote", "pos": [680, 200], "size": [110, 50] },
+
+    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "WAL mode", "pos": [200, 320], "size": [110, 50] },
+    { "id": "cas", "type": "database", "label": "ArtifactStore", "sublabel": "SHA-256 CAS", "pos": [440, 320], "size": [110, 50] },
+    { "id": "vector", "type": "database", "label": "VectorStore", "sublabel": "FTS5 + embed", "pos": [680, 320], "size": [110, 50] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Fast Loop — per candidate", "wraps": ["select", "director", "coder", "critic", "sandbox", "evaluator"] },
+    { "kind": "region", "label": "Slow Loop — every N gens", "wraps": ["telemetry", "health", "metaplanner", "governance", "challenger"] },
+    { "kind": "region", "label": "Persistence", "wraps": ["sqlite", "cas", "vector"] }
+  ],
+  "connections": [
+    { "id": "select-director", "from": "select", "to": "director", "variant": "emphasis" },
+    { "id": "director-coder", "from": "director", "to": "coder", "variant": "emphasis" },
+    { "id": "coder-critic", "from": "coder", "to": "critic", "variant": "emphasis" },
+    { "id": "critic-sandbox", "from": "critic", "to": "sandbox", "variant": "emphasis" },
+    { "id": "sandbox-evaluator", "from": "sandbox", "to": "evaluator", "variant": "emphasis" },
+
+    { "id": "p0-feedback", "from": "evaluator", "to": "coder", "label": "P0-1: stderr + failure_reason", "variant": "dashed", "fromSide": "top", "toSide": "top", "route": "orthogonal-h", "labelDy": -10 },
+
+    { "id": "eval-telemetry", "from": "evaluator", "to": "telemetry", "label": "every N gens", "variant": "dashed", "fromSide": "bottom", "toSide": "right", "route": "orthogonal-v" },
+    { "id": "telemetry-health", "from": "telemetry", "to": "health", "variant": "emphasis" },
+    { "id": "health-metaplanner", "from": "health", "to": "metaplanner", "variant": "emphasis" },
+    { "id": "metaplanner-governance", "from": "metaplanner", "to": "governance", "variant": "emphasis" },
+    { "id": "governance-challenger", "from": "governance", "to": "challenger", "variant": "emphasis" },
+    { "id": "challenger-select", "from": "challenger", "to": "select", "label": "update policy", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v" },
+
+    { "id": "eval-sqlite", "from": "evaluator", "to": "sqlite", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "route": "orthogonal-v" },
+    { "id": "coder-cas", "from": "coder", "to": "cas", "label": "artifact", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "route": "orthogonal-v", "labelAt": [455, 270] },
+    { "id": "eval-vector", "from": "evaluator", "to": "vector", "label": "outbox", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "route": "orthogonal-v" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "P0-1: Eval Feedback Loop",
+      "items": [
+        "Evaluator stderr + failure_reason → Coder via AgentContext.last_eval_failure",
+        "Pass rate: 19% → 57% (3x improvement)"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Design Red-Lines",
+      "items": [
+        "MCTS tree-edge only — never greedy/sequential",
+        "Evaluator L2 immutable — task semantics frozen",
+        "Sandbox default-deny — network=none, read-only, non-root",
+        "Artifact CAS — SHA-256 content-addressed",
+        "Vector outbox consistency — enqueue on creation"
+      ]
+    }
+  ]
+}

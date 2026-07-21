@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] — 2026-07-21
+
+### P0-1: 评估失败反馈闭环
+- **AgentContext.last_eval_failure**: Evaluator stderr + failure_reason 回流到 Coder Prompt
+- **InspirationCollector.load_parents()**: 返回三元组 (codes, thoughts, failures)，批量加载父代评估失败信息
+- **Coder._build_user_message()**: 注入 `## Previous Evaluation Failure` 区块 + "fix root cause" 指令
+- **效果**: sort 5-gen 通过率 19% → 57% (3x)，gen 2+ 不再全部归零
+
+### E2E 测试 bug 修复
+- `evaluator.py`: `"python"` → `sys.executable`（系统无 python 二进制）
+- `evaluator.py`: 添加 MountSpec 挂载 test_sort.py/benchmark.py
+- `subprocess_backend.py`: 实现 `plan.mounts` 拷贝逻辑
+
+### 新增
+- `configs/sort_optimization.toml`: 排序优化专用配置（慢循环 enabled）
+- `reports/optimization_plan_v0.3.md`: v0.3 优化计划（P0/P1/P2 路线图）
+- `reports/omnievolve-pipeline.html`: 进化管道架构图（archify）
+- 10 个新测试 (`tests/agents/test_eval_feedback.py`)，总计 659 tests
+
 ## [0.2.0-beta] — 2026-07-20
 
 ### 架构
