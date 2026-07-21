@@ -300,3 +300,65 @@ class VectorIndexer:
             """
         )
         return {row["status"]: row["cnt"] for row in rows}
+
+    def migrate_profile(
+        self,
+        new_profile_id: str,
+        *,
+        entity_types: list[str] | None = None,
+    ) -> int:
+        """G1: Embedding Profile 迁移 — 重新索引所有实体到新 Profile.
+
+        设计文档 §8.2: 任何 Embedding 模型变化都不得静默覆盖原索引。
+        应创建新 EmbeddingProfile，重建完成前新旧 Profile 可并行查询。
+
+        流程:
+        1. 查找所有已索引的实体（按 entity_type 过滤）
+        2. 为每个实体创建新的 pending vector_index_job（指向 new_profile_id）
+        3. 返回重新入队的任务数
+
+        Args:
+            new_profile_id: 新 EmbeddingProfile 的 ID
+            entity_types: 要迁移的实体类型（默认全部: candidate/thought/memory）
+
+        Returns:
+            重新入队的任务数量
+        """
+        if entity_types is None:
+            entity_types = ["candidate", "thought", "memory"]
+
+        total_enqueued = 0
+        for entity_type in entity_types:
+            # 查找该类型所有已索引的实体及其 content_hash
+            rows = self._db.fetchall(
+                """
+                SELECT DISTINCT entity_id, content_hash
+                FROM vector_index_job
+                WHERE entity_type = ? AND status = 'indexed'
+                """,
+                (entity_type,),
+            )
+            for row in rows:
+                try:
+                    self._db.execute(
+                        """
+                        INSERT OR IGNORE INTO vector_index_job
+                            (entity_type, entity_id, embedding_profile_id,
+                             content_hash, operation, status)
+                        VALUES (?, ?, ?, ?, 'upsert', 'pending')
+                        """,
+                        (entity_type, row["entity_id"], new_profile_id, row["content_hash"]),
+                    )
+                    total_enqueued += 1
+                except Exception:
+                    logger.debug(
+                        "Failed to enqueue re-index for %s/%s",
+                        entity_type, row["entity_id"],
+                        exc_info=True,
+                    )
+
+        logger.info(
+            "Profile migration: enqueued %d entities for re-indexing to profile %s",
+            total_enqueued, new_profile_id,
+        )
+        return total_enqueued
