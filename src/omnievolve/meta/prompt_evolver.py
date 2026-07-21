@@ -1,6 +1,7 @@
 """Prompt 变异器.
 
 S9: Prompt 基因变异（L1 级别，需要 Replay）
+3.1: 数据驱动变异选择（根据历史成功率加权）
 """
 
 from __future__ import annotations
@@ -38,8 +39,14 @@ class PromptEvolver:
         prompt: str,
         *,
         feedback: str | None = None,
+        performance_data: dict[str, float] | None = None,
     ) -> tuple[str, list[str]]:
         """变异 prompt.
+
+        Args:
+            prompt: 当前 prompt
+            feedback: 反馈信息
+            performance_data: 3.1 — 各 mutation 历史成功率 {mutation_name: success_rate}
 
         Returns:
             (new_prompt, applied_mutations)
@@ -51,13 +58,48 @@ class PromptEvolver:
         new_prompt = prompt
 
         num_mutations = random.randint(1, self._max_mutations)
-        selected = random.sample(self.MUTATIONS, min(num_mutations, len(self.MUTATIONS)))
+        selected = self._weighted_select(num_mutations, performance_data)
 
         for mutation in selected:
             new_prompt = self._apply_mutation(new_prompt, mutation, feedback)
             mutations_applied.append(mutation)
 
         return new_prompt, mutations_applied
+
+    def _weighted_select(
+        self,
+        count: int,
+        performance_data: dict[str, float] | None,
+    ) -> list[str]:
+        """3.1: 加权选择变异操作.
+
+        有性能数据时，成功率高的 mutation 被选中概率更大。
+        无数据时回退到均匀随机。
+        """
+        if not performance_data:
+            return random.sample(self.MUTATIONS, min(count, len(self.MUTATIONS)))
+
+        # 构建权重：历史成功率 + 基线（确保新 mutation 也有机会）
+        weights = []
+        for m in self.MUTATIONS:
+            rate = performance_data.get(m, 0.3)  # 默认 0.3 基线
+            weights.append(max(rate, 0.05))  # 最低 5% 概率
+
+        # 加权不放回采样
+        selected = []
+        available = list(range(len(self.MUTATIONS)))
+        for _ in range(min(count, len(self.MUTATIONS))):
+            total = sum(weights[i] for i in available)
+            r = random.random() * total
+            cum = 0.0
+            for idx in available:
+                cum += weights[idx]
+                if r <= cum:
+                    selected.append(self.MUTATIONS[idx])
+                    available.remove(idx)
+                    break
+
+        return selected
 
     def _apply_mutation(
         self,

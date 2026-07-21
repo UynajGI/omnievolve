@@ -72,16 +72,46 @@ class FastLoopStep:
         # 步骤 1: Router 选择模型
         model = e._select_model(generation)  # noqa: SLF001
 
+        # 1.3/2.2: 计算停滞等级（供融合路由 + scope 检索 + AgentContext 复用）
+        stagnation_level = self._compute_stagnation_level(island_id)
+
         # 步骤 3/可选 crossover
         base_code: str | None = None
         if relation == "crossover" and len(parent_codes) >= 2:
             base_code = e._crossover.combine(parent_codes, strategy="segment")  # noqa: SLF001
 
+        # 2.2: 停滞触发 LLM 语义融合（替代机械 crossover）
+        if (
+            stagnation_level >= 2
+            and e._config.fusion_mode == "llm"  # noqa: SLF001
+            and parent_codes
+        ):
+            try:
+                from omnievolve.agents.fusion import FusionAgent
+
+                fusion_agent = FusionAgent(e._llm)  # noqa: SLF001
+                # 从其他 island 收集高分参考
+                references = e._collect_inspiration_programs(parent_ids, top_k=2)  # noqa: SLF001
+                if references:
+                    fused = fusion_agent.fuse(
+                        parent_codes[0],
+                        references,
+                        experiment_id=e._experiment_id,  # noqa: SLF001
+                    )
+                    if fused.full_code.strip():
+                        base_code = fused.full_code
+                        logger.debug("2.2: LLM fusion applied (stagnation=%d)", stagnation_level)
+            except Exception:
+                logger.debug("LLM fusion failed, falling back to mechanical", exc_info=True)
+
         # 检索记忆
+        # 1.3: 根据停滞等级决定 scope 范围（正常→L0+L1，停滞→全域检索）
+        scope_levels = [0, 1] if stagnation_level == 0 else [0, 1, 2, 3, 4]
         memory_hits = e._memory_store.retrieve(  # noqa: SLF001
             experiment_id=e._experiment_id,  # noqa: SLF001
             task_id=task_name,
             success_only=True,
+            scope_levels=scope_levels,
             limit=e._search_policy.retrieval_budget,  # noqa: SLF001
         )
         # P2-3: 记忆格式化增强（含 score + diff 摘要 + outcome）
@@ -142,7 +172,7 @@ class FastLoopStep:
             # P0-1: 注入父代评估失败信息到 Coder 上下文
             last_eval_failure=_combine_failures(parent_failures),
             # P2-1: 停滞等级（根据岛屿停滞计数自动升级）
-            stagnation_level=self._compute_stagnation_level(island_id),
+            stagnation_level=stagnation_level,
             # P2-2: 兄弟节点摘要
             sibling_summaries=self._load_sibling_summaries(island_id, generation),
             search_policy_id=e._champion_policy_id,  # noqa: SLF001

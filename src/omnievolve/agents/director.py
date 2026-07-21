@@ -116,6 +116,12 @@ class Director:
             for mem in ctx.memory_hits[:3]:
                 parts.append(f"- {mem.get('outcome_summary', '')[:200]}")
 
+        # 1.2: 兄弟节点摘要（同一 island 最近尝试，避免重复）
+        if ctx.sibling_summaries:
+            parts.append("\n## Sibling Approaches (same island, recent):")
+            for s in ctx.sibling_summaries[:3]:
+                parts.append(f"- {s}")
+
         # P2-1: 反例集合（从 meta_scratchpad 取失败方向）
         if ctx.meta_scratchpad:
             parts.append(f"\n## Failed Directions (AVOID repeating):\n{ctx.meta_scratchpad[:500]}")

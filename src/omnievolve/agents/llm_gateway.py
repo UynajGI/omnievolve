@@ -72,6 +72,7 @@ class LLMGateway:
         fallback_model: str | None = None,
         circuit_breaker: Any | None = None,
         rate_limiter: Any | None = None,
+        budget_guard: Any | None = None,
     ) -> None:
         self._db = db
         self._default_model = default_model
@@ -85,6 +86,8 @@ class LLMGateway:
         # P1: 熔断器 + 限流
         self._circuit_breaker = circuit_breaker
         self._rate_limiter = rate_limiter
+        # 1.1: BudgetGuard — LLM token 消耗传播到预算系统
+        self._budget_guard = budget_guard
 
     def chat(
         self,
@@ -165,6 +168,7 @@ class LLMGateway:
                         input_tokens=usage.prompt_tokens if usage else 0,
                         output_tokens=usage.completion_tokens if usage else 0,
                         total_tokens=usage.total_tokens if usage else 0,
+                        cost_usd=self._extract_cost(response, try_model, usage),
                         latency_ms=latency_ms,
                         raw_response=response.model_dump()
                         if hasattr(response, "model_dump")
@@ -172,6 +176,17 @@ class LLMGateway:
                     )
 
                     self._total_tokens += llm_response.total_tokens
+                    if llm_response.cost_usd:
+                        self._total_cost += llm_response.cost_usd
+
+                    # 1.1: 传播 LLM token 消耗到 BudgetGuard
+                    if self._budget_guard:
+                        self._budget_guard.consume(
+                            model=try_model,
+                            input_tokens=llm_response.input_tokens,
+                            output_tokens=llm_response.output_tokens,
+                            compute_sec=0.0,
+                        )
 
                     # P1: 熔断器 — 成功
                     if self._circuit_breaker:
@@ -213,6 +228,22 @@ class LLMGateway:
         # All retries exhausted
         logger.error("All LLM retries exhausted: %s", last_error)
         return self._mock_response(messages, model)
+
+    @staticmethod
+    def _extract_cost(response: Any, model: str, usage: Any) -> float | None:
+        """1.1: 从 litellm 响应提取 cost_usd."""
+        try:
+            # litellm 通常在 _hidden_params 中提供 response_cost
+            hidden = getattr(response, "_hidden_params", None) or {}
+            cost = hidden.get("response_cost")
+            if cost is not None:
+                return float(cost)
+            # 回退: 使用 litellm.completion_cost（传入完整 response 对象）
+            import litellm
+
+            return litellm.completion_cost(completion_response=response, model=model)
+        except Exception:
+            return None
 
     def _mock_response(self, messages: list[dict[str, str]], model: str) -> LLMResponse:
         """模拟响应（用于测试或 litellm 未安装时）."""

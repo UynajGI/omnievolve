@@ -2,17 +2,27 @@
 
 S5-07: CoderAgent diff/full rewrite
 AM-01: SEARCH/REPLACE diff 格式 + EVOLVE-BLOCK 感知
+2.3: 多模式生成 (TARGETED_DIFF / FULL_REWRITE / FUSION_AWARE)
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from enum import Enum
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
 from omnievolve.agents.llm_gateway import LLMGateway
 
 logger = logging.getLogger(__name__)
+
+
+class GenerationMode(str, Enum):
+    """2.3: 代码生成模式."""
+
+    TARGETED_DIFF = "targeted_diff"  # 默认：SEARCH/REPLACE 微调
+    FULL_REWRITE = "full_rewrite"  # 停滞时：全量重写
+    FUSION_AWARE = "fusion_aware"  # 融合时：参考多方案整合
 
 CODER_SYSTEM_PROMPT = """You are the Coder Agent in an evolutionary code optimization system.
 Your role is to improve code by proposing targeted edits using SEARCH/REPLACE blocks.
@@ -61,24 +71,57 @@ class Coder:
         self._system_prompt = system_prompt or CODER_SYSTEM_PROMPT
 
     def generate_code(self, ctx: AgentContext, thought: ThoughtOutput) -> CodeOutput:
-        """生成代码 —— 优先 SEARCH/REPLACE diff，回退全量生成."""
+        """生成代码 — 2.3: 根据停滞等级自动选择生成模式."""
+        mode = self._select_mode(ctx)
         user_message = self._build_user_message(ctx, thought)
 
+        # 模式影响 system prompt 和 temperature
+        if mode == GenerationMode.FULL_REWRITE:
+            system_prompt = CODER_FALLBACK_PROMPT
+            temperature = 0.6  # 更高温度鼓励创新
+            user_message += (
+                "\n\n## MODE: FULL REWRITE\n"
+                "The current approach has stagnated. Propose a fundamentally different "
+                "implementation. Output the complete code as JSON with 'full_code' key."
+            )
+        elif mode == GenerationMode.FUSION_AWARE:
+            system_prompt = ctx.system_prompt or self._system_prompt
+            temperature = 0.4
+            user_message += (
+                "\n\n## MODE: FUSION AWARE\n"
+                "Analyze the reference solutions above. Selectively incorporate "
+                "their best elements while preserving the current code's strengths."
+            )
+        else:
+            system_prompt = ctx.system_prompt or self._system_prompt
+            temperature = 0.3
+
         messages = [
-            {"role": "system", "content": ctx.system_prompt or self._system_prompt},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
 
         response = self._llm.chat(
             messages,
             model=ctx.model or self._model,
-            temperature=0.3,
+            temperature=temperature,
             experiment_id=ctx.experiment_id,
             agent_role="coder",
             prompt_version_id=ctx.prompt_version_id or None,
         )
 
         return self._parse_response(response.content, ctx)
+
+    @staticmethod
+    def _select_mode(ctx: AgentContext) -> GenerationMode:
+        """2.3: 根据上下文状态选择生成模式."""
+        if ctx.stagnation_level >= 2:
+            return GenerationMode.FULL_REWRITE
+        # 如果有多个高分参考程序（融合场景）
+        high_score_refs = [p for p in ctx.inspiration_programs if p.get("score", 0) > 0]
+        if len(high_score_refs) >= 2 and ctx.stagnation_level >= 1:
+            return GenerationMode.FUSION_AWARE
+        return GenerationMode.TARGETED_DIFF
 
     def _build_user_message(self, ctx: AgentContext, thought: ThoughtOutput) -> str:
         """构建用户消息 — 含父代码 + 高分历史程序 + 上次失败反馈."""

@@ -101,6 +101,7 @@ class EvolutionConfig:
     uct_decay_progress: float = 0.5  # P1-1: 探索衰减完成点
     uct_c_min: float = 0.2  # P1-1: 探索常数下限
     progressive_eval_enabled: bool = False  # Phase 3: 渐进式评估
+    fusion_mode: str = "mechanical"  # 2.2: mechanical / llm
     self_evolve_enabled: bool = True
 
 
@@ -192,6 +193,10 @@ class EvolutionEngine:
             compute_budget_sec=self._config.compute_budget_sec,
         )
         self._budget_guard = BudgetGuard(budget_state)
+
+        # 1.1: 将 BudgetGuard 注入 LLMGateway，使 LLM token 消耗传播到预算系统
+        if hasattr(llm, "_budget_guard"):
+            llm._budget_guard = self._budget_guard  # noqa: SLF001
 
         # Agents
         self._director = Director(llm)
