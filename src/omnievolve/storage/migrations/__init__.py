@@ -167,6 +167,9 @@ def check_fts5_support(db: Database) -> bool:
 def create_fts_tables(db: Database) -> bool:
     """创建 FTS5 表（如果支持）.
 
+    独立 FTS 表 + UNINDEXED entity_id 列 + 应用层写入。
+    entity_id 不被索引（不可搜索），但可被 SELECT/JOIN 使用。
+
     Returns:
         是否成功创建
     """
@@ -176,18 +179,44 @@ def create_fts_tables(db: Database) -> bool:
     try:
         db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS thought_fts USING fts5(
-                thought_id UNINDEXED,
+                entity_id UNINDEXED,
                 content,
-                mechanism_tags
+                mechanism_tags,
+                tokenize='unicode61'
             )
         """)
         db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-                memory_id UNINDEXED,
-                outcome_summary
+                entity_id UNINDEXED,
+                content,
+                tokenize='unicode61'
             )
         """)
         return True
     except Exception as e:
         logger.warning(f"Failed to create FTS tables: {e}")
         return False
+
+
+def index_thought_fts(
+    db: Database, thought_id: str, content: str, mechanism_tags: str = ""
+) -> None:
+    """向 thought_fts 写入索引（应用层触发）."""
+    try:
+        db.execute(
+            "INSERT INTO thought_fts (entity_id, content, mechanism_tags) VALUES (?, ?, ?)",
+            (thought_id, content, mechanism_tags),
+        )
+    except Exception:
+        logger.debug("Failed to index thought in FTS", exc_info=True)
+
+
+def index_memory_fts(db: Database, memory_id: str, content: str) -> None:
+    """向 memory_fts 写入索引（应用层触发）."""
+    try:
+        db.execute(
+            "INSERT INTO memory_fts (entity_id, content) VALUES (?, ?)",
+            (memory_id, content),
+        )
+    except Exception:
+        logger.debug("Failed to index memory in FTS", exc_info=True)

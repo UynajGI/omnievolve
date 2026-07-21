@@ -182,11 +182,11 @@ class HybridRetriever:
                         }
                     )
             else:
-                # 使用 FTS5
+                # 使用 FTS5 — entity_id JOIN 原表
                 sql = f"""
                     SELECT t.id, t.{content_column} as content
                     FROM {fts_table} f
-                    JOIN {table} t ON f.content = t.{content_column}
+                    JOIN {table} t ON f.entity_id = t.id
                     WHERE {fts_table} MATCH ?
                 """
                 params = [query]

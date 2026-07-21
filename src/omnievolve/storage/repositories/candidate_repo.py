@@ -140,6 +140,16 @@ class CandidateRepository:
             ),
         )
 
+        # T4: 同步写入 FTS5 索引
+        from omnievolve.storage.migrations import index_thought_fts
+
+        index_thought_fts(
+            self._db,
+            thought.id,
+            thought.content,
+            json.dumps(thought.mechanism_tags) if thought.mechanism_tags else "",
+        )
+
         return thought
 
     def create_candidate(

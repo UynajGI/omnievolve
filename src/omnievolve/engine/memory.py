@@ -123,6 +123,11 @@ class MemoryStore:
             ),
         )
 
+        # T4: 同步写入 FTS5 索引
+        from omnievolve.storage.migrations import index_memory_fts
+
+        index_memory_fts(self._db, memory.id, json.dumps(memory.outcome_summary))
+
         return memory
 
     def retrieve(
