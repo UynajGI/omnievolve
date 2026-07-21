@@ -109,6 +109,9 @@ class ProgressiveMCGS:
 
     在候选图上进行搜索，而非固定的树结构。
     支持多父代 DAG 和虚拟损失。
+
+    T2: 内存修剪 — 调用 prune(db) 删除 closed/pruned 的叶子节点，
+    保留 elite 和 max_nodes 个最活跃节点。
     """
 
     def __init__(
@@ -120,6 +123,7 @@ class ProgressiveMCGS:
         selection_policy: str = "ucb1",  # ucb1 / puct
         schedule: str = "constant",  # constant / progressive
         c_min: float = 0.2,
+        max_nodes: int = 5000,
     ) -> None:
         self._exploration = exploration
         self._c_max = exploration
@@ -130,6 +134,7 @@ class ProgressiveMCGS:
         self._schedule = schedule
         self._progress: float = 0.0  # 0.0 → 1.0
         self._nodes: dict[str, MCTSNode] = {}
+        self._max_nodes = max_nodes
 
     @property
     def effective_exploration(self) -> float:
@@ -300,3 +305,62 @@ class ProgressiveMCGS:
         """清除所有虚拟损失."""
         for node in self._nodes.values():
             node.virtual_loss = 0.0
+
+    def prune(self, db: Any) -> dict[str, int]:
+        """内存修剪 — 删除低价值节点，保留 elite 和活跃节点。
+
+        策略：
+        1. 从 DB 读取 frontier_status，删除 closed/pruned 的叶子
+        2. 如果节点数仍超 max_nodes，按 visit_count 升序淘汰
+
+        Returns:
+            {"before": N, "after": M, "pruned": K}
+        """
+        if len(self._nodes) <= self._max_nodes:
+            return {"before": len(self._nodes), "after": len(self._nodes), "pruned": 0}
+
+        before = len(self._nodes)
+
+        # 1. 从 DB 获取可修剪的候选（closed/pruned）
+        prunable_ids: set[str] = set()
+        try:
+            rows = db.fetchall(
+                """
+                SELECT candidate_id, frontier_status
+                FROM candidate_search_state
+                WHERE candidate_id IN ({})
+                """.format(",".join(["?"] * len(self._nodes))),
+                tuple(self._nodes.keys()),
+            )
+            for row in rows:
+                status = row["frontier_status"] or "open"
+                if status in ("closed", "pruned"):
+                    cid = row["candidate_id"]
+                    node = self._nodes.get(cid)
+                    # 只删叶子节点（没有子节点引用的）
+                    if node and not node.children:
+                        prunable_ids.add(cid)
+        except Exception:
+            logger.debug("MCTS prune: DB query failed, skipping", exc_info=True)
+
+        # 2. 执行删除 + 清理父节点的 children 引用
+        for cid in prunable_ids:
+            node = self._nodes.pop(cid, None)
+            if node and node.parent and node.parent in self._nodes:
+                parent = self._nodes[node.parent]
+                parent.children = [c for c in parent.children if c != cid]
+
+        # 3. 如果仍超限，按 visit_count 升序淘汰叶子
+        if len(self._nodes) > self._max_nodes:
+            leaf_nodes = [(cid, node) for cid, node in self._nodes.items() if not node.children]
+            leaf_nodes.sort(key=lambda x: x[1].visit_count)
+            excess = len(self._nodes) - self._max_nodes
+            for cid, node in leaf_nodes[:excess]:
+                self._nodes.pop(cid, None)
+                if node.parent and node.parent in self._nodes:
+                    parent = self._nodes[node.parent]
+                    parent.children = [c for c in parent.children if c != cid]
+
+        after = len(self._nodes)
+        logger.info("MCTS pruned: %d → %d nodes (%d removed)", before, after, before - after)
+        return {"before": before, "after": after, "pruned": before - after}

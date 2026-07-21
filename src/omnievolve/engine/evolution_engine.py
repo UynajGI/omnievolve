@@ -358,6 +358,10 @@ class EvolutionEngine:
             # P1: 检查点 — 每代结束时持久化易失状态（崩溃恢复）
             self._save_checkpoint()
 
+            # T2: MCTS 内存修剪 — 超过 max_nodes 时删除 closed/pruned 叶子
+            if gen % 10 == 0:  # 每 10 代修剪一次（避免频繁 DB 查询）
+                self._mcts.prune(self._db)
+
         return self._finalize(task_name)
 
     def resume(self, experiment_id: str) -> EvolutionResult:
