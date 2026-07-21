@@ -61,7 +61,6 @@ from omnievolve.exceptions import (
 from omnievolve.meta.governance import (
     GovernancePolicy,
     L0PolicyMutator,
-    MetaAction,
     MetaPlanner,
     ReplayEvaluator,
 )
@@ -251,6 +250,22 @@ class EvolutionEngine:
         from omnievolve.engine.inspiration import InspirationCollector
 
         self._inspiration = InspirationCollector(db, self._candidate_repo, artifact_store)
+
+        # T1: 提取 SlowLoopController — 慢循环逻辑委托给独立组件
+        from omnievolve.engine.slow_loop import SlowLoopController
+
+        self._slow_loop = SlowLoopController(
+            db,
+            self_evaluator=self_evaluator,
+            meta_planner=meta_planner,
+            governance=self._governance,
+            l0_mutator=self._l0_mutator,
+            replay_evaluator=self._replay_evaluator,
+            policy_archive=self._policy_archive,
+            experiment_repo=self._experiment_repo,
+            prompt_repo=self._prompt_repo,
+            artifact_store=artifact_store,
+        )
 
         # 进化状态
         self._current_generation = 0
@@ -812,134 +827,21 @@ class EvolutionEngine:
     # ------------------------------------------------------------------ #
 
     def _run_slow_loop(self, current_gen: int) -> None:
-        """执行 Slow Loop：聚合 → 评估健康 → 提议动作 → 治理 → 策略实验."""
-        if self._self_evaluator is None:
-            return  # 未注入自评估器时跳过（保持核心 Fast Loop 可用）
-
-        window_start = max(0, current_gen - self._config.health_window_gens)
-        try:
-            health = self._self_evaluator.assess(self._experiment_id, window_start, current_gen)
-        except Exception:
-            logger.exception("Slow Loop telemetry failed at gen %d", current_gen)
-            return
-
-        logger.info(
-            "Slow Loop gen %d: alert=%s roi=%.4f trigger=%s",
-            current_gen,
-            health.alert_level.value,
-            health.roi_score,
-            health.should_trigger_meta,
+        """执行 Slow Loop（T1: 委托给 SlowLoopController）."""
+        new_policy, new_id, triggered = self._slow_loop.run(
+            experiment_id=self._experiment_id,
+            current_gen=current_gen,
+            health_window_gens=self._config.health_window_gens,
+            search_policy=self._search_policy,
+            recent_scores=self._recent_scores,
+            champion_policy_id=self._champion_policy_id,
+            coder_system_prompt=getattr(self._coder, "_system_prompt", ""),  # noqa: SLF001
         )
-
-        if not health.should_trigger_meta:
-            return
-
-        self._slow_loop_triggered = True
-
-        if self._meta_planner is None:
-            return
-
-        # 提议受控动作
-        actions = self._meta_planner.propose(
-            {
-                "coverage_entropy": health.coverage_entropy,
-                "pollution_ratio": health.pollution_ratio,
-                "roi_score": health.roi_score,
-            },
-            self._search_policy,
-            [],
-        )
-
-        for action in actions:
-            self._apply_meta_action(action, current_gen)
-
-    def _apply_meta_action(self, action: MetaAction, current_gen: int) -> None:
-        """应用单个元进化动作（治理分级 + Challenger 实验）."""
-        risk = self._governance.classify_action(action)
-        can_apply, reason = self._governance.can_apply(action)
-
-        if not can_apply:
-            logger.info("Meta action %s rejected: %s", action.target, reason)
-            return
-
-        # 创建 Challenger 基因组
-        if action.action_type == "modify_field":
-            new_genome, mut_reason = self._l0_mutator.mutate(
-                self._search_policy, action.target, action.new_value
-            )
-            if new_genome is None:
-                logger.info("Mutation failed: %s", mut_reason)
-                return
-
-            challenger = self._policy_archive.create_policy(
-                new_genome,
-                experiment_id=self._experiment_id,
-                parent_policy_id=self._champion_policy_id,
-                risk_level=risk.value,
-            )
-            # 标记为 challenger
-            self._db.execute(
-                "UPDATE search_policy_version SET status='challenger' WHERE id=?",
-                (challenger.id,),
-            )
-
-            # Canary 比较：用最近窗口分数作为 champion 基线
-            decision = self._replay_evaluator.compare(
-                champion_scores=self._recent_scores[-self._config.health_window_gens :],
-                challenger_scores=self._recent_scores[-1:],
-            )
-
-            if decision.get("decision") == "promote":
-                self._policy_archive.promote_to_champion(challenger.id)
-                self._search_policy = new_genome
-                self._champion_policy_id = challenger.id
-                self._experiment_repo.set_champion_policy(self._experiment_id, challenger.id)
-                logger.info(
-                    "Policy %s promoted at gen %d: %s",
-                    challenger.id,
-                    current_gen,
-                    decision.get("reason"),
-                )
-                # 反馈给贝叶斯优化器
-                self._record_tuner_feedback(action, decision.get("gain", 0.0))
-            else:
-                self._policy_archive.reject(challenger.id, decision.get("reason", ""))
-                # 反馈给贝叶斯优化器
-                self._record_tuner_feedback(action, decision.get("gain", -0.01))
-
-        elif action.action_type == "evolve_prompt":
-            # AM-04: Prompt 进化 — 变异 system prompt（L1 级别）
-            if self._meta_planner is not None and hasattr(self._meta_planner, "_prompt_evolver"):
-                evolver = self._meta_planner._prompt_evolver  # noqa: SLF001
-                if evolver is not None:
-                    # 获取当前 champion prompt 版本（用于 parent_id）
-                    champion = self._prompt_repo.get_latest("coder", "champion")
-                    parent_id = champion.id if champion else None
-                    # 获取实际 prompt 文本
-                    current_prompt = getattr(self._coder, "_system_prompt", "")  # noqa: SLF001
-                    if current_prompt:
-                        new_prompt, mutations = evolver.evolve(current_prompt)
-                        if mutations:
-                            self._prompt_repo.create(
-                                agent_role="coder",
-                                content=new_prompt,
-                                parent_id=parent_id,
-                                artifact_store=self._artifact_store,
-                            )
-                            logger.info("Prompt evolved with mutations: %s", mutations)
-            return  # evolve_prompt 不走 Challenger 实验路径
-
-    def _record_tuner_feedback(self, action: MetaAction, gain: float) -> None:
-        """将 meta 动作结果反馈给贝叶斯优化器."""
-        if self._meta_planner is None or self._meta_planner._tuner is None:  # noqa: SLF001
-            return
-        try:
-            params = {action.target: action.new_value}
-            self._meta_planner._tuner.update(  # noqa: SLF001
-                params, score=gain, generation=self._current_generation
-            )
-        except Exception:
-            logger.warning("Failed to record tuner feedback", exc_info=True)
+        if triggered:
+            self._slow_loop_triggered = True
+        if new_policy is not None:
+            self._search_policy = new_policy
+            self._champion_policy_id = new_id  # type: ignore[assignment]
 
     # ------------------------------------------------------------------ #
     #  辅助方法
