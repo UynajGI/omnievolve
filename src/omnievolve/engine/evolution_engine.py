@@ -247,6 +247,11 @@ class EvolutionEngine:
         self._prompt_repo = prompt_repo or PromptVersionRepository(db)
         self._code_profile_id: str | None = None  # run() 时注册
 
+        # T1: 提取 InspirationCollector — 上下文收集委托给独立组件
+        from omnievolve.engine.inspiration import InspirationCollector
+
+        self._inspiration = InspirationCollector(db, self._candidate_repo, artifact_store)
+
         # 进化状态
         self._current_generation = 0
         self._best_candidate: tuple[str, float] | None = None
@@ -1143,46 +1148,8 @@ class EvolutionEngine:
         return 0.0
 
     def _load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str]]:
-        """加载父代代码与思想（批量查询，避免 N+1）."""
-        if not parent_ids:
-            return [], []
-
-        # 批量获取候选行 — 1 次 IN 查询代替 N 次 get_candidate()
-        placeholders = ",".join(["?"] * len(parent_ids))
-        rows = self._db.fetchall(
-            f"""
-            SELECT id, artifact_hash, meta
-            FROM candidate
-            WHERE id IN ({placeholders})
-            """,
-            tuple(parent_ids),
-        )
-        # 保持 parent_ids 顺序
-        row_map = {row["id"]: row for row in rows}
-
-        codes: list[str] = []
-        thoughts: list[str] = []
-        for pid in parent_ids:
-            row = row_map.get(pid)
-            if row is None:
-                continue
-            try:
-                code = self._artifact_store.load_text(row["artifact_hash"])
-                codes.append(code)
-            except Exception:
-                logger.debug("Cannot load artifact %s", row["artifact_hash"])
-            # 解析 meta 中的 thought
-            meta_str = row["meta"]
-            if meta_str:
-                import json as _json
-
-                try:
-                    meta = _json.loads(meta_str)
-                    if isinstance(meta.get("thought"), str):
-                        thoughts.append(meta["thought"])
-                except (ValueError, TypeError):
-                    pass
-        return codes, thoughts
+        """加载父代代码与思想（T1: 委托给 InspirationCollector）."""
+        return self._inspiration.load_parents(parent_ids)
 
     def _write_reference_edges(
         self,
@@ -1191,33 +1158,8 @@ class EvolutionEngine:
         *,
         parent_ids: list[str],
     ) -> None:
-        """P0: 写入跨分支引用边.
-
-        非父代来源的 inspiration（其他 island 的高分候选、memory 检索结果）
-        作为 reference edge 写入，区分于主血缘边。
-        """
-        parent_set = set(parent_ids)
-        for insp in inspiration:
-            src_id = insp.get("candidate_id", "")
-            if not src_id or src_id in parent_set or src_id == child_id:
-                continue
-            source = insp.get("source", "unknown")
-            ref_type = {
-                "top_k": "cross_branch",
-                "random_k": "exploration",
-                "memory": "memory",
-            }.get(source, "reference")
-            try:
-                self._db.execute(
-                    """
-                    INSERT OR IGNORE INTO candidate_reference_edge
-                        (src_candidate_id, dst_candidate_id, reference_type, detail)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (src_id, child_id, ref_type, f"source={source} score={insp.get('score', '?')}"),
-                )
-            except Exception:
-                logger.warning("Failed to write reference edge (P0 cross-branch)", exc_info=True)
+        """P0: 写入跨分支引用边（T1: 委托给 InspirationCollector）."""
+        self._inspiration.write_reference_edges(child_id, inspiration, parent_ids=parent_ids)
 
     def _collect_inspiration_programs(
         self,
@@ -1226,90 +1168,15 @@ class EvolutionEngine:
         top_k: int = 3,
         random_k: int = 2,
     ) -> list[dict]:
-        """ShinkaEvolve/AlphaEvolve inspiration programs.
-
-        收集与直接父代不同的多样化候选：
-        - top_k 个高分候选（exploitation）
-        - random_k 个随机已评估候选（exploration）
-        排除直接父代以提供真正不同的上下文。
-        """
-        inspirations: list[dict] = []
-        exclude = set(exclude_parent_ids)
-
-        # Top-K 高分候选 — 批量加载代码
-        try:
-            bests = self._candidate_repo.get_best_candidates(
-                self._experiment_id,
-                self._evaluator_version_id,
-                self._environment_version_id,
-                limit=top_k * 2,
-            )
-            # T3: 批量预加载 artifact 内容（避免逐个 load_text）
-            top_candidates = [(cand, score) for cand, score in bests if cand.id not in exclude]
-            if top_candidates:
-                top_codes = self._batch_load_artifacts([c.artifact_hash for c, _ in top_candidates])
-                for (cand, score), code in zip(top_candidates, top_codes, strict=False):
-                    if code:
-                        inspirations.append(
-                            {
-                                "candidate_id": cand.id,
-                                "score": score,
-                                "code_preview": code[:500],
-                                "source": "top_k",
-                            }
-                        )
-                    if len([i for i in inspirations if i["source"] == "top_k"]) >= top_k:
-                        break
-        except Exception:
-            logger.debug("Failed to collect top-K inspirations", exc_info=True)
-
-        # Random-K 已评估候选
-        try:
-            rows = (
-                self._db.fetchall(
-                    """
-                SELECT c.id, c.artifact_hash, er.primary_score
-                FROM candidate c
-                JOIN evaluation_run er ON c.id = er.candidate_id
-                WHERE c.experiment_id = ? AND er.status = 'completed'
-                  AND c.id NOT IN ({})
-                ORDER BY RANDOM() LIMIT ?
-                """.format(",".join(["?"] * len(exclude)) if exclude else "''"),
-                    (self._experiment_id, *exclude, random_k * 3),
-                )
-                if exclude
-                else self._db.fetchall(
-                    """
-                SELECT c.id, c.artifact_hash, er.primary_score
-                FROM candidate c
-                JOIN evaluation_run er ON c.id = er.candidate_id
-                WHERE c.experiment_id = ? AND er.status = 'completed'
-                ORDER BY RANDOM() LIMIT ?
-                """,
-                    (self._experiment_id, random_k * 3),
-                )
-            )
-            count = 0
-            for row in rows or []:
-                try:
-                    code = self._artifact_store.load_text(row["artifact_hash"])
-                    inspirations.append(
-                        {
-                            "candidate_id": row["id"],
-                            "score": row["primary_score"],
-                            "code_preview": code[:300],
-                            "source": "random",
-                        }
-                    )
-                    count += 1
-                    if count >= random_k:
-                        break
-                except Exception:
-                    pass
-        except Exception:
-            logger.debug("Failed to collect random inspirations", exc_info=True)
-
-        return inspirations
+        """ShinkaEvolve/AlphaEvolve inspiration programs（T1: 委托给 InspirationCollector）."""
+        return self._inspiration.collect_inspiration(
+            self._experiment_id,
+            self._evaluator_version_id,
+            self._environment_version_id,
+            exclude_parent_ids,
+            top_k=top_k,
+            random_k=random_k,
+        )
 
     def _update_meta_scratchpad(self, thought: str, score: float) -> None:
         """ShinkaEvolve meta-scratchpad: 跨代累积全局洞察.
