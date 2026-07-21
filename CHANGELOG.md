@@ -33,7 +33,7 @@
 - 预定义指标（候选/评估/健康度/检查点）
 
 ### 测试
-- **617 tests**, 44 files, ruff clean, mypy 0 errors
+- **649 tests**, 56 files, ruff clean, mypy 0 errors (87 source files)
 - 分层测试：Tier 1 (FakeLLM, CI) / Tier 2 (真实 LLM 烟雾) / Tier 3 (手动)
 - Soak 50 代稳定性验证
 - Docker 配置构建全覆盖

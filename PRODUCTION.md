@@ -1,6 +1,6 @@
 # OmniEvolve 生产运维指南
 
-> v0.2.0-beta | 617 tests | ~82% coverage | ruff+mypy clean
+> v0.2.0-beta | 649 tests | 80% coverage | ruff+mypy clean
 
 ## 快速健康检查
 
@@ -20,7 +20,7 @@ python -c "from omnievolve.storage.db import Database; d=Database(':memory:'); p
 | 4 | 配置文件 | `cp configs/omnievolve.toml.example omnievolve.toml` |
 | 5 | 沙箱后端 | 本地: `trusted_subprocess`（默认）/ Docker: `docker` |
 | 6 | 迁移执行 | `omnievolve migrate`（自动 v001→v002） |
-| 7 | 快速冒烟 | `make test` (617 tests, ~22s) |
+| 7 | 快速冒烟 | `make test` (649 tests, ~22s) |
 | 8 | LLM 连通性 | `make test-llm`（需 API key） |
 
 ## 运行时监控
@@ -98,7 +98,7 @@ token_budget = 2_000_000  # 总 token 预算，耗尽后自动停止
 
 | 场景 | 指标 | 基线 |
 |------|------|------|
-| Tier 1 测试 | 617 tests | ~22s (CI) |
+| Tier 1 测试 | 649 tests | ~22s (CI) |
 | Soak 50 代 | 200 候选, FakeLLM | ~2s |
 | 真实 LLM 2 代 | heilbronn, deepseek-chat | ~30s |
 | 单候选评估 | 沙箱执行 | < 5s (含 Docker 启动) |
