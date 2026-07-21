@@ -243,7 +243,89 @@ class FastLoopStep:
         candidate_id: str,
         artifact_hash: str,
     ) -> EvalOutput | None:
-        """评估候选（步骤 9-11）+ 记录 evaluation_run."""
+        """评估候选（步骤 9-11）+ 记录 evaluation_run.
+
+        Phase 3: 支持渐进式评估（Stage 0→3，任一阶段失败则 early-exit）。
+        """
+        e = self._e
+
+        # Phase 3: 渐进式评估路径
+        if e._config.progressive_eval_enabled:  # noqa: SLF001
+            build_stage = getattr(e._task_evaluator, "build_stage_plan", None)  # noqa: SLF001
+            if build_stage is not None:
+                return self._evaluate_progressive(candidate_id, artifact_hash)
+
+        # 默认全量评估路径
+        return self._evaluate_full(candidate_id, artifact_hash)
+
+    def _evaluate_progressive(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+    ) -> EvalOutput | None:
+        """渐进式评估：Stage 0→3，任一阶段失败则 early-exit."""
+        from omnievolve.eval.plan_validator import EvaluationStage
+
+        e = self._e
+        candidate_artifact = CandidateArtifact(
+            candidate_id=candidate_id,
+            source_hash=artifact_hash,
+            manifest_hash=None,
+            language="python",
+        )
+        eval_context = EvaluationContext(
+            experiment_id=e._experiment_id,  # noqa: SLF001
+            evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
+            environment_version_id=e._environment_version_id,  # noqa: SLF001
+        )
+        policy = SandboxPolicy(
+            timeout_sec=e._config.sandbox_timeout,  # noqa: SLF001
+            mem_limit_mb=e._config.sandbox_mem_limit_mb,  # noqa: SLF001
+        )
+
+        output: EvalOutput | None = None
+        for stage in EvaluationStage:
+            # 尝试获取阶段特定计划，回退到默认 build_plan
+            plan = e._task_evaluator.build_stage_plan(  # noqa: SLF001
+                candidate_artifact, eval_context, stage.value
+            )
+            if plan is None:
+                plan = e._task_evaluator.build_plan(candidate_artifact, eval_context)  # noqa: SLF001
+
+            try:
+                result = e._sandbox.execute(plan, candidate_artifact, policy)  # noqa: SLF001
+            except SandboxError:
+                logger.debug("Progressive eval stage %d failed for %s", stage.value, candidate_id)
+                return EvalOutput(score=0.0, metrics={}, passed=False, failure_reason=f"Stage {stage.value} sandbox error")
+
+            output = e._task_evaluator.parse_result(result, eval_context)  # noqa: SLF001
+
+            # Early-exit: 非最终阶段失败则提前终止
+            if not output.passed and stage < EvaluationStage.STAGE_3_BENCHMARK:
+                logger.debug(
+                    "Progressive eval early-exit at stage %d for %s",
+                    stage.value, candidate_id,
+                )
+                break
+
+        # 更新候选状态（复用全量评估的后处理逻辑）
+        if output:
+            e._candidate_repo.update_status(  # noqa: SLF001
+                candidate_id, "evaluated" if output.passed else "failed"
+            )
+            if output.passed:
+                e._update_best(candidate_id, output.score)  # noqa: SLF001
+            e._recent_scores.append(output.score)  # noqa: SLF001
+            e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
+
+        return output
+
+    def _evaluate_full(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+    ) -> EvalOutput | None:
+        """全量评估（原有逻辑）."""
         e = self._e
 
         candidate_artifact = CandidateArtifact(
@@ -271,6 +353,17 @@ class FastLoopStep:
             logger.debug("Could not create evaluation_run record", exc_info=True)
             run = None
 
+        # Phase 4.4: 创建 Job 记录（支持 kill -9 恢复）
+        job = None
+        try:
+            job = e._job_store.create_job(  # noqa: SLF001
+                experiment_id=e._experiment_id,  # noqa: SLF001
+                job_type="evaluate_candidate",
+                payload={"candidate_id": candidate_id, "artifact_hash": artifact_hash},
+            )
+        except Exception:
+            logger.debug("Could not create job record", exc_info=True)
+
         # 步骤 9: build_plan
         try:
             plan = e._task_evaluator.build_plan(candidate_artifact, eval_context)  # noqa: SLF001
@@ -291,6 +384,11 @@ class FastLoopStep:
             logger.exception("Sandbox execution failed for %s", candidate_id)
             if run:
                 e._eval_repo.fail(run.id, "sandbox execution error")  # noqa: SLF001
+            if job:
+                try:
+                    e._job_store.fail_job(job.id, "sandbox execution error")  # noqa: SLF001
+                except Exception:
+                    pass
             return None
 
         # 步骤 11: parse + 更新状态
@@ -371,6 +469,13 @@ class FastLoopStep:
             output_tokens=0,
             compute_sec=result.execution_time_ms / 1000,
         )
+
+        # Phase 4.4: 完成 Job 记录
+        if job:
+            try:
+                e._job_store.complete_job(job.id, result_ref=artifact_hash)  # noqa: SLF001
+            except Exception:
+                pass
 
         return output
 

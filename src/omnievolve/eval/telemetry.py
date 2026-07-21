@@ -8,6 +8,7 @@ S8-09: 实现 HealthPolicy 规则与迟滞
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -15,6 +16,7 @@ from typing import Any
 
 from omnievolve.eval.metrics import HealthMetrics, MetricsCalculator
 from omnievolve.storage.db import Database
+from omnievolve.storage.repositories.base import generate_id
 
 logger = logging.getLogger(__name__)
 
@@ -256,28 +258,52 @@ class HealthPolicy:
 
         # S8-03: 写入 meta_evaluation_window 表
         if self._db and experiment_id:
-            self._db.execute(
-                """
-                INSERT INTO meta_evaluation_window
-                    (experiment_id, generation_start, generation_end,
-                     search_policy_id, roi_score, coverage_entropy,
-                     memory_effectiveness, pollution_ratio, alert_level,
-                     should_trigger_meta)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    experiment_id,
-                    generation_start,
-                    generation_end,
-                    search_policy_id,
-                    output.roi_score,
-                    output.coverage_entropy,
-                    output.memory_effectiveness,
-                    output.pollution_ratio,
-                    output.alert_level.value,
-                    1 if output.should_trigger_meta else 0,
-                ),
-            )
+            # 检查 search_policy_id FK 约束：不存在则跳过写入
+            policy_exists = True
+            if search_policy_id and search_policy_id != "default":
+                row = self._db.fetchone(
+                    "SELECT id FROM search_policy_version WHERE id = ?",
+                    (search_policy_id,),
+                )
+                policy_exists = row is not None
+            elif search_policy_id == "default":
+                row = self._db.fetchone(
+                    "SELECT id FROM search_policy_version WHERE id = ?",
+                    (search_policy_id,),
+                )
+                policy_exists = row is not None
+
+            if policy_exists:
+                self._db.execute(
+                    """
+                    INSERT INTO meta_evaluation_window
+                        (id, experiment_id, generation_start, generation_end,
+                         search_policy_id, candidate_count, telemetry,
+                         roi_score, coverage_entropy,
+                         memory_effectiveness, pollution_ratio, alert_level,
+                         should_trigger_meta)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        generate_id(),
+                        experiment_id,
+                        generation_start,
+                        generation_end,
+                        search_policy_id,
+                        metrics.total_candidates,
+                        json.dumps({
+                            "success_rate": metrics.success_rate,
+                            "api_cost_usd": metrics.api_cost_usd,
+                            "frontier_improvement": metrics.frontier_improvement,
+                        }),
+                        output.roi_score,
+                        output.coverage_entropy,
+                        output.memory_effectiveness,
+                        output.pollution_ratio,
+                        output.alert_level.value,
+                        1 if output.should_trigger_meta else 0,
+                    ),
+                )
 
         return output
 

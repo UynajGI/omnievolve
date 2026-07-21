@@ -100,6 +100,7 @@ class EvolutionConfig:
     ucb_c: float = 1.414
     uct_decay_progress: float = 0.5  # P1-1: 探索衰减完成点
     uct_c_min: float = 0.2  # P1-1: 探索常数下限
+    progressive_eval_enabled: bool = False  # Phase 3: 渐进式评估
     self_evolve_enabled: bool = True
 
 
@@ -179,6 +180,11 @@ class EvolutionEngine:
         self._memory_store = MemoryStore(db)
         self._graph_store = graph_store or GraphStore(db)
         self._novelty_gate = NoveltyGate(embedding_threshold=self._config.novelty_threshold)
+
+        # Phase 4.4: Job Store — kill -9 恢复能力
+        from omnievolve.storage.job_store import JobStore
+
+        self._job_store = JobStore(db)
 
         # 预算
         budget_state = BudgetState(
@@ -438,6 +444,14 @@ class EvolutionEngine:
         # 恢复 MCTS 图
         self._rebuild_mcts(experiment_id)
 
+        # Phase 4.4: 恢复孤立任务（租约过期的 Job 重新入队）
+        try:
+            recovered = self._job_store.recover_orphan_jobs()
+            if recovered:
+                logger.info("Recovered %d orphan jobs on resume", recovered)
+        except Exception:
+            logger.debug("Job recovery failed", exc_info=True)
+
         logger.info(
             "Resumed experiment %s at generation %d", experiment_id, self._current_generation
         )
@@ -456,6 +470,73 @@ class EvolutionEngine:
                 self._run_slow_loop(gen)
 
         return self._finalize(task_name)
+
+    # ------------------------------------------------------------------ #
+    #  设计文档 5.4 节公共 API
+    # ------------------------------------------------------------------ #
+
+    def step(self, task_name: str | None = None) -> dict:
+        """执行单代候选进化.
+
+        设计文档 5.4 节: `step() -> GenerationResult`
+        """
+        gen = self._current_generation + 1
+        self._current_generation = gen
+        self._mcts.set_progress(gen, self._config.max_generations)
+        name = task_name or "default"
+        self._step_generation(gen, name)
+        return {
+            "generation": gen,
+            "total_candidates": self._total_candidates,
+            "best_score": self._best_candidate[1] if self._best_candidate else None,
+        }
+
+    def assess_policy_window(self) -> HealthOutput | None:
+        """聚合当前 SearchPolicyVersion 在窗口内的轨道 B 指标.
+
+        设计文档 5.4 节: `assess_policy_window() -> HealthOutput`
+        """
+        if self._self_evaluator is None:
+            return None
+        from omnievolve.eval.telemetry import TelemetryAggregator
+
+        aggregator = TelemetryAggregator(self._db)
+        window_start = max(1, self._current_generation - self._config.health_window_gens)
+        metrics = aggregator.aggregate(
+            experiment_id=self._experiment_id,
+            generation_start=window_start,
+            generation_end=self._current_generation,
+        )
+        from omnievolve.eval.telemetry import HealthPolicy
+
+        policy = HealthPolicy(self._db)
+        return policy.assess(
+            metrics,
+            experiment_id=self._experiment_id,
+            generation_start=window_start,
+            generation_end=self._current_generation,
+            search_policy_id=self._champion_policy_id,
+        )
+
+    def run_policy_challenger(self, actions: list) -> dict:
+        """创建 Challenger，执行等预算 Replay/Canary.
+
+        设计文档 5.4 节: `run_policy_challenger(actions) -> PolicyExperimentResult`
+        """
+        new_policy, new_id, triggered = self._slow_loop.run(
+            experiment_id=self._experiment_id,
+            current_gen=self._current_generation,
+            health_window_gens=self._config.health_window_gens,
+            search_policy=self._search_policy,
+            recent_scores=self._recent_scores,
+            champion_policy_id=self._champion_policy_id,
+            coder_system_prompt=getattr(self._coder, "_system_prompt", ""),  # noqa: SLF001
+        )
+        return {
+            "triggered": triggered,
+            "new_policy_id": new_id,
+            "promoted": new_policy is not None,
+        }
 
     # ------------------------------------------------------------------ #
     #  Fast Loop

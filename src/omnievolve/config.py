@@ -113,7 +113,7 @@ class SandboxDockerSettings(BaseSettings):
 class SandboxSettings(BaseSettings):
     """沙箱配置."""
 
-    backend: str = "trusted_subprocess"  # trusted_subprocess / docker / monty
+    backend: str = "docker"  # docker / trusted_subprocess / monty
     timeout_sec: float = 30
     mem_limit_mb: int = 512
     cpu_limit: float = 1.0

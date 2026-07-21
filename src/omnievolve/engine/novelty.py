@@ -51,12 +51,16 @@ class NoveltyGate:
         borderline_high: float = 0.96,
         use_ast_check: bool = True,
         llm_judge: LLMNoveltyJudge | None = None,
+        max_cached_signatures: int = 200,
     ) -> None:
         self._embedding_threshold = embedding_threshold
         self._borderline_low = borderline_low
         self._borderline_high = borderline_high
         self._use_ast_check = use_ast_check
         self._llm_judge = llm_judge
+        # AST 签名缓存（最近 N 个候选的结构签名）
+        self._recent_signatures: set[str] = set()
+        self._max_cached_signatures = max_cached_signatures
 
     def check(
         self,
@@ -91,7 +95,7 @@ class NoveltyGate:
         if self._use_ast_check and code:
             ast_novel = self._check_ast_novelty(code)
             if not ast_novel:
-                reasons.append("AST structure too similar")
+                reasons.append("AST structure identical to recent candidate")
 
         # 3. 决策
         if max_similarity >= self._embedding_threshold:
@@ -138,13 +142,21 @@ class NoveltyGate:
         )
 
     def _check_ast_novelty(self, code: str) -> bool:
-        """检查 AST 结构新颖性."""
+        """检查 AST 结构新颖性（与最近候选的签名比较）."""
         try:
             tree = ast.parse(code)
-            # 提取结构签名
             signature = self._extract_ast_signature(tree)
-            # 这里简化处理，实际需要与现有签名比较
-            return len(signature) > 0
+            if not signature:
+                return True
+            # 与现有签名比较：完全相同则不新颖
+            if signature in self._recent_signatures:
+                return False
+            # 加入缓存（维护大小上限）
+            self._recent_signatures.add(signature)
+            if len(self._recent_signatures) > self._max_cached_signatures:
+                # 简单策略：超限时清空重建（避免内存无限增长）
+                self._recent_signatures = {signature}
+            return True
         except SyntaxError:
             return True  # 语法错误时不阻止
 

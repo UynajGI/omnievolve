@@ -24,26 +24,26 @@ class NumpyVectorBackend:
     def __init__(self) -> None:
         self._collections: dict[str, dict[str, tuple[np.ndarray, dict]]] = {}
 
-    def create_or_open(self, collection: str, dimension: int) -> None:
+    def create_or_open(self, profile_id: str, dimension: int) -> None:
         """创建或打开集合."""
-        if collection not in self._collections:
-            self._collections[collection] = {}
-            logger.info(f"Created NumPy vector collection: {collection}")
+        if profile_id not in self._collections:
+            self._collections[profile_id] = {}
+            logger.info(f"Created NumPy vector collection: {profile_id}")
 
-    def upsert(self, collection: str, records: list[VectorRecord]) -> None:
+    def upsert(self, profile_id: str, records: list[VectorRecord]) -> None:
         """插入或更新向量."""
-        if collection not in self._collections:
-            self.create_or_open(collection, len(records[0].vector) if records else 128)
+        if profile_id not in self._collections:
+            self.create_or_open(profile_id, len(records[0].vector) if records else 128)
 
         for record in records:
-            self._collections[collection][record.id] = (
+            self._collections[profile_id][record.id] = (
                 np.array(record.vector, dtype=np.float32),
                 record.metadata,
             )
 
     def query(
         self,
-        collection: str,
+        profile_id: str,
         vector: Sequence[float],
         top_k: int,
         filters: dict | None = None,
@@ -52,10 +52,10 @@ class NumpyVectorBackend:
 
         P2: 使用 np.stack + 单次 dot product 代替逐条循环。
         """
-        if collection not in self._collections:
+        if profile_id not in self._collections:
             return []
 
-        items = self._collections[collection]
+        items = self._collections[profile_id]
         if not items:
             return []
 
@@ -110,22 +110,22 @@ class NumpyVectorBackend:
         ]
         return hits
 
-    def delete(self, collection: str, ids: list[str]) -> None:
+    def delete(self, profile_id: str, ids: list[str]) -> None:
         """删除向量."""
-        if collection in self._collections:
+        if profile_id in self._collections:
             for id in ids:
-                self._collections[collection].pop(id, None)
+                self._collections[profile_id].pop(id, None)
 
-    def healthcheck(self, collection: str) -> dict:
+    def healthcheck(self, profile_id: str) -> dict:
         """健康检查."""
-        count = len(self._collections.get(collection, {}))
+        count = len(self._collections.get(profile_id, {}))
         return {
             "status": "healthy",
             "backend": "numpy",
-            "collection": collection,
+            "collection": profile_id,
             "count": count,
         }
 
-    def count(self, collection: str) -> int:
+    def count(self, profile_id: str) -> int:
         """获取集合大小."""
-        return len(self._collections.get(collection, {}))
+        return len(self._collections.get(profile_id, {}))

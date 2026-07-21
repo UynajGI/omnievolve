@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -179,6 +180,50 @@ class DiscountedUCB:
         self._discounted_counts[role][model] += 1
 
 
+class ThompsonSampling:
+    """Thompson Sampling 路由.
+
+    使用 Beta 分布采样，自然平衡探索与利用。
+    参考 MLEvolve 的 Beta(alpha, beta) 更新模式。
+    """
+
+    def __init__(
+        self,
+        slots: list[ModelSlot],
+        *,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
+    ) -> None:
+        self._slots = {s.name: s for s in slots}
+        # 每个 (role, model) 维护 Beta 分布参数
+        self._alpha: dict[str, dict[str, float]] = {}
+        self._beta: dict[str, dict[str, float]] = {}
+        for role in ["director", "coder", "critic", "meta"]:
+            self._alpha[role] = {name: prior_alpha for name in self._slots}
+            self._beta[role] = {name: prior_beta for name in self._slots}
+
+    def select(self, ctx: RouteContext) -> str:
+        """从 Beta 分布采样，选择最高样本值的模型."""
+        best_model = None
+        best_sample = -float("inf")
+
+        for name in self._slots:
+            a = self._alpha[ctx.role][name]
+            b = self._beta[ctx.role][name]
+            sample = random.betavariate(a, b)
+            if sample > best_sample:
+                best_sample = sample
+                best_model = name
+
+        return best_model or list(self._slots.keys())[0]
+
+    def update(self, model: str, role: str, reward: float) -> None:
+        """Beta 分布更新：reward 视为成功概率."""
+        r = max(0.0, min(1.0, reward))
+        self._alpha[role][model] += r
+        self._beta[role][model] += 1.0 - r
+
+
 class ModelRouter:
     """模型路由器.
 
@@ -195,9 +240,11 @@ class ModelRouter:
         self._slots = slots
 
         if algorithm == "sliding_window_ucb":
-            self._strategy: SlidingWindowUCB | DiscountedUCB = SlidingWindowUCB(slots, **kwargs)
+            self._strategy: SlidingWindowUCB | DiscountedUCB | ThompsonSampling = SlidingWindowUCB(slots, **kwargs)
         elif algorithm == "discounted_ucb":
             self._strategy = DiscountedUCB(slots, **kwargs)
+        elif algorithm == "thompson":
+            self._strategy = ThompsonSampling(slots, **kwargs)
         else:
             self._strategy = SlidingWindowUCB(slots, **kwargs)
 

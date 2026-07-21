@@ -143,11 +143,13 @@ def _split_sql(sql: str) -> list[str]:
 
 
 def initialize_database(db: Database) -> None:
-    """初始化数据库（创建所有表）.
+    """初始化数据库（创建所有表 + FTS5 表）.
 
     这是 migrate() 的便捷封装，确保数据库就绪。
     """
     migrate(db)
+    # FTS5 表创建（能力检测 + 条件创建）
+    create_fts_tables(db)
 
 
 def check_fts5_support(db: Database) -> bool:
