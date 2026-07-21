@@ -267,6 +267,13 @@ class EvolutionEngine:
             artifact_store=artifact_store,
         )
 
+        # T1: 提取 CheckpointManager + EngineSetup
+        from omnievolve.engine.checkpoint import CheckpointManager
+        from omnievolve.engine.setup import EngineSetup
+
+        self._checkpoint = CheckpointManager(db)
+        self._setup = EngineSetup(db, self._experiment_repo, self._policy_archive)
+
         # 进化状态
         self._current_generation = 0
         self._best_candidate: tuple[str, float] | None = None
@@ -540,124 +547,48 @@ class EvolutionEngine:
 
     # ------------------------------------------------------------------ #
     #  辅助方法
+    # Setup + Checkpoint — T1 委托
     # ------------------------------------------------------------------ #
 
     def _ensure_champion_policy(self) -> None:
-        """确保实验存在一个初始 Champion Policy."""
-        champ = self._policy_archive.get_champion(self._experiment_id)
-        if champ is None:
-            policy = self._policy_archive.create_policy(
-                self._search_policy,
-                experiment_id=self._experiment_id or None,
-                risk_level="L0",
-            )
-            self._policy_archive.promote_to_champion(policy.id)
-            self._champion_policy_id = policy.id
-        else:
-            self._champion_policy_id = champ.id
-            self._search_policy = champ.genome
-
-        # 关联到实验记录
-        if self._experiment_id:
-            try:
-                self._experiment_repo.set_champion_policy(
-                    self._experiment_id, self._champion_policy_id
-                )
-            except Exception:
-                logger.debug("Could not set champion_policy_id on experiment")
-
-    def _verify_evaluator_immutability(self) -> None:
-        """L2 红线：验证评估器实现未被篡改.
-
-        若版本行是由 EvaluatorRegistry.register() 创建的（有真实 implementation_hash），
-        重新计算当前评估器哈希并比对。不匹配时抛出 ImmutabilityViolationError。
-        """
-        from omnievolve.eval.evaluator_registry import (
-            EvaluatorRegistry,
-            ImmutabilityViolationError,
+        """确保实验存在初始 Champion Policy（T1: 委托给 EngineSetup）."""
+        self._champion_policy_id, self._search_policy = self._setup.ensure_champion_policy(
+            self._experiment_id, self._search_policy
         )
-
-        row = self._db.fetchone(
-            "SELECT implementation_hash, immutable_core FROM task_evaluator_version WHERE id = ?",
-            (self._evaluator_version_id,),
-        )
-        if row is None or not row["immutable_core"]:
-            return
-
-        # 只有当存储的 hash 不是占位符（_ensure_version_rows 写入的 version_id 本身）时才验证
-        stored_hash = row["implementation_hash"]
-        if stored_hash == self._evaluator_version_id:
-            return  # 占位行，跳过
-
-        registry = EvaluatorRegistry(self._db)
-        if not registry.verify_immutability(self._evaluator_version_id, self._task_evaluator):
-            raise ImmutabilityViolationError(
-                f"Evaluator implementation has changed for version "
-                f"{self._evaluator_version_id}. Task semantics are immutable (L2). "
-                "Register a new version if intentional."
-            )
 
     def _ensure_version_rows(self) -> None:
-        """确保 evaluator/environment version 行存在以满足 FK 约束.
-
-        若 CLI 已通过 EvaluatorRegistry 注册完整版本，INSERT OR IGNORE 不覆盖；
-        若未注册（直接使用引擎），写入最小行满足外键。
-
-        L2 红线：若版本已注册（immutable_core=1），验证实现哈希未被篡改。
-        """
-        if self._evaluator_version_id:
-            name = (
-                self._evaluator_version_id.split("@")[0]
-                if "@" in self._evaluator_version_id
-                else self._evaluator_version_id
-            )
-            self._db.execute(
-                "INSERT OR IGNORE INTO task_evaluator_version"
-                "(id, name, semantic_version, implementation_hash, "
-                " task_semantics_hash, score_schema, immutable_core) "
-                "VALUES (?, ?, '1.0.0', ?, ?, '{}', 1)",
-                (
-                    self._evaluator_version_id,
-                    name,
-                    self._evaluator_version_id,
-                    self._evaluator_version_id,
-                ),
-            )
-            # L2 红线：验证评估器不可变性（若已通过 registry 注册）
-            self._verify_evaluator_immutability()
-        if self._environment_version_id:
-            self._db.execute(
-                "INSERT OR IGNORE INTO execution_environment_version"
-                "(id, backend, resource_policy, network_policy) "
-                "VALUES (?, 'engine', '{}', 'none')",
-                (self._environment_version_id,),
-            )
-
-        # 确保默认 code embedding profile 存在（向量 Outbox 依赖）
-        self._code_profile_id = self._ensure_embedding_profile("code")
+        """确保 version 行存在 + L2 验证（T1: 委托给 EngineSetup）."""
+        _, code_profile_id = self._setup.ensure_version_rows(
+            self._evaluator_version_id, self._environment_version_id, self._task_evaluator
+        )
+        self._code_profile_id = code_profile_id
 
     def _ensure_embedding_profile(self, purpose: str) -> str:
-        """确保 embedding_profile 行存在（S6-01 设计要求）.
+        """T1: 委托给 EngineSetup."""
+        return self._setup.ensure_embedding_profile(self._db, purpose)
 
-        默认使用 fake/占位 profile；真实部署由 CLI/配置注入。
-        """
-        profile_id = f"profile-{purpose}-default"
-        self._db.execute(
-            "INSERT OR IGNORE INTO embedding_profile"
-            "(id, purpose, provider, model, revision, dimension, normalization,"
-            " input_type, chunking_policy, collection_path) "
-            "VALUES (?, ?, 'fake', 'fake-embed', 'default', 64, 'l2', 'document',"
-            " 'whole', ?)",
-            (profile_id, purpose, f"collections/{purpose}"),
+    def _save_checkpoint(self) -> None:
+        """持久化检查点（T1: 委托给 CheckpointManager）."""
+        self._checkpoint.save(
+            experiment_id=self._experiment_id,
+            generation=self._current_generation,
+            total_candidates=self._total_candidates,
+            meta_scratchpad=self._meta_scratchpad,
+            failed_directions=self._failed_directions,
+            recent_scores=self._recent_scores,
         )
-        return profile_id
+
+    def _load_checkpoint(self) -> None:
+        """恢复检查点（T1: 委托给 CheckpointManager）."""
+        checkpoint = self._checkpoint.load(self._experiment_id)
+        if checkpoint:
+            self._meta_scratchpad = checkpoint.get("meta_scratchpad", "")
+            self._failed_directions = checkpoint.get("failed_directions", [])
+            self._recent_scores = checkpoint.get("recent_scores", [])
+            self._total_candidates = checkpoint.get("total_candidates", self._total_candidates)
 
     def _batch_load_artifacts(self, artifact_hashes: list[str]) -> list[str]:
-        """批量加载 artifact 内容（T3: 避免 N+1 文件读取）.
-
-        对每个 hash 调用 load_text，但统一异常处理。
-        返回与输入等长的列表，失败的位置为空字符串。
-        """
+        """批量加载 artifact 内容."""
         results: list[str] = []
         for h in artifact_hashes:
             try:
@@ -810,49 +741,6 @@ class EvolutionEngine:
             self._mcts.add_node(row["id"], parent=None, prior=0.5)
 
     # P1: 检查点持久化 — 每代结束时保存易失状态
-
-    def _save_checkpoint(self) -> None:
-        """持久化当前易失状态到 experiment 表（崩溃恢复）."""
-        import json
-
-        checkpoint = {
-            "generation": self._current_generation,
-            "total_candidates": self._total_candidates,
-            "meta_scratchpad": self._meta_scratchpad,
-            "failed_directions": self._failed_directions,
-            "recent_scores": self._recent_scores[-20:],
-        }
-        try:
-            self._db.execute(
-                "UPDATE experiment SET checkpoint_data = ? WHERE id = ?",
-                (json.dumps(checkpoint, ensure_ascii=False), self._experiment_id),
-            )
-        except Exception:
-            logger.warning("Failed to save checkpoint", exc_info=True)
-
-    def _load_checkpoint(self) -> None:
-        """从 experiment 表恢复易失状态."""
-        import json
-
-        try:
-            row = self._db.fetchone(
-                "SELECT checkpoint_data FROM experiment WHERE id = ?",
-                (self._experiment_id,),
-            )
-            if row and row["checkpoint_data"]:
-                checkpoint = json.loads(row["checkpoint_data"])
-                self._meta_scratchpad = checkpoint.get("meta_scratchpad", "")
-                self._failed_directions = checkpoint.get("failed_directions", [])
-                self._recent_scores = checkpoint.get("recent_scores", [])
-                self._total_candidates = checkpoint.get("total_candidates", self._total_candidates)
-                logger.info(
-                    "Checkpoint loaded: gen=%d, candidates=%d, scratchpad=%d chars",
-                    checkpoint.get("generation", 0),
-                    self._total_candidates,
-                    len(self._meta_scratchpad),
-                )
-        except Exception:
-            logger.debug("No checkpoint found (fresh experiment or v001 schema)", exc_info=True)
 
     def _update_best(self, candidate_id: str, score: float) -> None:
         if self._best_candidate is None or score > self._best_candidate[1]:
