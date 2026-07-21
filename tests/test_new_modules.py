@@ -1,4 +1,4 @@
-"""新增模块测试：infra_adapter / audit / config_snapshot / plugins / LLM novelty judge."""
+"""新增模块测试：audit / config_snapshot / plugins / LLM novelty judge."""
 
 from __future__ import annotations
 
@@ -9,10 +9,6 @@ import pytest
 from omnievolve.engine.novelty import LLMNoveltyJudge, NoveltyDecision, NoveltyGate
 from omnievolve.eval.environment import ExecutionEnvironmentVersion
 from omnievolve.meta.audit import AuditReportGenerator
-from omnievolve.meta.infra_adapter import (
-    InfraAdaptation,
-    InfraAdapter,
-)
 from omnievolve.meta.policy_archive import PolicyArchive
 from omnievolve.meta.policy_genome import SearchPolicyGenome
 from omnievolve.plugins.base import PluginRegistry
@@ -39,91 +35,6 @@ def db():
     initialize_database(database)
     yield database
     database.close()
-
-
-# --------------------------------------------------------------------------- #
-#  InfraAdapter
-# --------------------------------------------------------------------------- #
-
-
-class TestInfraAdapter:
-    def test_classify_l0_l1_l2(self, db):
-        adapter = InfraAdapter(db)
-        assert adapter.classify("log_format") == "L0"
-        assert adapter.classify("timeout_schedule") == "L1"
-        assert adapter.classify("task_semantics") == "L2"  # 未知 = 禁止
-
-    def test_can_adapt_rejects_l2(self, db):
-        adapter = InfraAdapter(db)
-        ok, reason = adapter.can_adapt("task_semantics")
-        assert not ok
-        assert "L2" in reason
-
-    def test_can_adapt_allows_l1(self, db):
-        adapter = InfraAdapter(db)
-        ok, _ = adapter.can_adapt("build_cache")
-        assert ok
-
-    def test_propose_creates_new_env_version(self, db):
-        adapter = InfraAdapter(db)
-        env = ExecutionEnvironmentVersion(
-            id="env-base",
-            backend="docker",
-            resource_policy={},
-        )
-        adaptation = InfraAdaptation(
-            field_name="timeout_schedule",
-            old_value=30,
-            new_value=60,
-            rationale="slow tests need more time",
-        )
-        new_env = adapter.propose(env, adaptation)
-        assert new_env is not None
-        assert new_env.id != "env-base"
-        assert "timeout_schedule" in new_env.resource_policy
-
-    def test_propose_rejects_l2_field(self, db):
-        adapter = InfraAdapter(db)
-        env = ExecutionEnvironmentVersion(id="env-base", backend="docker")
-        adaptation = InfraAdaptation(
-            field_name="score_formula",
-            old_value="mean",
-            new_value="max",
-        )
-        result = adapter.propose(env, adaptation)
-        assert result is None
-
-    def test_validate_promotion_pass(self, db):
-        adapter = InfraAdapter(db)
-        ok, _ = adapter.validate_promotion(
-            old_scores=[0.5, 0.6, 0.55],
-            new_scores=[0.51, 0.61, 0.56],
-            old_ranks=[1, 2, 3],
-            new_ranks=[1, 2, 3],
-        )
-        assert ok
-
-    def test_validate_promotion_rejects_drift(self, db):
-        adapter = InfraAdapter(db, max_baseline_drift=0.01)
-        ok, reason = adapter.validate_promotion(
-            old_scores=[0.5],
-            new_scores=[0.8],
-            old_ranks=[1],
-            new_ranks=[1],
-        )
-        assert not ok
-        assert "drift" in reason.lower()
-
-    def test_validate_promotion_rejects_rank_change(self, db):
-        adapter = InfraAdapter(db, min_rank_correlation=0.99)
-        ok, reason = adapter.validate_promotion(
-            old_scores=[0.5, 0.6, 0.7],
-            new_scores=[0.5, 0.6, 0.7],
-            old_ranks=[1, 2, 3],
-            new_ranks=[3, 2, 1],
-        )
-        assert not ok
-        assert "rank" in reason.lower()
 
 
 # --------------------------------------------------------------------------- #
