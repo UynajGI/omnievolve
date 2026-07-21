@@ -505,6 +505,7 @@ class EvolutionEngine:
         island_id: str,
     ) -> tuple[str | None, str]:
         """执行单个候选的完整进化链（T1: 委托给 FastLoopStep）."""
+        assert self._fast_loop is not None
         return self._fast_loop.evolve_one(generation, task_name, island_id)
 
     def _evaluate_candidate(
@@ -513,6 +514,7 @@ class EvolutionEngine:
         artifact_hash: str,
     ) -> EvalOutput | None:
         """评估候选（T1: 委托给 FastLoopStep）."""
+        assert self._fast_loop is not None
         return self._fast_loop.evaluate_candidate(candidate_id, artifact_hash)
 
     # ------------------------------------------------------------------ #

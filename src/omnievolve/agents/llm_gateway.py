@@ -230,6 +230,8 @@ class LLMGateway:
         self, messages: list[dict[str, str]], model: str
     ) -> LLMResponse | None:
         """从 ledger 查找相同 prompt 的历史响应（temperature=0 时可复用）."""
+        if self._db is None:
+            return None
         request_hash = compute_sha256_str(json.dumps(messages, ensure_ascii=False))
         row = self._db.fetchone(
             """

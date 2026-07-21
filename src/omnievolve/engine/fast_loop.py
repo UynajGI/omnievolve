@@ -357,4 +357,5 @@ class FastLoopStep:
 
         baseline_score = e._get_baseline_score()  # noqa: SLF001
         reward = compute_shinka_reward(output.score, parent_score, baseline_score)
+        assert e._router is not None  # noqa: SLF001 — guarded by caller
         e._router.update(model=model, role="coder", reward=reward)  # noqa: SLF001

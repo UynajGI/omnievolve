@@ -188,14 +188,14 @@ Promote / Reject / Rollback
 分层策略（Tier 1 CI → Tier 2 smoke → Tier 3 手动）：
 
 ```bash
-make test              # Tier 1: 617 tests, FakeLLM, CI 默认
+make test              # Tier 1: 649 tests, FakeLLM, CI 默认
 make test-cov          # Tier 1 + 覆盖率 (~82%)
 make test-llm          # Tier 2: LLM 烟雾测试（需 API key）
 make test-slow         # 慢速/集成测试（Docker, soak）
 make test-all          # 全量（不含 LLM）
 
 # 等效 pytest 命令
-.venv/bin/python -m pytest -q -m "not slow and not llm"   # 617 tests
+.venv/bin/python -m pytest -q -m "not slow and not llm"   # 649 tests
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 架构门
 .venv/bin/python -m pytest tests/test_soak.py -m slow      # 50代 soak
