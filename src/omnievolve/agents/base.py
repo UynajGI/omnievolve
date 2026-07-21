@@ -29,6 +29,10 @@ class AgentContext:
     # ShinkaEvolve meta-scratchpad: accumulates global insights across generations
     # (e.g., "X direction consistently fails"), separate from per-candidate thoughts.
     meta_scratchpad: str = ""
+    # P0-1: Previous evaluation failure info (stderr/failure_reason) from parent(s).
+    # Lets Coder see why the last attempt failed and avoid repeating the same mistake.
+    # Empty for root candidates and successful parents.
+    last_eval_failure: str = ""
     search_policy_id: str = "default"
     evaluator_version_id: str = ""
     environment_version_id: str = ""

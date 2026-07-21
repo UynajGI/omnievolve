@@ -675,8 +675,8 @@ class EvolutionEngine:
             return self._get_candidate_score(exp.baseline_candidate_id)
         return 0.0
 
-    def _load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str]]:
-        """加载父代代码与思想（T1: 委托给 InspirationCollector）."""
+    def _load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str], list[str]]:
+        """加载父代代码、思想、评估失败信息（T1: 委托给 InspirationCollector）."""
         return self._inspiration.load_parents(parent_ids)
 
     def _write_reference_edges(

@@ -81,7 +81,7 @@ class Coder:
         return self._parse_response(response.content, ctx)
 
     def _build_user_message(self, ctx: AgentContext, thought: ThoughtOutput) -> str:
-        """构建用户消息 — 含父代码 + 高分历史程序."""
+        """构建用户消息 — 含父代码 + 高分历史程序 + 上次失败反馈."""
         parts = [
             f"## Improvement Thought:\n{thought.thought}",
             f"\n## Rationale:\n{thought.rationale}",
@@ -91,6 +91,13 @@ class Coder:
         parent_code = self._get_parent_code(ctx)
         if parent_code:
             parts.append(f"\n## Current Code to Improve:\n```python\n{parent_code}\n```")
+
+        # P0-1: 上次评估失败反馈（如果有）
+        if ctx.last_eval_failure:
+            parts.append(
+                f"\n## ⚠ Previous Evaluation Failure (avoid repeating):\n"
+                f"```\n{ctx.last_eval_failure}\n```"
+            )
 
         # Inspiration: 高分历史程序
         if ctx.inspiration_programs:
@@ -109,10 +116,16 @@ class Coder:
                 parts.append(f"- {m.get('outcome_summary', '')[:200]}")
 
         parts.append("\n## Instructions:")
-        parts.append(
+        instruction = (
             "Propose targeted SEARCH/REPLACE edits to improve the current code. "
             "Make minimal, focused changes."
         )
+        if ctx.last_eval_failure:
+            instruction += (
+                " Pay special attention to the previous failure above — "
+                "ensure your edits fix the root cause, not just the symptom."
+            )
+        parts.append(instruction)
 
         return "\n".join(parts)
 

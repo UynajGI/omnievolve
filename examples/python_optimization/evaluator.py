@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 
 from omnievolve.eval.task_evaluator import (
     CandidateArtifact,
@@ -14,8 +16,11 @@ from omnievolve.eval.task_evaluator import (
     EvalOutput,
     EvaluationContext,
     EvaluationPlan,
+    MountSpec,
     SandboxExecutionResult,
 )
+
+_WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 
 
 class SortEvaluator:
@@ -39,12 +44,22 @@ class SortEvaluator:
         return EvaluationPlan(
             commands=[
                 CommandSpec(
-                    argv=["python", "-m", "pytest", "test_sort.py", "-v", "--tb=short"],
+                    argv=[sys.executable, "-m", "pytest", "test_sort.py", "-v", "--tb=short"],
                     timeout_sec=10.0,
                 ),
                 CommandSpec(
-                    argv=["python", "benchmark.py"],
+                    argv=[sys.executable, "benchmark.py"],
                     timeout_sec=5.0,
+                ),
+            ],
+            mounts=[
+                MountSpec(
+                    source=os.path.join(_WORKSPACE, "test_sort.py"),
+                    target="/workspace/test_sort.py",
+                ),
+                MountSpec(
+                    source=os.path.join(_WORKSPACE, "benchmark.py"),
+                    target="/workspace/benchmark.py",
                 ),
             ],
             expected_outputs=["benchmark_result.json"],

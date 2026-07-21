@@ -25,6 +25,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _combine_failures(failures: list[str]) -> str:
+    """合并多个父代的评估失败信息（P0-1）.
+
+    取第一个非空失败（最直接的父代），避免多个失败信息淹没上下文。
+    多个非空时，只保留第一个以保持 Prompt 简洁。
+    """
+    for f in failures:
+        if f and f.strip():
+            return f.strip()[:1000]  # 硬截断防止超长 stderr 撑爆 token budget
+    return ""
+
+
 class FastLoopStep:
     """单个候选的完整进化链（步骤 1-11）.
 
@@ -46,8 +58,8 @@ class FastLoopStep:
         # 步骤 2: 选择父代
         parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
 
-        # 加载父代代码 / 思想
-        parent_codes, parent_thoughts = e._load_parents(parent_ids)  # noqa: SLF001
+        # 加载父代代码 / 思想 / 评估失败信息（P0-1: 反馈闭环）
+        parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
 
         # 步骤 1: Router 选择模型
         model = e._select_model(generation)  # noqa: SLF001
@@ -101,6 +113,8 @@ class FastLoopStep:
             inspiration_programs=inspiration,
             memory_hits=memory_summaries,
             meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
+            # P0-1: 注入父代评估失败信息到 Coder 上下文
+            last_eval_failure=_combine_failures(parent_failures),
             search_policy_id=e._champion_policy_id,  # noqa: SLF001
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001

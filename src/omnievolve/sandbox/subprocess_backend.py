@@ -117,6 +117,18 @@ class TrustedSubprocessBackend:
                 code_file = exec_dir / "main.py"
                 code_file.write_bytes(source_code)
 
+            # 挂载工作区文件 (EvaluationPlan mounts)
+            for mount in plan.mounts:
+                src = Path(mount.source)
+                if not src.exists():
+                    continue
+                # target: e.g. "/workspace/test_sort.py" → basename only for subprocess cwd
+                tgt_name = Path(mount.target).name
+                tgt_path = exec_dir / tgt_name
+                import shutil
+
+                shutil.copy2(src, tgt_path)
+
             # 执行每个命令
             for cmd in plan.commands:
                 try:

@@ -34,10 +34,15 @@ class InspirationCollector:
         self._candidate_repo = candidate_repo
         self._artifact_store = artifact_store
 
-    def load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str]]:
-        """批量加载父代代码与思想（T3: 1 次 IN 查询代替 N 次）."""
+    def load_parents(self, parent_ids: list[str]) -> tuple[list[str], list[str], list[str]]:
+        """批量加载父代代码、思想、评估失败信息（T3: 1 次 IN 查询代替 N 次）.
+
+        Returns:
+            (codes, thoughts, eval_failures) — eval_failures 包含每个父代最近一次
+            失败评估的 stderr/failure_reason（空字符串表示无失败或成功）。
+        """
         if not parent_ids:
-            return [], []
+            return [], [], []
 
         placeholders = ",".join(["?"] * len(parent_ids))
         rows = self._db.fetchall(
@@ -52,6 +57,7 @@ class InspirationCollector:
 
         codes: list[str] = []
         thoughts: list[str] = []
+        failures: list[str] = []
         for pid in parent_ids:
             row = row_map.get(pid)
             if row is None:
@@ -69,7 +75,58 @@ class InspirationCollector:
                         thoughts.append(meta["thought"])
                 except (ValueError, TypeError):
                     pass
-        return codes, thoughts
+            # P0-1: Load parent's last evaluation failure (stderr + failure_reason)
+            failures.append(self._load_eval_failure(pid))
+        return codes, thoughts, failures
+
+    def _load_eval_failure(self, candidate_id: str) -> str:
+        """加载候选最近一次失败评估的 stderr/failure_reason（P0-1）.
+
+        优先取 failure_reason（evaluator 解析的人读错误），回退到 stderr 后 500 字。
+        成功或无评估记录时返回空字符串。
+        """
+        try:
+            row = self._db.fetchone(
+                """
+                SELECT er.passed, er.metrics, er.stderr_hash
+                FROM evaluation_run er
+                WHERE er.candidate_id = ?
+                  AND er.status = 'completed'
+                ORDER BY er.finished_at DESC
+                LIMIT 1
+                """,
+                (candidate_id,),
+            )
+        except Exception:
+            logger.debug("Failed to load eval failure for %s", candidate_id)
+            return ""
+
+        if row is None or row["passed"] == 1:
+            return ""
+
+        # 1. Evaluator-provided failure_reason (most readable)
+        failure_reason = ""
+        try:
+            metrics = json.loads(row["metrics"]) if row["metrics"] else {}
+            failure_reason = metrics.get("failure_reason", "") or metrics.get("error", "")
+        except (ValueError, TypeError):
+            pass
+
+        # 2. Raw stderr (fallback or supplement)
+        stderr_text = ""
+        if row["stderr_hash"]:
+            try:
+                stderr_text = self._artifact_store.load_text(row["stderr_hash"])
+            except Exception:
+                pass
+
+        # Combine: failure_reason first (if any), then stderr tail
+        parts: list[str] = []
+        if failure_reason:
+            parts.append(failure_reason[:500])
+        if stderr_text and stderr_text.strip():
+            parts.append(f"stderr:\n{stderr_text[-500:]}")
+        return "\n".join(parts) if parts else ""
 
     def collect_inspiration(
         self,
