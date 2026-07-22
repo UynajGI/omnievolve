@@ -2,12 +2,17 @@
 
 T1 重构第三步：将 _evolve_one + _evaluate_candidate 提取为独立组件。
 使用 "method object" 模式：引擎作为数据持有者，控制流移到此类。
+
+Phase 3: prepare/commit 拆分 — 支持异步并行流水线。
+prepare() 执行无共享状态变更的步骤（LLM + sandbox），
+commit_result() 串行执行所有共享状态更新（MCTS/best/router/island）。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from omnievolve.agents.base import AgentContext
 from omnievolve.engine.novelty import NoveltyDecision
@@ -35,6 +40,28 @@ def _combine_failures(failures: list[str]) -> str:
         if f and f.strip():
             return f.strip()[:1000]  # 硬截断防止超长 stderr 撑爆 token budget
     return ""
+
+
+@dataclass
+class PreparedCandidate:
+    """Phase 3: prepare() 的返回值 — 包含所有评估产物，不含状态变更.
+
+    prepare() 执行步骤 1-10（parent→Director→Coder→Critic→sandbox eval），
+    commit_result() 执行步骤 11（MCTS/best/router/island 状态更新）。
+    """
+
+    candidate_id: str
+    artifact_hash: str
+    output: EvalOutput | None
+    parent_ids: list[str]
+    model: str
+    island_id: str
+    thought_confidence: float = 1.0
+    # 评估上下文（供 commit 使用）
+    eval_run_id: str | None = None
+    job_id: str | None = None
+    sandbox_result: Any = None
+    memory_hits: list = field(default_factory=list)
 
 
 class FastLoopStep:
@@ -306,27 +333,254 @@ class FastLoopStep:
         e._write_reference_edges(candidate.id, inspiration, parent_ids=parent_ids)  # noqa: SLF001
 
         # MCTS 扩展
-        if parent_ids:
-            e._mcts.expand(parent_ids[0], [(candidate.id, thought.confidence)])  # noqa: SLF001
-        else:
-            e._mcts.add_node(candidate.id, parent=None, prior=thought.confidence)  # noqa: SLF001
+        prepared = self.prepare(generation, task_name, island_id)
+        if prepared is None:
+            return None, ""
+        return self.commit_result(prepared)
 
-        # 步骤 9-11: 评估
-        output = self.evaluate_candidate(candidate.id, artifact_hash)
-        e._island_manager.assign_candidate(candidate.id, island_id)  # noqa: SLF001
+    def prepare(
+        self,
+        generation: int,
+        task_name: str,
+        island_id: str,
+    ) -> PreparedCandidate | None:
+        """Phase 3: 步骤 1-10 — 可并行执行，无共享状态变更.
 
-        # Step 5b: 记录 adoption（记忆被成功候选“采用”）
-        if output is not None and output.passed and memory_hits:
+        执行完整的 LLM + sandbox 流程，但不做 MCTS expand/island assign/router update。
+        返回 PreparedCandidate，供 commit_result() 做串行状态合并。
+        """
+        e = self._e
+
+        # 步骤 2: 选择父代
+        parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
+
+        # P1-3: 强制反向传播
+        if parent_ids and e._mcts.should_force_backprop():  # noqa: SLF001
+            e._mcts.force_backprop(parent_ids[0])  # noqa: SLF001
+            e._candidate_repo.update_search_state(parent_ids[0], visit_delta=1)  # noqa: SLF001
+            return None
+
+        parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
+        model = e._select_model(generation)  # noqa: SLF001
+        stagnation_level = self._compute_stagnation_level(island_id)
+
+        # 步骤 3/可选 crossover + fusion
+        base_code = None
+        if relation == "crossover" and len(parent_codes) >= 2:
+            base_code = e._crossover.combine(parent_codes, strategy="segment")  # noqa: SLF001
+        if (stagnation_level >= 2 and e._config.fusion_mode == "llm"  # noqa: SLF001
+                and parent_codes):
             try:
-                e._memory_store.record_adoption(memory_hits[0].id)  # noqa: SLF001
+                from omnievolve.agents.fusion import FusionAgent
+                fusion_agent = FusionAgent(e._llm)  # noqa: SLF001
+                references = e._collect_inspiration_programs(parent_ids, top_k=2)  # noqa: SLF001
+                if references:
+                    fused = fusion_agent.fuse(parent_codes[0], references, experiment_id=e._experiment_id)  # noqa: SLF001
+                    if fused:
+                        base_code = fused.full_code
+            except Exception:
+                logger.debug("LLM fusion failed, falling back to mechanical", exc_info=True)
+
+        # 记忆检索 + 向量重排序
+        scope_levels = [0, 1] if stagnation_level == 0 else [0, 1, 2, 3, 4]
+        memory_hits = e._memory_store.retrieve(  # noqa: SLF001
+            experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
+            success_only=True, scope_levels=scope_levels,
+            limit=e._search_policy.retrieval_budget,  # noqa: SLF001
+        )
+        if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
+            try:
+                vector_hits = e._hybrid_retriever.search_memory(  # noqa: SLF001
+                    parent_thoughts[0][:500], experiment_id=e._experiment_id,  # noqa: SLF001
+                    top_k=e._search_policy.retrieval_budget,  # noqa: SLF001
+                )
+                if vector_hits:
+                    vector_order = {h["id"]: i for i, h in enumerate(vector_hits)}
+                    memory_hits.sort(key=lambda m: vector_order.get(m.id, 999))
+            except Exception:
+                pass
+        for m in memory_hits:
+            try:
+                e._memory_store.record_citation(m.id)  # noqa: SLF001
+            except Exception:
+                pass
+        # P2-3 formatting
+        memory_summaries = []
+        for m in memory_hits:
+            score_str = ""
+            if isinstance(m.outcome_summary, dict):
+                score_str = f"score={m.outcome_summary.get('score', '?')}"
+            diff_text = ""
+            if m.code_diff_hash:
+                try:
+                    raw = e._artifact_store.load_text(m.code_diff_hash)  # noqa: SLF001
+                    diff_text = raw[:200] if raw else ""
+                except Exception:
+                    pass
+            outcome_text = str(m.outcome_summary)[:150]
+            parts = [f"[L{m.scope_level}/{'SUCCESS' if m.success_flag else 'FAIL'}] {score_str}"]
+            if diff_text:
+                parts.append(f"改动: {diff_text}")
+            parts.append(f"效果: {outcome_text}")
+            memory_summaries.append({"outcome_summary": " → ".join(parts),
+                                     "scope_level": m.scope_level, "success": m.success_flag})
+
+        inspiration = e._collect_inspiration_programs(parent_ids)  # noqa: SLF001
+        for i, pid in enumerate(parent_ids):
+            if i < len(parent_codes):
+                inspiration.insert(0, {"is_parent": True, "candidate_id": pid,
+                                       "score": 0.0, "code": parent_codes[i], "source": "parent"})
+
+        # Director RAG
+        rag_context = []
+        if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
+            try:
+                rag_context = e._hybrid_retriever.search_thoughts(  # noqa: SLF001
+                    parent_thoughts[0][:300], experiment_id=e._experiment_id, top_k=3,  # noqa: SLF001
+                )
+            except Exception:
+                pass
+
+        ctx = AgentContext(
+            experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
+            generation=generation, island_id=island_id,
+            parent_candidate_ids=parent_ids, parent_thoughts=parent_thoughts,
+            parent_artifact_hashes=[], inspiration_programs=inspiration,
+            memory_hits=memory_summaries, meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
+            last_eval_failure=_combine_failures(parent_failures),
+            stagnation_level=stagnation_level,
+            sibling_summaries=self._load_sibling_summaries(island_id, generation),
+            rag_context=rag_context,
+            search_policy_id=e._champion_policy_id,  # noqa: SLF001
+            evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
+            environment_version_id=e._environment_version_id,  # noqa: SLF001
+            model=model,
+            prompt_version_id=e._load_champion_prompt("director"),  # noqa: SLF001
+        )
+
+        # 步骤 4: Director
+        thought = e._director.evolve_thought(ctx)  # noqa: SLF001
+
+        # 步骤 5: NoveltyGate
+        existing_sims = []
+        if e._hybrid_retriever:  # noqa: SLF001
+            try:
+                _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
+                    thought.thought, collection="thought_default",
+                    threshold=e._config.novelty_threshold,  # noqa: SLF001
+                )
+                if max_sim > 0:
+                    existing_sims = [max_sim]
+            except Exception:
+                pass
+        novelty_result = e._novelty_gate.check(  # noqa: SLF001
+            thought=thought.thought, code=base_code,
+            existing_similarities=existing_sims or None,
+        )
+        if novelty_result.decision == NoveltyDecision.REJECT:
+            return None
+
+        # 步骤 6: Coder + Critic
+        code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
+        if not code.full_code.strip():
+            if base_code:
+                code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
+            elif parent_codes:
+                code = type(code)(diff="", full_code=parent_codes[0],
+                                  explanation="fallback to parent code")
+
+        critic_stderr = ctx.last_eval_failure
+        passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
+        retries = 0
+        while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
+            retries += 1
+            code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
+            passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
+
+        # 步骤 8: 存储代码 + 创建候选
+        artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
+        parents_with_relation = [(pid, relation) for pid in parent_ids]
+        candidate = e._candidate_repo.create_candidate(  # noqa: SLF001
+            experiment_id=e._experiment_id,  # noqa: SLF001
+            task_id=task_name,
+            generation=generation,
+            artifact_hash=artifact_hash,
+            search_policy_id=e._champion_policy_id,  # noqa: SLF001
+            island_id=island_id,
+            parents=parents_with_relation or None,
+            meta={"thought": thought.thought[:500], "relation": relation, "model": model},
+        )
+        e._total_candidates += 1  # noqa: SLF001
+
+        e._enqueue_vector_index("candidate", candidate.id, artifact_hash)  # noqa: SLF001
+        thought_record = e._candidate_repo.create_thought(  # noqa: SLF001
+            experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
+            content=thought.thought, rationale=thought.rationale,
+            risk_notes=thought.risk_notes, confidence=thought.confidence,
+            mechanism_tags=thought.mechanism_tags,
+        )
+        thought_hash = e._artifact_store.store_text(thought.thought, "log")  # noqa: SLF001
+        e._enqueue_vector_index("thought", thought_record.id, thought_hash)  # noqa: SLF001
+        e._write_reference_edges(candidate.id, inspiration, parent_ids=parent_ids)  # noqa: SLF001
+
+        # 步骤 9-10: sandbox 执行 + 结果解析（无状态变更）
+        output, eval_run, job, sandbox_result = self._execute_sandbox(candidate.id, artifact_hash)
+
+        return PreparedCandidate(
+            candidate_id=candidate.id,
+            artifact_hash=artifact_hash,
+            output=output,
+            parent_ids=parent_ids,
+            model=model,
+            island_id=island_id,
+            thought_confidence=thought.confidence,
+            eval_run_id=eval_run.id if eval_run else None,
+            job_id=job.id if job else None,
+            sandbox_result=sandbox_result,
+            memory_hits=memory_hits,
+        )
+
+    def commit_result(self, prepared: PreparedCandidate) -> tuple[str | None, str]:
+        """Phase 3: 步骤 11 — 串行执行所有共享状态变更.
+
+        在 prepare() 并行执行后，此方法单线程串行合并结果到引擎状态。
+        """
+        e = self._e
+
+        # MCTS 扩展（延迟到 commit）
+        if prepared.parent_ids:
+            e._mcts.expand(prepared.parent_ids[0],  # noqa: SLF001
+                           [(prepared.candidate_id, prepared.thought_confidence)])
+        else:
+            e._mcts.add_node(prepared.candidate_id, parent=None,  # noqa: SLF001
+                             prior=prepared.thought_confidence)
+
+        # 岛屿分配
+        e._island_manager.assign_candidate(prepared.candidate_id, prepared.island_id)  # noqa: SLF001
+
+        # 应用评估结果（所有状态变更）
+        if prepared.output is not None:
+            self._apply_eval_result(
+                prepared.candidate_id,
+                prepared.artifact_hash,
+                prepared.output,
+                prepared.eval_run_id,
+                prepared.job_id,
+                prepared.sandbox_result,
+            )
+
+        # Step 5b: 记录 adoption
+        if prepared.output is not None and prepared.output.passed and prepared.memory_hits:
+            try:
+                e._memory_store.record_adoption(prepared.memory_hits[0].id)  # noqa: SLF001
             except Exception:
                 pass
 
         # Router 奖励更新
-        if e._router is not None and model and output is not None:  # noqa: SLF001
-            self._update_router_reward(model, output, parent_ids)
+        if e._router is not None and prepared.model and prepared.output is not None:  # noqa: SLF001
+            self._update_router_reward(prepared.model, prepared.output, prepared.parent_ids)
 
-        return candidate.id, artifact_hash
+        return prepared.candidate_id, prepared.artifact_hash
 
     def evaluate_candidate(
         self,
@@ -422,7 +676,27 @@ class FastLoopStep:
         candidate_id: str,
         artifact_hash: str,
     ) -> EvalOutput | None:
-        """全量评估（原有逻辑）."""
+        """全量评估 — _execute_sandbox + _apply_eval_result."""
+        output, eval_run, job, result = self._execute_sandbox(candidate_id, artifact_hash)
+        if output is None:
+            return None
+        self._apply_eval_result(
+            candidate_id, artifact_hash, output,
+            eval_run.id if eval_run else None,
+            job,
+            result,
+        )
+        return output
+
+    def _execute_sandbox(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+    ) -> tuple[EvalOutput | None, Any, Any, Any]:
+        """Phase 3: 步骤 9-10 — sandbox 执行 + 结果解析（无状态变更）.
+
+        返回 (output, eval_run, job, sandbox_result)。
+        """
         e = self._e
 
         candidate_artifact = CandidateArtifact(
@@ -468,7 +742,7 @@ class FastLoopStep:
             logger.exception("Failed to build plan for %s", candidate_id)
             if run:
                 e._eval_repo.fail(run.id, "build_plan error")  # noqa: SLF001
-            return None
+            return None, run, job, None
 
         # 步骤 10: sandbox 执行
         policy = SandboxPolicy(
@@ -486,7 +760,7 @@ class FastLoopStep:
                     e._job_store.fail_job(job.id, "sandbox execution error")  # noqa: SLF001
                 except Exception:
                     pass
-            return None
+            return None, run, job, None
 
         # 步骤 11: parse + 更新状态
         output = e._task_evaluator.parse_result(result, eval_context)  # noqa: SLF001
@@ -527,6 +801,23 @@ class FastLoopStep:
                 )
             except StorageError:
                 logger.debug("Could not complete evaluation_run record", exc_info=True)
+
+        return output, run, job, result
+
+    def _apply_eval_result(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+        output: EvalOutput,
+        eval_run_id: str | None = None,
+        job: Any = None,
+        result: Any = None,
+    ) -> None:
+        """Phase 3: 步骤 11 — 所有共享状态变更（串行执行）.
+
+        从 _execute_sandbox 拆分出的状态更新逻辑。
+        """
+        e = self._e
 
         # 更新 candidate 状态
         e._candidate_repo.update_status(candidate_id, "evaluated" if output.passed else "failed")  # noqa: SLF001
@@ -601,21 +892,21 @@ class FastLoopStep:
             )
 
         # 预算记账
-        e._budget_guard.consume(  # noqa: SLF001
-            model="sandbox",
-            input_tokens=0,
-            output_tokens=0,
-            compute_sec=result.execution_time_ms / 1000,
-        )
+        if result is not None:
+            e._budget_guard.consume(  # noqa: SLF001
+                model="sandbox",
+                input_tokens=0,
+                output_tokens=0,
+                compute_sec=result.execution_time_ms / 1000,
+            )
 
         # Phase 4.4: 完成 Job 记录
         if job:
             try:
-                e._job_store.complete_job(job.id, result_ref=artifact_hash)  # noqa: SLF001
+                job_id = job if isinstance(job, str) else job.id
+                e._job_store.complete_job(job_id, result_ref=artifact_hash)  # noqa: SLF001
             except Exception:
                 pass
-
-        return output
 
     def _update_router_reward(
         self,

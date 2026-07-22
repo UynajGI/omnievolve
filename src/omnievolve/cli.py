@@ -286,6 +286,13 @@ def run(
 
     if resume:
         result = engine.resume(experiment_id)
+    elif settings.evolution.async_pipeline_enabled:
+        import asyncio
+
+        from omnievolve.engine.async_engine import AsyncPipelineEngine
+
+        pipeline = AsyncPipelineEngine(engine)
+        result = asyncio.run(pipeline.run(initial_code, task_name))
     else:
         result = engine.run(initial_code, task_name)
 

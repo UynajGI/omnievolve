@@ -32,6 +32,7 @@ class EvolutionSettings(BaseSettings):
     sandbox_mem_limit_mb: int = 4096
     health_window_gens: int = 3
     self_evolve_enabled: bool = True
+    async_pipeline_enabled: bool = False  # Phase 4: 原生异步流水线
 
 
 class SelectionSettings(BaseSettings):
