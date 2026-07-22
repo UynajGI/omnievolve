@@ -1,0 +1,45 @@
+# OmniEvolve 模板配置
+# 复制此文件并根据你的任务调整参数
+
+[evolution]
+max_generations = 10        # 进化代数（每代生成 population_size 个候选）
+population_size = 4         # 每代候选数量
+island_count = 2            # 岛屿数（并行搜索分支）
+novelty_threshold = 0.92    # 新颖性阈值（越高越严格）
+novelty_retry_limit = 3     # Critic 拒绝后重试次数
+mutation_rate = 0.3         # 变异率
+crossover_rate = 0.15       # 交叉率
+max_stagnation_gens = 5     # 停滞多少代后触发策略升级
+token_budget = 2_000_000    # LLM token 总预算
+sandbox_timeout = 30.0      # 沙箱超时（秒）
+health_window_gens = 3      # 健康评估窗口（每 N 代）
+fusion_mode = "mechanical"  # mechanical / llm（停滞时融合策略）
+
+[selection]
+parent_selector = "progressive_mcgs"
+tournament_size = 3
+island_migration_interval = 5
+
+[models]
+heavy = ["deepseek/deepseek-chat"]
+light = ["deepseek/deepseek-chat"]
+
+[models.routing]
+algorithm = "sliding_window_ucb"  # sliding_window_ucb / discounted_ucb / thompson
+window_size = 50
+ucb_c = 1.414
+
+[sandbox]
+backend = "trusted_subprocess"  # docker / trusted_subprocess
+timeout_sec = 30
+mem_limit_mb = 512
+
+[storage]
+db_path = ".omnievolve/omnievolve.db"
+
+[memory]
+default_top_k = 8
+
+[meta_evolution]
+enabled = true
+auto_apply_l0 = true
