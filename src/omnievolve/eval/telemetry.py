@@ -291,11 +291,13 @@ class HealthPolicy:
                         generation_end,
                         search_policy_id,
                         metrics.total_candidates,
-                        json.dumps({
-                            "success_rate": metrics.success_rate,
-                            "api_cost_usd": metrics.api_cost_usd,
-                            "frontier_improvement": metrics.frontier_improvement,
-                        }),
+                        json.dumps(
+                            {
+                                "success_rate": metrics.success_rate,
+                                "api_cost_usd": metrics.api_cost_usd,
+                                "frontier_improvement": metrics.frontier_improvement,
+                            }
+                        ),
                         output.roi_score,
                         output.coverage_entropy,
                         output.memory_effectiveness,

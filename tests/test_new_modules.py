@@ -7,7 +7,6 @@ import json
 import pytest
 
 from omnievolve.engine.novelty import LLMNoveltyJudge, NoveltyDecision, NoveltyGate
-from omnievolve.eval.environment import ExecutionEnvironmentVersion
 from omnievolve.meta.audit import AuditReportGenerator
 from omnievolve.meta.policy_archive import PolicyArchive
 from omnievolve.meta.policy_genome import SearchPolicyGenome

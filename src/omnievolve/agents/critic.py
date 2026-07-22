@@ -100,9 +100,7 @@ class Critic:
 
         # 1.4: Diff 适用性预检 — SEARCH/REPLACE 块未能应用时拒绝
         if code.diff and code.explanation and "could not apply" in code.explanation.lower():
-            issues.append(
-                "Patch not applicable: SEARCH/REPLACE blocks do not match parent code"
-            )
+            issues.append("Patch not applicable: SEARCH/REPLACE blocks do not match parent code")
 
         # 3. LLM 审查（如果可用）
         if self._llm and not issues:

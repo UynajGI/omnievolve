@@ -353,12 +353,14 @@ class VectorIndexer:
                 except Exception:
                     logger.debug(
                         "Failed to enqueue re-index for %s/%s",
-                        entity_type, row["entity_id"],
+                        entity_type,
+                        row["entity_id"],
                         exc_info=True,
                     )
 
         logger.info(
             "Profile migration: enqueued %d entities for re-indexing to profile %s",
-            total_enqueued, new_profile_id,
+            total_enqueued,
+            new_profile_id,
         )
         return total_enqueued

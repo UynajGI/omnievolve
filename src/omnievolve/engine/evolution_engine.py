@@ -28,6 +28,7 @@ import logging
 import signal
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from omnievolve.agents.coder import Coder
 from omnievolve.agents.context_builder import ContextBuilder
@@ -302,6 +303,8 @@ class EvolutionEngine:
         self._failed_directions: list[str] = []
         # OpenEvolve: graceful shutdown flag (SIGINT/SIGTERM)
         self._shutdown_requested = False
+        # Epiplexity 估算器（延迟初始化）
+        self._epiplexity_est: Any = None
 
         # T1: FastLoopStep 需要完整的 self，在所有字段初始化后创建
         self._fast_loop = FastLoopStep(self)

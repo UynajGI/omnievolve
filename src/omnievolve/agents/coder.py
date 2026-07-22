@@ -24,6 +24,7 @@ class GenerationMode(str, Enum):
     FULL_REWRITE = "full_rewrite"  # 停滞时：全量重写
     FUSION_AWARE = "fusion_aware"  # 融合时：参考多方案整合
 
+
 CODER_SYSTEM_PROMPT = """You are the Coder Agent in an evolutionary code optimization system.
 Your role is to improve code by proposing targeted edits using SEARCH/REPLACE blocks.
 

@@ -33,6 +33,9 @@ class SearchPolicyGenome:
     temperature_schedule: str = "constant"
     island_migration_policy: str = "periodic"
     backtracking_policy: str = "none"
+    # Epiplexity 辅助适应度权重（可被 Slow Loop 自进化）
+    # fitness = f_task + epiplexity_beta * S_φ(code)
+    epiplexity_beta: float = 0.1
 
     def to_dict(self) -> dict:
         """转换为字典."""
@@ -51,6 +54,7 @@ class SearchPolicyGenome:
             "temperature_schedule": self.temperature_schedule,
             "island_migration_policy": self.island_migration_policy,
             "backtracking_policy": self.backtracking_policy,
+            "epiplexity_beta": self.epiplexity_beta,
         }
 
     @classmethod

@@ -105,7 +105,7 @@ class FusionAgent:
 
         parts.append("\n## REFERENCE Solutions (from other branches):")
         for i, ref in enumerate(references[:3], 1):
-            code = ref.get("code", "")[:self._max_ref_chars]
+            code = ref.get("code", "")[: self._max_ref_chars]
             score = ref.get("score", "?")
             thought = ref.get("thought", "")[:300]
             parts.append(f"\n### Reference #{i} (score={score}):")

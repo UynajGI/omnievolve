@@ -91,7 +91,7 @@ class EpiplexityEstimator:
         sig = self._compute_signature(code)
         self._history.append(sig)
         if len(self._history) > self._history_size:
-            self._history = self._history[-self._history_size:]
+            self._history = self._history[-self._history_size :]
 
         return max(0.0, min(1.0, score))
 

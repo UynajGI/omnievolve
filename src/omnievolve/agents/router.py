@@ -240,7 +240,9 @@ class ModelRouter:
         self._slots = slots
 
         if algorithm == "sliding_window_ucb":
-            self._strategy: SlidingWindowUCB | DiscountedUCB | ThompsonSampling = SlidingWindowUCB(slots, **kwargs)
+            self._strategy: SlidingWindowUCB | DiscountedUCB | ThompsonSampling = SlidingWindowUCB(
+                slots, **kwargs
+            )
         elif algorithm == "discounted_ucb":
             self._strategy = DiscountedUCB(slots, **kwargs)
         elif algorithm == "thompson":

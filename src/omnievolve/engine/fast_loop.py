@@ -316,8 +316,9 @@ class FastLoopStep:
         output: EvalOutput | None = None
         for stage in EvaluationStage:
             # 尝试获取阶段特定计划，回退到默认 build_plan
-            plan = e._task_evaluator.build_stage_plan(  # noqa: SLF001
-                candidate_artifact, eval_context, stage.value
+            build_stage = getattr(e._task_evaluator, "build_stage_plan", None)  # noqa: SLF001
+            plan = (
+                build_stage(candidate_artifact, eval_context, stage.value) if build_stage else None
             )
             if plan is None:
                 plan = e._task_evaluator.build_plan(candidate_artifact, eval_context)  # noqa: SLF001
@@ -326,7 +327,12 @@ class FastLoopStep:
                 result = e._sandbox.execute(plan, candidate_artifact, policy)  # noqa: SLF001
             except SandboxError:
                 logger.debug("Progressive eval stage %d failed for %s", stage.value, candidate_id)
-                return EvalOutput(score=0.0, metrics={}, passed=False, failure_reason=f"Stage {stage.value} sandbox error")
+                return EvalOutput(
+                    score=0.0,
+                    metrics={},
+                    passed=False,
+                    failure_reason=f"Stage {stage.value} sandbox error",
+                )
 
             output = e._task_evaluator.parse_result(result, eval_context)  # noqa: SLF001
 
@@ -334,7 +340,8 @@ class FastLoopStep:
             if not output.passed and stage < EvaluationStage.STAGE_3_BENCHMARK:
                 logger.debug(
                     "Progressive eval early-exit at stage %d for %s",
-                    stage.value, candidate_id,
+                    stage.value,
+                    candidate_id,
                 )
                 break
 
@@ -423,6 +430,28 @@ class FastLoopStep:
 
         # 步骤 11: parse + 更新状态
         output = e._task_evaluator.parse_result(result, eval_context)  # noqa: SLF001
+
+        # Epiplexity 辅助适应度: fitness = f_task + β * S_φ(code)
+        # β 来自 SearchPolicyGenome，可被 Slow Loop 自进化
+        beta = getattr(e._search_policy, "epiplexity_beta", 0.0)  # noqa: SLF001
+        if beta > 0 and output.passed:
+            try:
+                from omnievolve.engine.epiplexity import EpiplexityEstimator
+
+                if e._epiplexity_est is None:  # noqa: SLF001
+                    e._epiplexity_est = EpiplexityEstimator()  # noqa: SLF001
+                code_text = e._artifact_store.load_text(artifact_hash)  # noqa: SLF001
+                epi_score = e._epiplexity_est.score(code_text) if code_text else 0.0  # noqa: SLF001
+                # 混合计分（不超过 1.0）
+                blended = min(output.score + beta * epi_score, 1.0)
+                output = EvalOutput(
+                    score=blended,
+                    metrics={**output.metrics, "epiplexity": epi_score, "task_score": output.score},
+                    passed=output.passed,
+                    failure_reason=output.failure_reason,
+                )
+            except Exception:
+                pass  # epiplexity 失败不影响主流程
 
         # 完成评估运行记录
         if run:

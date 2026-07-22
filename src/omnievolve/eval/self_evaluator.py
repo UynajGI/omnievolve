@@ -13,11 +13,16 @@ from typing import Any, Protocol, runtime_checkable
 from omnievolve.eval.telemetry import (
     AlertLevel,
     HealthOutput,
+)
+from omnievolve.eval.telemetry import (
     HealthPolicy as DefaultHealthPolicy,
+)
+from omnievolve.eval.telemetry import (
     SelfEvaluator as DefaultSelfEvaluator,
+)
+from omnievolve.eval.telemetry import (
     TelemetryAggregator as DefaultTelemetryAggregator,
 )
-
 
 # ---------------------------------------------------------------------------
 # Protocol 定义（设计文档 §5.2）
