@@ -11,6 +11,7 @@ commit_result() 串行执行所有共享状态更新（MCTS/best/router/island�
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -73,6 +74,13 @@ class FastLoopStep:
     def __init__(self, engine: EvolutionEngine) -> None:
         self._e = engine
 
+    def _prof_step(self, name: str, generation: int = 0) -> Any:
+        """零开销 profiling hook: profiler=None 时返回 nullcontext."""
+        profiler = getattr(self._e, "_profiler", None)
+        if profiler is None:
+            return nullcontext()
+        return profiler.step(name, generation=generation)
+
     def evolve_one(
         self,
         generation: int,
@@ -103,7 +111,8 @@ class FastLoopStep:
         e = self._e
 
         # 步骤 2: 选择父代
-        parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
+        with self._prof_step("select_parents", generation):
+            parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
 
         # P1-3: 强制反向传播
         if parent_ids and e._mcts.should_force_backprop():  # noqa: SLF001
@@ -210,44 +219,48 @@ class FastLoopStep:
         )
 
         # 步骤 4: Director
-        thought = e._director.evolve_thought(ctx)  # noqa: SLF001
+        with self._prof_step("director", generation):
+            thought = e._director.evolve_thought(ctx)  # noqa: SLF001
 
         # 步骤 5: NoveltyGate
-        existing_sims = []
-        if e._hybrid_retriever:  # noqa: SLF001
-            try:
-                _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
-                    thought.thought, collection="thought_default",
-                    threshold=e._config.novelty_threshold,  # noqa: SLF001
-                )
-                if max_sim > 0:
-                    existing_sims = [max_sim]
-            except Exception:
-                pass
-        novelty_result = e._novelty_gate.check(  # noqa: SLF001
-            thought=thought.thought, code=base_code,
-            existing_similarities=existing_sims or None,
-        )
+        with self._prof_step("novelty_gate", generation):
+            existing_sims = []
+            if e._hybrid_retriever:  # noqa: SLF001
+                try:
+                    _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
+                        thought.thought, collection="thought_default",
+                        threshold=e._config.novelty_threshold,  # noqa: SLF001
+                    )
+                    if max_sim > 0:
+                        existing_sims = [max_sim]
+                except Exception:
+                    pass
+            novelty_result = e._novelty_gate.check(  # noqa: SLF001
+                thought=thought.thought, code=base_code,
+                existing_similarities=existing_sims or None,
+            )
         if novelty_result.decision == NoveltyDecision.REJECT:
             e._mcts.rollback_last_select()  # noqa: SLF001
             return None
 
         # 步骤 6: Coder + Critic
-        code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-        if not code.full_code.strip():
-            if base_code:
-                code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
-            elif parent_codes:
-                code = type(code)(diff="", full_code=parent_codes[0],
-                                  explanation="fallback to parent code")
-
-        critic_stderr = ctx.last_eval_failure
-        passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
-        retries = 0
-        while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
-            retries += 1
+        with self._prof_step("coder", generation):
             code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
+            if not code.full_code.strip():
+                if base_code:
+                    code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
+                elif parent_codes:
+                    code = type(code)(diff="", full_code=parent_codes[0],
+                                      explanation="fallback to parent code")
+
+        with self._prof_step("critic", generation):
+            critic_stderr = ctx.last_eval_failure
             passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
+            retries = 0
+            while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
+                retries += 1
+                code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
+                passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
 
         # 步骤 8: 存储代码 + 创建候选
         artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
@@ -274,7 +287,8 @@ class FastLoopStep:
         e._write_reference_edges(candidate.id, inspiration, parent_ids=parent_ids)  # noqa: SLF001
 
         # 步骤 9-10: sandbox 执行 + 结果解析（无状态变更）
-        output, eval_run, job, sandbox_result = self._execute_sandbox(candidate.id, artifact_hash)
+        with self._prof_step("sandbox_eval", generation):
+            output, eval_run, job, sandbox_result = self._execute_sandbox(candidate.id, artifact_hash)
 
         return PreparedCandidate(
             candidate_id=candidate.id,
@@ -295,6 +309,13 @@ class FastLoopStep:
 
         在 prepare() 并行执行后，此方法单线程串行合并结果到引擎状态。
         """
+        e = self._e
+
+        with self._prof_step("commit", 0):
+            return self._commit_inner(prepared)
+
+    def _commit_inner(self, prepared: PreparedCandidate) -> tuple[str | None, str]:
+        """commit_result 的实际实现（被 profiler 包裹）."""
         e = self._e
 
         # Fix 5: 计数器递增移到串行区域（避免并行 prepare 竞态）

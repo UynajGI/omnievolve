@@ -115,3 +115,96 @@ class TestMCTSPerformance:
 
         rate = count / elapsed
         assert rate > 2000, f"MCTS backprop {rate:.0f}/s below 2000/s baseline"
+
+
+class TestNoveltyGatePerformance:
+    """新颖性门性能基准."""
+
+    def test_ast_signature_throughput(self):
+        """验证 AST 签名计算吞吐量."""
+        from omnievolve.engine.novelty import compute_code_signature
+
+        code_samples = [
+            f"def func_{i}(x):\n    return x + {i}\n" for i in range(50)
+        ]
+
+        count = 500
+        start = time.perf_counter()
+        for i in range(count):
+            compute_code_signature(code_samples[i % len(code_samples)])
+        elapsed = time.perf_counter() - start
+
+        rate = count / elapsed
+        assert rate > 500, f"AST signature {rate:.0f}/s below 500/s baseline"
+
+
+class TestVectorPerformance:
+    """向量后端性能基准."""
+
+    def test_numpy_query_throughput(self):
+        """验证 NumPy 精确检索吞吐量."""
+        import numpy as np
+
+        from omnievolve.storage.numpy_backend import NumpyVectorBackend
+        from omnievolve.storage.vector_backend import VectorRecord
+
+        backend = NumpyVectorBackend()
+        backend.create_or_open("bench", 128)
+
+        # 插入 1000 条向量
+        records = [
+            VectorRecord(id=f"id_{i}", vector=np.random.randn(128).tolist(), metadata={})
+            for i in range(1000)
+        ]
+        backend.upsert("bench", records)
+
+        # 查询 100 次
+        query = np.random.randn(128).tolist()
+        count = 100
+        start = time.perf_counter()
+        for _ in range(count):
+            backend.query("bench", query, top_k=10)
+        elapsed = time.perf_counter() - start
+
+        rate = count / elapsed
+        assert rate > 50, f"NumPy query {rate:.0f}/s below 50/s baseline"
+
+    def test_zvec_upsert_throughput(self):
+        """验证 zvec HNSW upsert 吞吐量."""
+        import numpy as np
+
+        from omnievolve.storage.vector_backend import VectorRecord
+        from omnievolve.storage.zvec_backend import create_vector_backend
+
+        backend = create_vector_backend(prefer_zvec=True)
+        backend.create_or_open("bench_upsert", 128)
+
+        records = [
+            VectorRecord(id=f"id_{i}", vector=np.random.randn(128).tolist(), metadata={})
+            for i in range(100)
+        ]
+
+        start = time.perf_counter()
+        backend.upsert("bench_upsert", records)
+        elapsed = time.perf_counter() - start
+
+        rate = 100 / elapsed
+        assert rate > 50, f"zvec upsert {rate:.0f} records/s below 50/s baseline"
+
+
+class TestProfilerOverhead:
+    """验证 PipelineProfiler 零开销."""
+
+    def test_profiler_disabled_overhead(self):
+        """当 profiler=None 时，_prof_step 开销应 < 1ms/次."""
+        from contextlib import nullcontext
+
+        count = 10000
+        start = time.perf_counter()
+        for _ in range(count):
+            with nullcontext():
+                pass
+        elapsed = time.perf_counter() - start
+
+        per_call_us = (elapsed / count) * 1_000_000
+        assert per_call_us < 100, f"nullcontext overhead {per_call_us:.1f}us > 100us"

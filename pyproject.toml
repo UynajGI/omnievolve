@@ -21,8 +21,9 @@ docker = ["docker>=7.0"]
 monty = ["pydantic-monty>=0.0.18"]
 viz = ["pyvis>=0.3"]
 tuning = ["optuna>=3.6"]
+profile = ["scalene>=1.5", "psutil>=5.9"]
 all = [
-    "omnievolve[vector,local-embed,docker,monty,viz,tuning]",
+    "omnievolve[vector,local-embed,docker,monty,viz,tuning,profile]",
 ]
 
 [project.scripts]
@@ -41,6 +42,8 @@ dev = [
     "marker-pdf>=1.6.1",
     "pymupdf>=1.28.0",
     "commitizen>=4.16.5",
+    "scalene>=1.5",
+    "psutil>=5.9",
 ]
 
 [tool.commitizen]

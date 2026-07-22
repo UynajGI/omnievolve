@@ -263,6 +263,7 @@ class EvolutionEngine:
             self._vector_indexer.set_artifact_store(artifact_store)
         self._prompt_repo = prompt_repo or PromptVersionRepository(db)
         self._code_profile_id: str | None = None  # run() 时注册
+        self._profiler: Any = None  # PipelineProfiler 挂载点（None=零开销）
 
         # 向量混合检索器（读路径 — 与 VectorIndexer 共享 backend/embedder）
         self._hybrid_retriever = None
