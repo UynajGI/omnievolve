@@ -451,7 +451,7 @@ class FastLoopStep:
                     failure_reason=output.failure_reason,
                 )
             except Exception:
-                pass  # epiplexity 失败不影响主流程
+                logger.debug("Epiplexity scoring failed for %s", artifact_hash, exc_info=True)
 
         # 完成评估运行记录
         if run:

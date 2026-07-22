@@ -9,6 +9,8 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # benchmark-action auto-push to gh-pages
     steps:
       - uses: actions/checkout@v4
 

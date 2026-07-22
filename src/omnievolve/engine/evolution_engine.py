@@ -103,6 +103,7 @@ class EvolutionConfig:
     uct_c_min: float = 0.2  # P1-1: 探索常数下限
     progressive_eval_enabled: bool = False  # Phase 3: 渐进式评估
     fusion_mode: str = "mechanical"  # 2.2: mechanical / llm
+    epiplexity_beta: float = 0.0  # 辅助适应度权重（0=关闭）
     self_evolve_enabled: bool = True
 
 
@@ -173,6 +174,9 @@ class EvolutionEngine:
         )
         self._config = config or EvolutionConfig()
         self._search_policy = search_policy or SearchPolicyGenome()
+        # 配置中的 epiplexity_beta 覆盖 genome 默认值（允许不开 Slow Loop 也能用）
+        if self._config.epiplexity_beta > 0:
+            self._search_policy.epiplexity_beta = self._config.epiplexity_beta
 
         # Repository / Store
         self._candidate_repo = CandidateRepository(db)

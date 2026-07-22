@@ -15,24 +15,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install commitizen
+
       - name: Check commit messages
         run: |
           errors=0
-          while IFS= read -r msg; do
+          while IFS= read -r sha; do
+            msg=$(git log -1 --format='%s' "$sha")
             # 跳过 merge commit
             echo "$msg" | grep -qE '^Merge ' && continue
-            echo "$msg" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .+' || {
-              echo "BAD: $msg"
-              errors=$((errors + 1))
-            }
-          done <<< "$(git log --format='%s' origin/${{ github.base_ref }}..HEAD)"
-          if [ "$errors" -gt 0 ]; then
-            echo ""
-            echo "$errors commit(s) do not follow Conventional Commits."
-            echo "Format: type(scope): description"
-            echo "Types:  feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
-            exit 1
-          fi
+            echo "$msg" | cz check --commit-msg-file /dev/stdin || errors=$((errors + 1))
+          done <<< "$(git rev-list origin/${{ github.base_ref }}..HEAD)"
+          [ "$errors" -eq 0 ] || exit 1
 
   lint:
     runs-on: ubuntu-latest

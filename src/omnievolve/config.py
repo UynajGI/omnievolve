@@ -100,6 +100,9 @@ class NoveltySettings(BaseSettings):
     llm_judge_on_borderline: bool = True
     borderline_low: float = 0.88
     borderline_high: float = 0.96
+    # Epiplexity 辅助适应度（任务无关评估）
+    # > 0 时启用: fitness = f_task + β * S_φ(code)
+    epiplexity_beta: float = 0.0
 
 
 class SandboxDockerSettings(BaseSettings):
