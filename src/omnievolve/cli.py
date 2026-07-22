@@ -149,6 +149,29 @@ def _build_engine_components(
     )
 
     meta_enabled = settings.meta_evolution.enabled
+
+    # 向量索引器（设计文档 §4.2: Outbox → Embed → VectorBackend）
+    vector_indexer = None
+    try:
+        from omnievolve.storage.numpy_backend import NumpyVectorBackend
+        from omnievolve.storage.vector_indexer import VectorIndexer
+        from omnievolve.utils.embedding import FakeEmbedder
+
+        # 尝试加载真实 embedding 模型，失败则用 FakeEmbedder
+        embedder = None
+        try:
+            from omnievolve.utils.embedding import SentenceTransformerEmbedder
+
+            embedder = SentenceTransformerEmbedder(model=settings.embedding.code.model)
+        except Exception:
+            embedder = FakeEmbedder(dimension=128)
+
+        vector_backend = NumpyVectorBackend()
+        vector_indexer = VectorIndexer(db, vector_backend, embedder)
+        vector_indexer.set_artifact_store(None)  # 延迟设置
+    except Exception:
+        pass  # core 模式无向量也可运行
+
     return {
         "router": router,
         "island_manager": island_manager,
@@ -160,6 +183,7 @@ def _build_engine_components(
         "meta_planner": meta_planner if meta_enabled else None,
         "replay_evaluator": replay_evaluator,
         "graph_store": GraphStore(db),
+        "vector_indexer": vector_indexer,
     }
 
 

@@ -567,6 +567,13 @@ class EvolutionEngine:
             except (EvolutionError, LLMError, SandboxError, StorageError):
                 logger.exception("Evolution failed for candidate slot %d", i)
 
+        # 设计文档 §4.2: 每代后消费向量索引 Outbox
+        if self._vector_indexer:
+            try:
+                self._vector_indexer.process_batch()
+            except Exception:
+                logger.debug("Vector index batch processing failed", exc_info=True)
+
     def _select_parents(self, island_id: str) -> tuple[list[str], str]:
         """选择父代（步骤 2）：P1-2 软切换 + MCTS 引导 + ParentSelector 兖底.
 
