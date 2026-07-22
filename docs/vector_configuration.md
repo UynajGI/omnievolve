@@ -25,20 +25,24 @@ OmniEvolve 的向量检索系统支持三种后端：
 # 仅 NumPy fallback（默认，零额外依赖）
 pip install -e .
 
-# zvec 加速（百万级向量）
-pip install -e ".[vector]"
+# zvec 加速（百万级向量，HNSW ANN）
+pip install -e ".[vector]"    # 安装 zvec>=0.3
 
 # 本地 Embedding（无需外部 API）
 pip install -e ".[local-embed]"
 ```
 
+> **自动检测**: CLI 启动时调用 `create_vector_backend(prefer_zvec=True)`，自动检测 zvec 是否可用。
+> 可用则使用 HNSW ANN，否则透明回退 NumPy 精确检索。无需手动配置。
+
 ## 配置
 
-在 `omnievolve.toml` 中配置向量后端：
+向量后端通过 `create_vector_backend(prefer_zvec=True)` 自动选择，无需手动配置。
+如需显式控制，可在 `omnievolve.toml` 中配置：
 
 ```toml
 [vector]
-# 后端选择: "numpy" | "zvec"
+# 后端选择: "numpy" | "zvec"  (默认自动检测)
 backend = "numpy"
 
 # Embedding 配置
@@ -50,8 +54,9 @@ model = "text-embedding-3-small"
 # zvec 配置（仅 backend="zvec" 时需要）
 [vector.zvec]
 dimension = 1536
-index_type = "hnsw"
-metric = "cosine"
+metric = "cosine"       # cosine / l2 / ip
+m = 16                  # HNSW 双向链接数
+ef_construction = 200   # HNSW 构建候选列表大小
 ```
 
 ## Embedding Profile
@@ -117,15 +122,18 @@ indexer.reconcile()  # 扫描 pending + 孤儿向量
 当向量数量超过 10 万时，建议从 NumPy 迁移到 zvec：
 
 ```bash
-# 1. 安装 zvec
+# 1. 安装 zvec (0.6+)
 pip install -e ".[vector]"
 
-# 2. 修改配置
-# 在 omnievolve.toml 中设置 backend = "zvec"
+# 2. 无需修改配置 — create_vector_backend(prefer_zvec=True) 自动检测
 
 # 3. 触发重建
 omnievolve recover  # 检测到 backend 变更，自动触发 reindex
 ```
+
+> **zvec 0.6 API 注意**: 适配器使用 `zvec.create_and_open(path, schema)` 创建集合，
+> `Collection.upsert([Doc(...)])` 插入，`Collection.query(queries=Query(...), topk=N)` 查询。
+> COSINE metric 返回距离 (0=相同)，适配器自动转换为相似度 (1.0=相同)。
 
 ### Embedding 模型变更
 

@@ -3,16 +3,19 @@
 S4-14: 实现基础 GraphStore 与子图加载
 - SQLite <-> NetworkX 双向同步
 - 子图加载、停滞分支检测
+- 设计文档 §7: add_candidate / add_reference_edge / update_search_state
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 import networkx as nx
 
 from omnievolve.storage.db import Database
+from omnievolve.storage.repositories.base import generate_id, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,138 @@ class GraphStore:
 
     def __init__(self, db: Database) -> None:
         self._db = db
+
+    # ─── 设计文档 §7 写方法 ───────────────────────────────────────────
+
+    def add_candidate(self, candidate: dict, parents: list[dict]) -> str:
+        """单事务插入 Candidate、多父代 Lineage、初始 SearchState 和 Outbox.
+
+        Args:
+            candidate: 候选字段字典 (experiment_id, task_id, generation,
+                       artifact_hash, search_policy_id, island_id, meta, ...)
+            parents: [{"id": ..., "relation_type": ...}, ...]
+
+        Returns:
+            新候选 ID
+        """
+        candidate_id = candidate.get("id") or generate_id()
+        meta = candidate.get("meta")
+
+        with self._db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO candidate
+                    (id, experiment_id, task_id, generation, island_id,
+                     artifact_hash, search_policy_id, status, meta)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    candidate.get("experiment_id", ""),
+                    candidate.get("task_id", ""),
+                    candidate.get("generation", 0),
+                    candidate.get("island_id"),
+                    candidate.get("artifact_hash", ""),
+                    candidate.get("search_policy_id", "default"),
+                    candidate.get("status", "pending"),
+                    json.dumps(meta) if meta else None,
+                ),
+            )
+
+            # 初始搜索状态
+            conn.execute(
+                "INSERT INTO candidate_search_state (candidate_id) VALUES (?)",
+                (candidate_id,),
+            )
+
+            # 多父代血缘
+            for order, parent in enumerate(parents):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO candidate_lineage
+                        (child_id, parent_id, relation_type, parent_order)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        candidate_id,
+                        parent["id"],
+                        parent.get("relation_type", "mutation"),
+                        order,
+                    ),
+                )
+
+            # Outbox 通知（向量索引最终一致性）
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO vector_outbox
+                    (entity_id, entity_type, event_type, payload)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    "candidate",
+                    "created",
+                    json.dumps({"artifact_hash": candidate.get("artifact_hash", "")}),
+                ),
+            )
+
+        logger.debug("GraphStore.add_candidate: %s", candidate_id)
+        return candidate_id
+
+    def add_reference_edge(
+        self,
+        src: str,
+        dst: str,
+        reference_type: str,
+        detail: dict | None = None,
+    ) -> None:
+        """添加引用边（非血缘）.
+
+        Reference Edge 表示生成时借鉴/检索/修复引用了哪些历史候选，
+        区别于 Lineage Edge（真正遗传关系）。
+        """
+        self._db.execute(
+            """
+            INSERT OR IGNORE INTO candidate_reference_edge
+                (src_candidate_id, dst_candidate_id, reference_type, detail)
+            VALUES (?, ?, ?, ?)
+            """,
+            (src, dst, reference_type, json.dumps(detail) if detail else None),
+        )
+
+    def update_search_state(self, candidate_id: str, delta: dict) -> None:
+        """更新候选搜索状态（MCTS 统计量）.
+
+        Args:
+            delta: 可包含 visit_count, value_sum, selection_count,
+                   offspring_count, frontier_status 等键。
+        """
+        updates = ["updated_at = ?"]
+        params: list[Any] = [now_iso()]
+
+        if "visit_count" in delta:
+            updates.append("visit_count = visit_count + ?")
+            params.append(delta["visit_count"])
+        if "value_sum" in delta:
+            updates.append("value_sum = value_sum + ?")
+            params.append(delta["value_sum"])
+        if "selection_count" in delta:
+            updates.append("selection_count = selection_count + ?")
+            params.append(delta["selection_count"])
+        if "offspring_count" in delta:
+            updates.append("offspring_count = offspring_count + ?")
+            params.append(delta["offspring_count"])
+        if "frontier_status" in delta:
+            updates.append("frontier_status = ?")
+            params.append(delta["frontier_status"])
+
+        params.append(candidate_id)
+        self._db.execute(
+            f"UPDATE candidate_search_state SET {', '.join(updates)} WHERE candidate_id = ?",
+            tuple(params),
+        )
+
+    # ─── 读方法 ────────────────────────────────────────────────────────
 
     def load_subgraph(
         self,

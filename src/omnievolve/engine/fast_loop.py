@@ -819,6 +819,9 @@ class FastLoopStep:
         """
         e = self._e
 
+        # 设计文档 §6: Plugin.enrich_evaluation — 补充领域指标
+        output = self._enrich_with_plugins(candidate_id, artifact_hash, output)
+
         # 更新 candidate 状态
         e._candidate_repo.update_status(candidate_id, "evaluated" if output.passed else "failed")  # noqa: SLF001
 
@@ -907,6 +910,52 @@ class FastLoopStep:
                 e._job_store.complete_job(job_id, result_ref=artifact_hash)  # noqa: SLF001
             except Exception:
                 pass
+
+    def _enrich_with_plugins(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+        output: EvalOutput,
+    ) -> EvalOutput:
+        """设计文档 §6: 调用已注册插件的 enrich_evaluation 补充领域指标.
+
+        注意：只能补充领域指标或发出约束告警，不能静默改写任务主分数。
+        """
+        try:
+            from omnievolve.plugins.discovery import _REGISTERED_PLUGINS
+
+            if not _REGISTERED_PLUGINS:
+                return output
+
+            candidate = CandidateArtifact(
+                candidate_id=candidate_id,
+                source_hash=artifact_hash,
+                manifest_hash=None,
+                language="python",
+            )
+
+            enriched_metrics: dict = {}
+            for name, plugin in _REGISTERED_PLUGINS.items():
+                try:
+                    result = plugin.enrich_evaluation(candidate, output)
+                    if result:
+                        enriched_metrics[name] = result
+                except Exception:
+                    logger.debug("Plugin %s enrich_evaluation failed", name, exc_info=True)
+
+            if enriched_metrics:
+                # 合并插件指标到 output.metrics，不改写 score/passed
+                output = type(output)(
+                    score=output.score,
+                    metrics={**output.metrics, "plugin_enrichment": enriched_metrics},
+                    passed=output.passed,
+                    failure_reason=output.failure_reason,
+                    confidence=output.confidence,
+                )
+        except Exception:
+            logger.debug("Plugin enrichment skipped", exc_info=True)
+
+        return output
 
     def _update_router_reward(
         self,

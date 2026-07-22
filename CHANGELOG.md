@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased] — 2026-07-22
+
+### 异步流水线引擎
+- **AsyncDatabase** (`storage/async_db.py`): asyncio.to_thread + Semaphore(1) 写串行化，WAL 并发读
+- **prepare/commit 拆分**: FastLoopStep.evolve_one 拆为 prepare()（无状态变更）+ commit_result()（串行状态更新）
+- **AsyncPipelineEngine** (`engine/async_engine.py`): Phase A (parallel prepare) → Phase B (sequential commit) → Phase C (post-gen sync)，EWMA 自适应并发
+- **Feature flag**: `async_pipeline_enabled: bool = False` 默认关闭，CLI 自动路由
+
+### 设计文档合规性修复 (G2/G3/G4)
+- **GraphStore**: 新增 `add_candidate()` / `add_reference_edge()` / `update_search_state()` 写方法
+- **VectorStore facade**: 新增 `semantic_candidates()` / `find_diverse_high_scorers()` / `rag_retrieve()`
+- **Plugin enrichment**: `_apply_eval_result()` 中调用 `Plugin.enrich_evaluation()` 补充领域指标
+
+### zvec 0.6 适配器重写
+- 对齐 zvec 0.6 真实 API: `create_and_open(path, schema)` + `Collection.upsert/query/delete`
+- 修复 cosine metric 距离→相似度转换 (similarity = 1.0 - distance)
+- 安装 zvec==0.6.0，HNSW ANN 全链路验证通过
+
+### 测试
+- **672 tests**, 5 skipped, 0 failures
+
 ## [Unreleased] — 2026-07-21
 
 ### P0-1: 评估失败反馈闭环

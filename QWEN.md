@@ -13,7 +13,7 @@ make test-slow             # 慢速/集成测试（Docker, soak）
 make test-all              # 全量（不含 LLM）
 
 # 等效 pytest 命令
-.venv/bin/python -m pytest -q -m "not slow and not llm"   # 659 tests
+.venv/bin/python -m pytest -q -m "not slow and not llm"   # 672 tests
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
@@ -38,12 +38,12 @@ Python 3.12+. Virtualenv at `.venv/`. Config example at `configs/omnievolve.toml
 
 ```
 src/omnievolve/
-  engine/     EvolutionEngine (797行,编排), FastLoopStep, SlowLoopController, InspirationCollector, CheckpointManager, EngineSetup, MCTS, selection, mutation, crossover, novelty, memory, island, scheduler, diff
+  engine/     EvolutionEngine (797行,编排), FastLoopStep (prepare/commit), AsyncPipelineEngine, SlowLoopController, InspirationCollector, CheckpointManager, EngineSetup, MCTS, selection, mutation, crossover, novelty, memory, island, scheduler, diff
   agents/     Director, Coder, Critic, LLMGateway (+CircuitBreaker+RateLimiter), ModelRouter, ContextBuilder
   eval/       TaskEvaluator (Protocol), EvaluatorRegistry, EvaluationRun, Telemetry, HealthPolicy, Metrics
   meta/       PolicyGenome, PolicyArchive, Governance (L0/L1/L2), BayesianTuner (GP+EI), InfraAdapter, AuditReport, PromptEvolver
   sandbox/    TrustedSubprocessBackend（默认，本地）, DockerBackend, MontyBackend, HardenedBackend (Protocol: SandboxBackend)
-  storage/    SQLite DB, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, JobStore, UnitOfWork
+  storage/    SQLite DB, AsyncDatabase, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, HybridRetriever, ZvecBackend (HNSW), JobStore, UnitOfWork
   plugins/    BasePlugin, QuantPlugin, GeoPlugin, PluginDiscovery (namespace autoload)
   utils/      Embedding (SentenceTransformerEmbedder + LiteLLMEmbedder + FakeEmbedder, create_embedder factory, HF→hf-mirror→ModelScope auto-fallback), TokenCounter, SeedManager, ConfigSnapshot, Hashing
   cli.py      Typer CLI (run/status/best/export/policy/audit/recover/migrate/doctor)
@@ -53,7 +53,7 @@ docs/         User-facing docs (NOT project-design specs)
 docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
 reports/      Phase acceptance + gap analysis reports
 examples/     python_optimization + circle_packing demo projects
-tests/        659 tests across 57 files (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
+tests/        672 tests across 57 files (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
 uv.lock       Deterministic dependency lock (159 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)

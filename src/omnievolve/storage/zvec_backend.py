@@ -2,14 +2,23 @@
 
 S6-07: 实现 zvec Adapter 与 collection lifecycle
 
-zvec 是嵌入式 ANN 库，此文件封装其 API。
+zvec 是嵌入式 ANN 库（HNSW/IVF/Flat），此文件封装其 API。
 如果 zvec 未安装，回退到 NumpyBackend。
+
+zvec 0.6 API:
+  - zvec.create_and_open(path, schema) -> Collection
+  - zvec.open(path) -> Collection
+  - Collection.upsert([Doc(id=..., vectors={'embedding': [...]})])
+  - Collection.query(queries=Query(field_name='embedding', vector=[...]), topk=N) -> DocList
+  - Collection.delete(ids=[...])
 """
 
 from __future__ import annotations
 
 import logging
+import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from omnievolve.storage.numpy_backend import NumpyVectorBackend
@@ -17,11 +26,13 @@ from omnievolve.storage.vector_backend import VectorHit, VectorRecord
 
 logger = logging.getLogger(__name__)
 
+_VECTOR_FIELD = "embedding"  # zvec 向量字段名
+
 
 class ZvecBackend:
     """zvec 向量后端.
 
-    封装 zvec 的初始化、upsert、query、delete 等 API。
+    封装 zvec 0.6 的 Collection API。
     当 zvec 不可用时自动回退到 NumpyBackend。
     """
 
@@ -29,21 +40,26 @@ class ZvecBackend:
         self,
         storage_path: str | None = None,
         *,
-        index_type: str = "hnsw",  # hnsw / ivf / flat
         metric: str = "cosine",
+        m: int = 16,
+        ef_construction: int = 200,
     ) -> None:
         """初始化 zvec 后端.
 
         Args:
-            storage_path: 存储路径
-            index_type: 索引类型 (hnsw/ivf/flat)
+            storage_path: 集合存储根目录（默认临时目录）
             metric: 距离度量 (cosine/l2/ip)
+            m: HNSW 双向链接数
+            ef_construction: HNSW 构建时候选列表大小
         """
-        self._storage_path = storage_path
-        self._index_type = index_type
+        self._storage_path = storage_path or tempfile.mkdtemp(prefix="omnievolve_zvec_")
         self._metric = metric
-        self._zvec = None
-        self._collections: dict[str, Any] = {}
+        self._m = m
+        self._ef_construction = ef_construction
+        self._zvec: Any = None
+        self._collections: dict[str, Any] = {}  # name -> zvec.Collection
+        self._dimensions: dict[str, int] = {}  # name -> dimension
+        self._metadata: dict[str, dict[str, dict]] = {}  # name -> {id -> metadata}
         self._fallback = NumpyVectorBackend()
 
         # 尝试导入 zvec
@@ -51,12 +67,22 @@ class ZvecBackend:
             import zvec  # type: ignore
 
             self._zvec = zvec
-            logger.info("zvec backend initialized")
+            Path(self._storage_path).mkdir(parents=True, exist_ok=True)
+            logger.info("zvec backend initialized (storage: %s)", self._storage_path)
         except ImportError:
             logger.warning(
                 "zvec not installed, falling back to NumPy backend. "
                 "Install with: pip install omnievolve[vector]"
             )
+
+    def _metric_type(self) -> Any:
+        """获取 zvec MetricType."""
+        mapping = {
+            "cosine": self._zvec.MetricType.COSINE,
+            "l2": self._zvec.MetricType.L2,
+            "ip": self._zvec.MetricType.IP,
+        }
+        return mapping.get(self._metric, self._zvec.MetricType.COSINE)
 
     def create_or_open(self, collection: str, dimension: int) -> None:
         """创建或打开集合."""
@@ -64,28 +90,47 @@ class ZvecBackend:
             self._fallback.create_or_open(collection, dimension)
             return
 
-        if collection not in self._collections:
-            # 创建 zvec 索引
-            # 实际 API 取决于 zvec 版本
-            try:
-                # 尝试 zvec 的标准 API
-                index = self._zvec.Index(
-                    dim=dimension,
-                    index_type=self._index_type,
-                    metric=self._metric,
-                    storage_path=f"{self._storage_path}/{collection}"
-                    if self._storage_path
-                    else None,
-                )
-                self._collections[collection] = {
-                    "index": index,
-                    "dimension": dimension,
-                    "metadata": {},  # id -> metadata 映射
-                }
-                logger.info(f"Created zvec collection: {collection} (dim={dimension})")
-            except Exception as e:
-                logger.warning(f"Failed to create zvec index: {e}, using NumPy fallback")
-                self._fallback.create_or_open(collection, dimension)
+        if collection in self._collections:
+            return
+
+        coll_path = str(Path(self._storage_path) / collection)
+
+        # 尝试打开已有集合
+        try:
+            coll = self._zvec.open(coll_path)
+            self._collections[collection] = coll
+            self._dimensions[collection] = dimension
+            self._metadata.setdefault(collection, {})
+            logger.debug("Opened existing zvec collection: %s", collection)
+            return
+        except Exception:
+            pass  # 不存在，创建新的
+
+        # 创建新集合
+        try:
+            schema = self._zvec.CollectionSchema(
+                name=collection,
+                vectors=[
+                    self._zvec.VectorSchema(
+                        name=_VECTOR_FIELD,
+                        data_type=self._zvec.DataType.VECTOR_FP32,
+                        dimension=dimension,
+                        index_param=self._zvec.HnswIndexParam(
+                            metric_type=self._metric_type(),
+                            m=self._m,
+                            ef_construction=self._ef_construction,
+                        ),
+                    )
+                ],
+            )
+            coll = self._zvec.create_and_open(coll_path, schema)
+            self._collections[collection] = coll
+            self._dimensions[collection] = dimension
+            self._metadata.setdefault(collection, {})
+            logger.info("Created zvec collection: %s (dim=%d, HNSW m=%d)", collection, dimension, self._m)
+        except Exception as e:
+            logger.warning("Failed to create zvec collection: %s, using NumPy fallback", e)
+            self._fallback.create_or_open(collection, dimension)
 
     def upsert(self, collection: str, records: list[VectorRecord]) -> None:
         """插入或更新向量."""
@@ -94,12 +139,24 @@ class ZvecBackend:
             return
 
         coll = self._collections[collection]
-        for record in records:
-            coll["index"].add(
-                ids=[record.id],
-                vectors=[list(record.vector)],
+        docs = [
+            self._zvec.Doc(
+                id=record.id,
+                vectors={_VECTOR_FIELD: list(record.vector)},
             )
-            coll["metadata"][record.id] = record.metadata
+            for record in records
+        ]
+
+        try:
+            coll.upsert(docs)
+            # 保存 metadata（zvec Doc.fields 可选，这里用内存 dict 维护）
+            meta_store = self._metadata.setdefault(collection, {})
+            for record in records:
+                if record.metadata:
+                    meta_store[record.id] = record.metadata
+        except Exception as e:
+            logger.warning("zvec upsert failed: %s, falling back", e)
+            self._fallback.upsert(collection, records)
 
     def query(
         self,
@@ -113,23 +170,46 @@ class ZvecBackend:
             return self._fallback.query(collection, vector, top_k, filters)
 
         coll = self._collections[collection]
-        results = coll["index"].search(
-            query_vector=list(vector),
-            k=top_k,
-        )
 
-        hits = []
-        for id, similarity in results:
-            metadata = coll["metadata"].get(id, {})
+        try:
+            q = self._zvec.Query(field_name=_VECTOR_FIELD, vector=list(vector))
+            # 多取一些以便过滤后仍有足够结果
+            fetch_k = top_k * 3 if filters else top_k
+            results = coll.query(queries=q, topk=fetch_k)
 
-            # 应用过滤器
-            if filters:
-                if not all(metadata.get(k) == v for k, v in filters.items()):
-                    continue
+            hits = []
+            meta_store = self._metadata.get(collection, {})
 
-            hits.append(VectorHit(id=id, similarity=float(similarity), metadata=metadata))
+            for doc in results:
+                metadata = meta_store.get(doc.id, {})
 
-        return hits
+                # 应用过滤器
+                if filters:
+                    if not all(metadata.get(k) == v for k, v in filters.items()):
+                        continue
+
+                # zvec COSINE 返回距离 (0=相同)，转换为相似度 (1=相同)
+                raw_score = float(doc.score) if doc.score is not None else 0.0
+                if self._metric == "cosine":
+                    similarity = 1.0 - raw_score
+                else:
+                    similarity = raw_score
+
+                hits.append(
+                    VectorHit(
+                        id=doc.id,
+                        similarity=similarity,
+                        metadata=metadata,
+                    )
+                )
+
+                if len(hits) >= top_k:
+                    break
+
+            return hits
+        except Exception as e:
+            logger.warning("zvec query failed: %s, falling back", e)
+            return self._fallback.query(collection, vector, top_k, filters)
 
     def delete(self, collection: str, ids: list[str]) -> None:
         """删除向量."""
@@ -138,23 +218,29 @@ class ZvecBackend:
             return
 
         coll = self._collections[collection]
-        coll["index"].delete(ids=ids)
-        for id in ids:
-            coll["metadata"].pop(id, None)
+        try:
+            coll.delete(ids=ids)
+            meta_store = self._metadata.get(collection, {})
+            for doc_id in ids:
+                meta_store.pop(doc_id, None)
+        except Exception as e:
+            logger.warning("zvec delete failed: %s", e)
+            self._fallback.delete(collection, ids)
 
     def healthcheck(self, collection: str) -> dict:
         """健康检查."""
         if self._zvec is None:
             return self._fallback.healthcheck(collection)
 
-        count = len(self._collections.get(collection, {}).get("metadata", {}))
+        count = len(self._metadata.get(collection, {}))
         return {
             "status": "healthy",
             "backend": "zvec",
             "collection": collection,
             "count": count,
-            "index_type": self._index_type,
+            "index_type": "hnsw",
             "metric": self._metric,
+            "storage_path": self._storage_path,
         }
 
     def is_using_fallback(self) -> bool:

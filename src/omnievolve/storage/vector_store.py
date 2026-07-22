@@ -3,6 +3,11 @@
 S6-11: 实现 FTS5 文档与作用域索引
 S6-12: 实现 Hybrid Retriever 与融合排序
 S6-13: 实现 code/thought 独立索引与元数据过滤
+
+设计文档 §8: VectorStore 上层 Facade
+- semantic_candidates: 语义检索候选
+- find_diverse_high_scorers: 多样化高分候选
+- rag_retrieve: FTS5 + Vector + scope filter + rerank
 """
 
 from __future__ import annotations
@@ -11,10 +16,199 @@ import logging
 from typing import Any
 
 from omnievolve.storage.db import Database
-from omnievolve.storage.vector_backend import VectorBackend
+from omnievolve.storage.vector_backend import VectorBackend, VectorHit
 from omnievolve.utils.embedding import Embedder
 
 logger = logging.getLogger(__name__)
+
+
+class VectorStore:
+    """设计文档 §8: 向量存储上层 Facade.
+
+    封装 VectorBackend + Embedder，提供语义检索、多样化采样和 RAG 检索。
+    """
+
+    def __init__(
+        self,
+        backend: VectorBackend,
+        embedder: Embedder,
+        db: Database | None = None,
+    ) -> None:
+        self._backend = backend
+        self._embedder = embedder
+        self._db = db
+
+    def semantic_candidates(
+        self,
+        text: str,
+        purpose: str = "inspiration",
+        scope: dict | None = None,
+        top_k: int = 10,
+    ) -> list[VectorHit]:
+        """语义检索候选.
+
+        Args:
+            text: 查询文本（thought / 代码片段）
+            purpose: 检索目的 (inspiration / novelty / repair)
+            scope: 作用域过滤 (experiment_id, island_id, ...)
+            top_k: 返回数量
+        """
+        try:
+            vectors = self._embedder.embed([text])
+            query_vector = vectors[0]
+
+            # 根据 purpose 选择集合
+            collection = f"candidate_default"
+            filters = dict(scope) if scope else None
+
+            return self._backend.query(collection, query_vector, top_k, filters=filters)
+        except Exception as e:
+            logger.debug("semantic_candidates failed: %s", e)
+            return []
+
+    def find_diverse_high_scorers(
+        self,
+        experiment_id: str,
+        exclude_ids: list[str] | None = None,
+        top_k: int = 3,
+    ) -> list[str]:
+        """查找多样化高分候选（向量距离贪心）.
+
+        从 DB 取 top-N 高分候选，然后用向量距离贪心选择最大化多样性的子集。
+        """
+        if self._db is None:
+            return []
+
+        exclude_ids = exclude_ids or []
+
+        # 从 DB 获取高分候选
+        rows = self._db.fetchall(
+            """
+            SELECT c.id, er.primary_score
+            FROM candidate c
+            JOIN evaluation_run er ON c.id = er.candidate_id
+            WHERE c.experiment_id = ?
+              AND er.status = 'completed' AND er.passed = 1
+            ORDER BY er.primary_score DESC
+            LIMIT ?
+            """,
+            (experiment_id, top_k * 5),
+        )
+
+        candidates = [r["id"] for r in rows if r["id"] not in exclude_ids]
+        if len(candidates) <= top_k:
+            return candidates
+
+        # 向量距离贪心多样化
+        try:
+            vectors = self._embedder.embed(candidates[:top_k * 3])
+            selected_indices = [0]  # 从最高分开始
+
+            while len(selected_indices) < top_k and len(selected_indices) < len(vectors):
+                best_idx = -1
+                best_min_dist = -1.0
+
+                for i in range(len(vectors)):
+                    if i in selected_indices:
+                        continue
+                    # 计算与已选集合的最小距离
+                    min_dist = min(
+                        1.0 - self._cosine_sim(vectors[i], vectors[j])
+                        for j in selected_indices
+                    )
+                    if min_dist > best_min_dist:
+                        best_min_dist = min_dist
+                        best_idx = i
+
+                if best_idx >= 0:
+                    selected_indices.append(best_idx)
+                else:
+                    break
+
+            return [candidates[i] for i in selected_indices]
+        except Exception as e:
+            logger.debug("find_diverse_high_scorers vector diversity failed: %s", e)
+            return candidates[:top_k]
+
+    def rag_retrieve(
+        self,
+        query: str,
+        scope_weights: dict[str, float] | None = None,
+        top_k: int = 5,
+    ) -> list[dict]:
+        """FTS5 + Vector + scope filter + rerank.
+
+        Args:
+            query: 检索查询
+            scope_weights: 作用域权重 {"experiment": 1.0, "island": 0.5, ...}
+            top_k: 返回数量
+        """
+        results: list[dict] = []
+
+        # Vector 检索
+        try:
+            vectors = self._embedder.embed([query])
+            query_vector = vectors[0]
+
+            # 检索 thought 和 candidate 两个集合
+            for collection in ("thought_default", "candidate_default"):
+                hits = self._backend.query(collection, query_vector, top_k * 2)
+                for hit in hits:
+                    weight = 1.0
+                    if scope_weights and hit.metadata.get("scope"):
+                        weight = scope_weights.get(hit.metadata["scope"], 0.5)
+                    results.append({
+                        "id": hit.id,
+                        "score": hit.similarity * weight,
+                        "source": "vector",
+                        "collection": collection,
+                        "metadata": hit.metadata,
+                    })
+        except Exception as e:
+            logger.debug("rag_retrieve vector search failed: %s", e)
+
+        # FTS5 检索（如果有 DB）
+        if self._db is not None:
+            try:
+                fts_rows = self._db.fetchall(
+                    """
+                    SELECT entity_id, rank
+                    FROM thought_fts
+                    WHERE thought_fts MATCH ?
+                    LIMIT ?
+                    """,
+                    (query, top_k * 2),
+                )
+                for row in fts_rows:
+                    results.append({
+                        "id": row["entity_id"],
+                        "score": 1.0 / (abs(row["rank"]) + 1),
+                        "source": "fts",
+                        "collection": "thought_default",
+                    })
+            except Exception as e:
+                logger.debug("rag_retrieve FTS failed: %s", e)
+
+        # 按分数排序去重
+        seen: set[str] = set()
+        deduped: list[dict] = []
+        for r in sorted(results, key=lambda x: x["score"], reverse=True):
+            if r["id"] not in seen:
+                seen.add(r["id"])
+                deduped.append(r)
+
+        return deduped[:top_k]
+
+    @staticmethod
+    def _cosine_sim(a: list[float] | Any, b: list[float] | Any) -> float:
+        """Cosine similarity."""
+        import numpy as np
+
+        va, vb = np.asarray(a), np.asarray(b)
+        norm = np.linalg.norm(va) * np.linalg.norm(vb)
+        if norm == 0:
+            return 0.0
+        return float(np.dot(va, vb) / norm)
 
 
 class HybridRetriever:
