@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import signal
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from omnievolve.agents.coder import Coder
@@ -176,7 +176,9 @@ class EvolutionEngine:
         self._search_policy = search_policy or SearchPolicyGenome()
         # 配置中的 epiplexity_beta 覆盖 genome 默认值（允许不开 Slow Loop 也能用）
         if self._config.epiplexity_beta > 0:
-            self._search_policy.epiplexity_beta = self._config.epiplexity_beta
+            self._search_policy = replace(
+                self._search_policy, epiplexity_beta=self._config.epiplexity_beta
+            )
 
         # Repository / Store
         self._candidate_repo = CandidateRepository(db)

@@ -60,6 +60,9 @@ extend-exclude = ["*.sql", "*.yml", "*.yaml", "*.toml"]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501", "UP046", "UP042", "N806", "N803"]  # NetworkX 惯例使用 G 变量名
 
+[tool.ruff.lint.per-file-ignores]
+"src/omnievolve/eval/self_evaluator.py" = ["I001"]  # re-export 别名混排，ruff 强制拆分可读性差
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]

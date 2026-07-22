@@ -10,17 +10,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from omnievolve.eval.telemetry import (  # noqa: I001
+from omnievolve.eval.telemetry import (
     AlertLevel,
     HealthOutput,
-)
-from omnievolve.eval.telemetry import (
     HealthPolicy as DefaultHealthPolicy,
-)
-from omnievolve.eval.telemetry import (
     SelfEvaluator as DefaultSelfEvaluator,
-)
-from omnievolve.eval.telemetry import (
     TelemetryAggregator as DefaultTelemetryAggregator,
 )
 
