@@ -140,7 +140,18 @@ class JobStore:
         if row is None:
             return None
 
-        # 原子认领
+        return self._claim_by_id(row["id"], lease_expires)
+
+    def claim_job_by_id(self, job_id: str) -> Job | None:
+        """按 ID 直接认领指定任务.
+
+        用于 create_job 后立即 claim 同一个 job，避免 claim_job() 认领到其他排队任务。
+        """
+        lease_expires = self._compute_lease_expiry()
+        return self._claim_by_id(job_id, lease_expires)
+
+    def _claim_by_id(self, job_id: str, lease_expires: str) -> Job | None:
+        """内部: 原子认领指定 ID 的任务."""
         cursor = self._db.execute(
             """
             UPDATE job
@@ -157,16 +168,15 @@ class JobStore:
                 lease_expires,
                 now_iso(),
                 now_iso(),
-                row["id"],
+                job_id,
                 now_iso(),
             ),
         )
 
         if cursor.rowcount == 0:
-            # 被其他 worker 抢走
             return None
 
-        return self.get_job(row["id"])
+        return self.get_job(job_id)
 
     def heartbeat(self, job_id: str) -> bool:
         """心跳续租."""

@@ -489,7 +489,7 @@ class FastLoopStep:
             )
             # Fix 2: 立即 claim 使 job 进入 running 状态，否则 complete/fail 永远失败
             if job:
-                claimed = e._job_store.claim_job(job_type="evaluate_candidate")  # noqa: SLF001
+                claimed = e._job_store.claim_job_by_id(job.id)  # noqa: SLF001
                 if claimed:
                     job = claimed
         except Exception:
