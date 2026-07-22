@@ -168,7 +168,6 @@ def _build_engine_components(
 
         vector_backend = NumpyVectorBackend()
         vector_indexer = VectorIndexer(db, vector_backend, embedder)
-        vector_indexer.set_artifact_store(None)  # 延迟设置
     except Exception:
         pass  # core 模式无向量也可运行
 

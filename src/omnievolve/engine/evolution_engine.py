@@ -257,8 +257,10 @@ class EvolutionEngine:
         discover_plugins()
         logger.info("Engine initialized, plugins loaded")
 
-        # 向量 Outbox + Prompt 版本化（延迟激活：需显式注入或 run 时注册）
+        # 向量 Outbox + Prompt 版本化
         self._vector_indexer = vector_indexer
+        if self._vector_indexer:
+            self._vector_indexer.set_artifact_store(artifact_store)
         self._prompt_repo = prompt_repo or PromptVersionRepository(db)
         self._code_profile_id: str | None = None  # run() 时注册
 
