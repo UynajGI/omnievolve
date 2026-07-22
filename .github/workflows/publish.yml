@@ -8,21 +8,23 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
+      id-token: write  # OIDC trusted publishing
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Build package
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip build twine
           python -m build
+
+      - name: Verify package
+        run: twine check dist/*
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+        # 不传 password — 走 OIDC trusted publishing
+        # 需在 PyPI 项目设置中配置 Trusted Publisher (repo + workflow 文件名)
