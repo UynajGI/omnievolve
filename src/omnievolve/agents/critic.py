@@ -1,7 +1,8 @@
-"""Critic Agent - 静态审查 + 执行反馈审查.
+"""Critic Agent - 静态审查 + 执行反馈审查 + 调试专用审查.
 
 S5-08: 实现 CriticAgent 静态审查
 P0-2: 沙箱执行反馈增强 — Critic 可基于上一轮 stderr 判断修复有效性
+Phase 5: Debug 专用审查 — 系统性调试提示 + 历史修复案例注入
 """
 
 from __future__ import annotations
@@ -254,6 +255,75 @@ Be strict — if the error pattern is still present, REJECT."""
                 passed = False
                 if "previous error" not in feedback.lower():
                     feedback = f"Code does not address previous error. {feedback}"
+            return passed, feedback
+        except json.JSONDecodeError:
+            return True, response.content
+
+    def review_debug(
+        self,
+        code: CodeOutput,
+        thought: ThoughtOutput,
+        error_output: str,
+        memory_guidance: str = "",
+    ) -> tuple[bool, str]:
+        """Phase 5: Debug 专用审查 — 系统性调试提示 + 历史修复案例.
+
+        与 review_with_execution_result 不同，此方法:
+        1. 使用专用调试提示（系统性调试: 读错误→找根因→最小修复）
+        2. 注入历史修复案例（memory_guidance）
+        3. 强调最小修复而非重写
+        """
+        if not self._llm:
+            return True, ""
+
+        user_message = f"""## Systematic Debug Task
+
+Read the error carefully, identify the root cause, and apply a MINIMAL, TARGETED fix.
+Do NOT rewrite the entire file — only fix the specific issue.
+
+## Error Output:
+```
+{error_output[:3000]}
+```
+
+{f"## Historical Fix Guidance:\n{memory_guidance[:2000]}" if memory_guidance else ""}
+
+## Current Code:
+```python
+{code.full_code[:5000]}
+```
+
+## Improvement Thought:
+{thought.thought}
+
+## Your Task:
+1. What is the ROOT CAUSE of the error?
+2. What is the MINIMAL fix?
+3. Apply fix using SEARCH/REPLACE blocks.
+
+Output JSON: {{"passed": true/false, "feedback": "root cause + fix strategy", "addresses_error": true/false}}"""
+
+        messages = [
+            {
+                "role": "system",
+                "content": CRITIC_EXECUTION_REVIEW_PROMPT,
+            },
+            {"role": "user", "content": user_message},
+        ]
+
+        response = self._llm.chat(
+            messages,
+            model=self._model,
+            temperature=0.2,
+            agent_role="critic",
+        )
+
+        try:
+            data = json.loads(response.content)
+            passed = data.get("passed", True)
+            feedback = data.get("feedback", "")
+            if not data.get("addresses_error", True):
+                passed = False
             return passed, feedback
         except json.JSONDecodeError:
             return True, response.content

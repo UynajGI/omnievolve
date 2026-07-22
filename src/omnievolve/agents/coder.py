@@ -23,6 +23,7 @@ class GenerationMode(str, Enum):
     TARGETED_DIFF = "targeted_diff"  # 默认：SEARCH/REPLACE 微调
     FULL_REWRITE = "full_rewrite"  # 停滞时：全量重写
     FUSION_AWARE = "fusion_aware"  # 融合时：参考多方案整合
+    STEPWISE = "stepwise"  # Phase 9: 分步生成（data→model→training）
 
 
 CODER_SYSTEM_PROMPT = """You are the Coder Agent in an evolutionary code optimization system.
@@ -116,6 +117,8 @@ class Coder:
     @staticmethod
     def _select_mode(ctx: AgentContext) -> GenerationMode:
         """2.3: 根据上下文状态选择生成模式."""
+        if ctx.stagnation_level >= 3:
+            return GenerationMode.STEPWISE  # Phase 9: 极度停滞时分步生成
         if ctx.stagnation_level >= 2:
             return GenerationMode.FULL_REWRITE
         # 如果有多个高分参考程序（融合场景）

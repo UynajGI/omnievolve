@@ -154,3 +154,59 @@ class EngineSetup:
     def _ensure_embedding_profile(self, purpose: str) -> str:
         """实例方法包装（兼容引擎内部调用）."""
         return self.ensure_embedding_profile(self._db, purpose)
+
+    @staticmethod
+    def classify_task(
+        task_name: str,
+        task_desc: str,
+        llm: object | None = None,
+        categories: list[str] | None = None,
+    ) -> str:
+        """Phase 8: 任务分类 — 为 coldstart 策略提供分类信息.
+
+        精简版 MLEvolve classify_tasks.py，单次 LLM 调用。
+        失败时返回 "other"。
+        """
+        categories = categories or [
+            "optimization",
+            "sorting",
+            "matrix",
+            "geometry",
+            "algorithm",
+            "other",
+        ]
+
+        if llm is None:
+            return "other"
+
+        try:
+            from omnievolve.agents.llm_gateway import LLMGateway
+
+            if not isinstance(llm, LLMGateway):
+                return "other"
+
+            prompt = f"""Classify this task into one of these categories:
+{", ".join(categories)}
+
+Task: {task_name}
+Description: {task_desc[:500]}
+
+Respond with JSON: {{"category": "<category>"}}"""
+
+            response = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model="light",
+                role="critic",
+            )
+
+            from omnievolve.utils.response import extract_jsons
+
+            jsons = extract_jsons(response)
+            if jsons:
+                cat = jsons[0].get("category", "other")
+                if cat in categories:
+                    return cat
+        except Exception:
+            logger.debug("Task classification failed", exc_info=True)
+
+        return "other"

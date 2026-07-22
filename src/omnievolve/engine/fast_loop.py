@@ -531,6 +531,25 @@ class FastLoopStep:
         # 更新 candidate 状态
         e._candidate_repo.update_status(candidate_id, "evaluated" if output.passed else "failed")  # noqa: SLF001
 
+        # Phase 4: 数据泄漏检测（高分候选自动触发）
+        if output.passed and output.score > 0.9 and getattr(e, "_leakage_detector", None):  # noqa: SLF001
+            try:
+                code_text = e._artifact_store.load_text(artifact_hash)  # noqa: SLF001
+                baseline = e._get_baseline_score()  # noqa: SLF001
+                leak_result = e._leakage_detector.check(  # noqa: SLF001
+                    code_text or "", "", output.score, baseline
+                )
+                if leak_result.has_leakage and leak_result.confidence == "high":
+                    logger.warning("Data leakage detected: %s", leak_result.reason)
+                    output = type(output)(
+                        score=output.score * 0.5,
+                        metrics={**output.metrics, "leakage_penalty": True},
+                        passed=True,
+                        failure_reason=f"Leakage suspect: {leak_result.reason}",
+                    )
+            except Exception:
+                logger.debug("Leakage check failed, skipping", exc_info=True)
+
         # 更新 best
         if output.passed:
             e._update_best(candidate_id, output.score)  # noqa: SLF001
