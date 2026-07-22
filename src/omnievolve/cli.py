@@ -153,8 +153,8 @@ def _build_engine_components(
     # 向量索引器（设计文档 §4.2: Outbox → Embed → VectorBackend）
     vector_indexer = None
     try:
-        from omnievolve.storage.numpy_backend import NumpyVectorBackend
         from omnievolve.storage.vector_indexer import VectorIndexer
+        from omnievolve.storage.zvec_backend import create_vector_backend
         from omnievolve.utils.embedding import FakeEmbedder
 
         # 尝试加载真实 embedding 模型，失败则用 FakeEmbedder
@@ -166,7 +166,8 @@ def _build_engine_components(
         except Exception:
             embedder = FakeEmbedder(dimension=128)
 
-        vector_backend = NumpyVectorBackend()
+        # 优先 zvec（HNSW ANN），不可用时回退 NumPy
+        vector_backend = create_vector_backend(prefer_zvec=True)
         vector_indexer = VectorIndexer(db, vector_backend, embedder)
     except Exception:
         pass  # core 模式无向量也可运行

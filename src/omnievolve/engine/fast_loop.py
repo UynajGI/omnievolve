@@ -114,6 +114,28 @@ class FastLoopStep:
             scope_levels=scope_levels,
             limit=e._search_policy.retrieval_budget,  # noqa: SLF001
         )
+
+        # Step 2: 向量语义重排序（有 HybridRetriever 时）
+        if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
+            try:
+                query_text = parent_thoughts[0][:500]
+                vector_hits = e._hybrid_retriever.search_memory(  # noqa: SLF001
+                    query_text,
+                    experiment_id=e._experiment_id,  # noqa: SLF001
+                    top_k=e._search_policy.retrieval_budget,  # noqa: SLF001
+                )
+                if vector_hits:
+                    vector_order = {h["id"]: i for i, h in enumerate(vector_hits)}
+                    memory_hits.sort(key=lambda m: vector_order.get(m.id, 999))
+            except Exception:
+                pass  # 向量不可用时保持 SQL 排序
+
+        # Step 5a: 记录 citation（记忆被检索并用于 prompt）
+        for m in memory_hits:
+            try:
+                e._memory_store.record_citation(m.id)  # noqa: SLF001
+            except Exception:
+                pass
         # P2-3: 记忆格式化增强（含 score + diff 摘要 + outcome）
         memory_summaries = []
         for m in memory_hits:
@@ -158,6 +180,18 @@ class FastLoopStep:
                     },
                 )
 
+        # Step 4: Director RAG — 语义相关的历史 thought
+        rag_context: list[dict] = []
+        if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
+            try:
+                rag_context = e._hybrid_retriever.search_thoughts(  # noqa: SLF001
+                    parent_thoughts[0][:300],
+                    experiment_id=e._experiment_id,  # noqa: SLF001
+                    top_k=3,
+                )
+            except Exception:
+                pass
+
         ctx = AgentContext(
             experiment_id=e._experiment_id,  # noqa: SLF001
             task_id=task_name,
@@ -175,6 +209,8 @@ class FastLoopStep:
             stagnation_level=stagnation_level,
             # P2-2: 兄弟节点摘要
             sibling_summaries=self._load_sibling_summaries(island_id, generation),
+            # Step 4: 向量 RAG 检索结果
+            rag_context=rag_context,
             search_policy_id=e._champion_policy_id,  # noqa: SLF001
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
@@ -185,8 +221,25 @@ class FastLoopStep:
         # 步骤 4: Director
         thought = e._director.evolve_thought(ctx)  # noqa: SLF001
 
-        # 步骤 5: NoveltyGate
-        novelty_result = e._novelty_gate.check(thought=thought.thought, code=base_code)  # noqa: SLF001
+        # 步骤 5: NoveltyGate — Step 3: 注入向量相似度
+        existing_sims: list[float] = []
+        if e._hybrid_retriever:  # noqa: SLF001
+            try:
+                _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
+                    thought.thought,
+                    collection="thought_default",
+                    threshold=e._config.novelty_threshold,  # noqa: SLF001
+                )
+                if max_sim > 0:
+                    existing_sims = [max_sim]
+            except Exception:
+                pass
+
+        novelty_result = e._novelty_gate.check(  # noqa: SLF001
+            thought=thought.thought,
+            code=base_code,
+            existing_similarities=existing_sims or None,
+        )
         if novelty_result.decision == NoveltyDecision.REJECT:
             logger.debug("Thought rejected by novelty gate")
             return None, ""
@@ -261,6 +314,13 @@ class FastLoopStep:
         # 步骤 9-11: 评估
         output = self.evaluate_candidate(candidate.id, artifact_hash)
         e._island_manager.assign_candidate(candidate.id, island_id)  # noqa: SLF001
+
+        # Step 5b: 记录 adoption（记忆被成功候选“采用”）
+        if output is not None and output.passed and memory_hits:
+            try:
+                e._memory_store.record_adoption(memory_hits[0].id)  # noqa: SLF001
+            except Exception:
+                pass
 
         # Router 奖励更新
         if e._router is not None and model and output is not None:  # noqa: SLF001

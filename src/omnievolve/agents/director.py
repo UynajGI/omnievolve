@@ -122,6 +122,12 @@ class Director:
             for s in ctx.sibling_summaries[:3]:
                 parts.append(f"- {s}")
 
+        # Step 4: 向量 RAG 检索（语义相关的历史 thought）
+        if ctx.rag_context:
+            parts.append("\n## Semantically Related Thoughts (vector retrieval):")
+            for r in ctx.rag_context[:3]:
+                parts.append(f"- {r.get('content', '')[:200]}")
+
         # P2-1: 反例集合（从 meta_scratchpad 取失败方向）
         if ctx.meta_scratchpad:
             parts.append(f"\n## Failed Directions (AVOID repeating):\n{ctx.meta_scratchpad[:500]}")

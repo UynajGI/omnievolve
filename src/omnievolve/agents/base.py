@@ -38,6 +38,8 @@ class AgentContext:
     stagnation_level: int = 0
     # P2-2: 兄弟节点摘要（同一 island，最近 2 代）
     sibling_summaries: list[str] = field(default_factory=list)
+    # Step 4: 向量 RAG 检索结果（语义相关的历史 thought）
+    rag_context: list[dict] = field(default_factory=list)
     search_policy_id: str = "default"
     evaluator_version_id: str = ""
     environment_version_id: str = ""

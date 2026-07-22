@@ -264,6 +264,17 @@ class EvolutionEngine:
         self._prompt_repo = prompt_repo or PromptVersionRepository(db)
         self._code_profile_id: str | None = None  # run() 时注册
 
+        # 向量混合检索器（读路径 — 与 VectorIndexer 共享 backend/embedder）
+        self._hybrid_retriever = None
+        if vector_indexer is not None:
+            from omnievolve.storage.vector_store import HybridRetriever
+
+            self._hybrid_retriever = HybridRetriever(
+                db,
+                vector_indexer._backend,  # noqa: SLF001
+                vector_indexer._embedder,  # noqa: SLF001
+            )
+
         # T1: 提取 InspirationCollector
         from omnievolve.engine.inspiration import InspirationCollector
 
