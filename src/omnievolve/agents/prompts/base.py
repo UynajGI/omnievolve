@@ -1,7 +1,6 @@
-"""Shared prompt fragments — 通用 prompt 模板.
+"""Base shared prompt fragments.
 
 从 MLEvolve agents/prompts/shared.py 移植。
-提供可复用的 prompt 片段，供 Coder/Critic/Debug 共用。
 """
 
 from __future__ import annotations
