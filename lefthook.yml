@@ -1,19 +1,27 @@
 # yaml-language-server: $schema=https://json.schemastore.org/lefthook.json
 
+min_version: "1.5.0"
+colors: true
+
 pre-commit:
   parallel: true
   commands:
-    ruff:
+    ruff-check:
       glob: "*.py"
-      run: ~/.local/bin/uv run ruff check --fix {staged_files}
+      run: uv run ruff check --fix {staged_files}
       stage_fixed: true
     ruff-format:
       glob: "*.py"
-      run: ~/.local/bin/uv run ruff format {staged_files}
+      run: uv run ruff format {staged_files}
       stage_fixed: true
+
+commit-msg:
+  commands:
+    conventional:
+      run: uv run cz check --commit-msg-file {1}
 
 pre-push:
   parallel: false
   commands:
     test:
-      run: ~/.local/bin/uv run pytest tests/ -v
+      run: uv run pytest tests/ -v -m "not slow and not e2e"

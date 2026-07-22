@@ -40,7 +40,16 @@ dev = [
     "mypy>=1.10",
     "marker-pdf>=1.6.1",
     "pymupdf>=1.28.0",
+    "commitizen>=4.16.5",
 ]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "semver"
+
+[tool.mypy]
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py312"
