@@ -39,8 +39,9 @@ class NoveltyGate:
 
     1. Embedding 相似度初筛
     2. AST/结构签名检查
-    3. 可选行为签名
-    4. 可选 LLM 判断（borderline 时触发）
+    3. Epiplexity 可学习新奇性预筛（任务无关）
+    4. 可选行为签名
+    5. 可选 LLM 判断（borderline 时触发）
     """
 
     def __init__(
@@ -50,6 +51,8 @@ class NoveltyGate:
         borderline_low: float = 0.88,
         borderline_high: float = 0.96,
         use_ast_check: bool = True,
+        use_epiplexity: bool = True,
+        epiplexity_min: float = 0.1,
         llm_judge: LLMNoveltyJudge | None = None,
         max_cached_signatures: int = 200,
     ) -> None:
@@ -57,6 +60,8 @@ class NoveltyGate:
         self._borderline_low = borderline_low
         self._borderline_high = borderline_high
         self._use_ast_check = use_ast_check
+        self._use_epiplexity = use_epiplexity
+        self._epiplexity_min = epiplexity_min
         self._llm_judge = llm_judge
         # AST 签名缓存（最近 N 个候选的结构签名）
         self._recent_signatures: set[str] = set()
@@ -96,6 +101,19 @@ class NoveltyGate:
             ast_novel = self._check_ast_novelty(code)
             if not ast_novel:
                 reasons.append("AST structure identical to recent candidate")
+
+        # 2.5 Epiplexity 可学习新奇性预筛（任务无关）
+        if self._use_epiplexity and code:
+            epi_score = self._check_epiplexity(code)
+            if epi_score < self._epiplexity_min:
+                reasons.append(
+                    f"Low epiplexity ({epi_score:.3f}): code is too trivial or too random"
+                )
+                return NoveltyResult(
+                    decision=NoveltyDecision.REJECT,
+                    similarity_score=max_similarity,
+                    reasons=reasons,
+                )
 
         # 3. 决策
         if max_similarity >= self._embedding_threshold:
@@ -166,6 +184,20 @@ class NoveltyGate:
         for node in ast.walk(tree):
             parts.append(type(node).__name__)
         return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+    def _check_epiplexity(self, code: str) -> float:
+        """计算代码的可学习新奇性分数.
+
+        基于 LEARNABLE_NOVELTY (2607.18433):
+        - 太简单（平凡）→ 0
+        - 太复杂（随机）→ 0
+        - 临界复杂度 → 最大值
+        """
+        from omnievolve.engine.epiplexity import EpiplexityEstimator
+
+        if not hasattr(self, "_epiplexity_estimator"):
+            self._epiplexity_estimator = EpiplexityEstimator()
+        return self._epiplexity_estimator.score(code)
 
 
 def compute_code_signature(code: str) -> str:
