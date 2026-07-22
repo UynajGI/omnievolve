@@ -35,7 +35,8 @@ class SearchPolicyGenome:
     backtracking_policy: str = "none"
     # Epiplexity 辅助适应度权重（可被 Slow Loop 自进化）
     # fitness = f_task + epiplexity_beta * S_φ(code)
-    epiplexity_beta: float = 0.1
+    # 默认 0.0（关闭），由 Meta Evolution 根据效果自动调整
+    epiplexity_beta: float = 0.0
 
     def to_dict(self) -> dict:
         """转换为字典."""
