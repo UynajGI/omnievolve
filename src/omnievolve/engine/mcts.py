@@ -234,6 +234,7 @@ class ProgressiveMCGS:
             选中的叶节点 ID
         """
         current = root_id
+        self._last_select_path: list[str] = []
 
         while True:
             node = self._nodes.get(current)
@@ -242,6 +243,7 @@ class ProgressiveMCGS:
 
             # 应用虚拟损失
             node.virtual_loss += self._virtual_loss
+            self._last_select_path.append(current)
 
             # 选择最优子节点
             total_visits = (
@@ -353,6 +355,18 @@ class ProgressiveMCGS:
                 else 0.0
             ),
         }
+
+    def rollback_last_select(self) -> None:
+        """回滚上次 select() 路径上的虚拟损失.
+
+        当候选被 Novelty/Critic 拒绝而不会 backpropagate 时调用，
+        避免虚拟损失永久累积损害搜索多样性。
+        """
+        for node_id in getattr(self, "_last_select_path", []):
+            node = self._nodes.get(node_id)
+            if node:
+                node.virtual_loss = max(0.0, node.virtual_loss - self._virtual_loss)
+        self._last_select_path = []
 
     def clear_virtual_losses(self) -> None:
         """清除所有虚拟损失."""

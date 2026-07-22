@@ -38,7 +38,7 @@ def _combine_failures(failures: list[str]) -> str:
     """
     for f in failures:
         if f and f.strip():
-            return f.strip()[:1000]  # 硬截断防止超长 stderr 撑爆 token budget
+            return f.strip()[:1000]  # 硬截断防止超长 stderr 撇爆 token budget
     return ""
 
 
@@ -79,260 +79,11 @@ class FastLoopStep:
         task_name: str,
         island_id: str,
     ) -> tuple[str | None, str]:
-        """执行单个候选的完整进化链（步骤 1-11）."""
-        e = self._e
+        """执行单个候选的完整进化链（步骤 1-11）.
 
-        # 步骤 2: 选择父代
-        parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
-
-        # P1-3: 强制反向传播（后期加速收敛，跳过完整进化链）
-        if parent_ids and e._mcts.should_force_backprop():  # noqa: SLF001
-            e._mcts.force_backprop(parent_ids[0])  # noqa: SLF001
-            # 持久化到 candidate_search_state
-            e._candidate_repo.update_search_state(parent_ids[0], visit_delta=1)  # noqa: SLF001
-            logger.debug("P1-3: forced backprop on %s", parent_ids[0])
-            return None, ""
-
-        # 加载父代代码 / 思想 / 评估失败信息（P0-1: 反馈闭环）
-        parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
-
-        # 步骤 1: Router 选择模型
-        model = e._select_model(generation)  # noqa: SLF001
-
-        # 1.3/2.2: 计算停滞等级（供融合路由 + scope 检索 + AgentContext 复用）
-        stagnation_level = self._compute_stagnation_level(island_id)
-
-        # 步骤 3/可选 crossover
-        base_code: str | None = None
-        if relation == "crossover" and len(parent_codes) >= 2:
-            base_code = e._crossover.combine(parent_codes, strategy="segment")  # noqa: SLF001
-
-        # 2.2: 停滞触发 LLM 语义融合（替代机械 crossover）
-        if (
-            stagnation_level >= 2
-            and e._config.fusion_mode == "llm"  # noqa: SLF001
-            and parent_codes
-        ):
-            try:
-                from omnievolve.agents.fusion import FusionAgent
-
-                fusion_agent = FusionAgent(e._llm)  # noqa: SLF001
-                # 从其他 island 收集高分参考
-                references = e._collect_inspiration_programs(parent_ids, top_k=2)  # noqa: SLF001
-                if references:
-                    fused = fusion_agent.fuse(
-                        parent_codes[0],
-                        references,
-                        experiment_id=e._experiment_id,  # noqa: SLF001
-                    )
-                    if fused.full_code.strip():
-                        base_code = fused.full_code
-                        logger.debug("2.2: LLM fusion applied (stagnation=%d)", stagnation_level)
-            except Exception:
-                logger.debug("LLM fusion failed, falling back to mechanical", exc_info=True)
-
-        # 检索记忆
-        # 1.3: 根据停滞等级决定 scope 范围（正常→L0+L1，停滞→全域检索）
-        scope_levels = [0, 1] if stagnation_level == 0 else [0, 1, 2, 3, 4]
-        memory_hits = e._memory_store.retrieve(  # noqa: SLF001
-            experiment_id=e._experiment_id,  # noqa: SLF001
-            task_id=task_name,
-            success_only=True,
-            scope_levels=scope_levels,
-            limit=e._search_policy.retrieval_budget,  # noqa: SLF001
-        )
-
-        # Step 2: 向量语义重排序（有 HybridRetriever 时）
-        if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
-            try:
-                query_text = parent_thoughts[0][:500]
-                vector_hits = e._hybrid_retriever.search_memory(  # noqa: SLF001
-                    query_text,
-                    experiment_id=e._experiment_id,  # noqa: SLF001
-                    top_k=e._search_policy.retrieval_budget,  # noqa: SLF001
-                )
-                if vector_hits:
-                    vector_order = {h["id"]: i for i, h in enumerate(vector_hits)}
-                    memory_hits.sort(key=lambda m: vector_order.get(m.id, 999))
-            except Exception:
-                pass  # 向量不可用时保持 SQL 排序
-
-        # Step 5a: 记录 citation（记忆被检索并用于 prompt）
-        for m in memory_hits:
-            try:
-                e._memory_store.record_citation(m.id)  # noqa: SLF001
-            except Exception:
-                pass
-        # P2-3: 记忆格式化增强（含 score + diff 摘要 + outcome）
-        memory_summaries = []
-        for m in memory_hits:
-            score_str = ""
-            if isinstance(m.outcome_summary, dict):
-                score_str = f"score={m.outcome_summary.get('score', '?')}"
-            # 加载 code_diff_hash 对应的 diff 内容
-            diff_text = ""
-            if m.code_diff_hash:
-                try:
-                    raw = e._artifact_store.load_text(m.code_diff_hash)  # noqa: SLF001
-                    diff_text = raw[:200] if raw else ""
-                except Exception:
-                    pass
-            outcome_text = str(m.outcome_summary)[:150]
-            parts = [f"[L{m.scope_level}/{'SUCCESS' if m.success_flag else 'FAIL'}] {score_str}"]
-            if diff_text:
-                parts.append(f"改动: {diff_text}")
-            parts.append(f"效果: {outcome_text}")
-            memory_summaries.append(
-                {
-                    "outcome_summary": " → ".join(parts),
-                    "scope_level": m.scope_level,
-                    "success": m.success_flag,
-                }
-            )
-
-        # inspiration programs
-        inspiration = e._collect_inspiration_programs(parent_ids)  # noqa: SLF001
-
-        # AM-01: 注入父代码到 inspiration
-        for i, pid in enumerate(parent_ids):
-            if i < len(parent_codes):
-                inspiration.insert(
-                    0,
-                    {
-                        "is_parent": True,
-                        "candidate_id": pid,
-                        "score": 0.0,
-                        "code": parent_codes[i],
-                        "source": "parent",
-                    },
-                )
-
-        # Step 4: Director RAG — 语义相关的历史 thought
-        rag_context: list[dict] = []
-        if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
-            try:
-                rag_context = e._hybrid_retriever.search_thoughts(  # noqa: SLF001
-                    parent_thoughts[0][:300],
-                    experiment_id=e._experiment_id,  # noqa: SLF001
-                    top_k=3,
-                )
-            except Exception:
-                pass
-
-        ctx = AgentContext(
-            experiment_id=e._experiment_id,  # noqa: SLF001
-            task_id=task_name,
-            generation=generation,
-            island_id=island_id,
-            parent_candidate_ids=parent_ids,
-            parent_thoughts=parent_thoughts,
-            parent_artifact_hashes=[],
-            inspiration_programs=inspiration,
-            memory_hits=memory_summaries,
-            meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
-            # P0-1: 注入父代评估失败信息到 Coder 上下文
-            last_eval_failure=_combine_failures(parent_failures),
-            # P2-1: 停滞等级（根据岛屿停滞计数自动升级）
-            stagnation_level=stagnation_level,
-            # P2-2: 兄弟节点摘要
-            sibling_summaries=self._load_sibling_summaries(island_id, generation),
-            # Step 4: 向量 RAG 检索结果
-            rag_context=rag_context,
-            search_policy_id=e._champion_policy_id,  # noqa: SLF001
-            evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
-            environment_version_id=e._environment_version_id,  # noqa: SLF001
-            model=model,
-            prompt_version_id=e._load_champion_prompt("director"),  # noqa: SLF001
-        )
-
-        # 步骤 4: Director
-        thought = e._director.evolve_thought(ctx)  # noqa: SLF001
-
-        # 步骤 5: NoveltyGate — Step 3: 注入向量相似度
-        existing_sims: list[float] = []
-        if e._hybrid_retriever:  # noqa: SLF001
-            try:
-                _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
-                    thought.thought,
-                    collection="thought_default",
-                    threshold=e._config.novelty_threshold,  # noqa: SLF001
-                )
-                if max_sim > 0:
-                    existing_sims = [max_sim]
-            except Exception:
-                pass
-
-        novelty_result = e._novelty_gate.check(  # noqa: SLF001
-            thought=thought.thought,
-            code=base_code,
-            existing_similarities=existing_sims or None,
-        )
-        if novelty_result.decision == NoveltyDecision.REJECT:
-            logger.debug("Thought rejected by novelty gate")
-            return None, ""
-
-        # 步骤 6: Coder + Critic retry
-        code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-        if not code.full_code.strip():
-            if base_code:
-                code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
-            elif parent_codes:
-                code = type(code)(
-                    diff="",
-                    full_code=parent_codes[0],
-                    explanation="fallback to parent code (diff could not be applied)",
-                )
-
-        # P0-2: Critic 审查时注入上一轮执行失败信息
-        critic_stderr = ctx.last_eval_failure
-        passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
-        retries = 0
-        while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
-            retries += 1
-            code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-            passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
-
-        if not passed:
-            logger.debug("Code rejected by critic after retries")
-            return None, ""
-
-        # 步骤 7: 存储 Artifact
-        artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
-
-        # 步骤 8: 创建候选
-        parents_with_relation = [(pid, relation) for pid in parent_ids]
-        candidate = e._candidate_repo.create_candidate(  # noqa: SLF001
-            experiment_id=e._experiment_id,  # noqa: SLF001
-            task_id=task_name,
-            generation=generation,
-            artifact_hash=artifact_hash,
-            search_policy_id=e._champion_policy_id,  # noqa: SLF001
-            island_id=island_id,
-            parents=parents_with_relation or None,
-            meta={"thought": thought.thought[:500], "relation": relation, "model": model},
-        )
-        e._total_candidates += 1  # noqa: SLF001
-
-        # 向量 Outbox
-        e._enqueue_vector_index("candidate", candidate.id, artifact_hash)  # noqa: SLF001
-
-        # 记录思想
-        thought_record = e._candidate_repo.create_thought(  # noqa: SLF001
-            experiment_id=e._experiment_id,  # noqa: SLF001
-            task_id=task_name,
-            content=thought.thought,
-            rationale=thought.rationale,
-            risk_notes=thought.risk_notes,
-            confidence=thought.confidence,
-            mechanism_tags=thought.mechanism_tags,
-        )
-        thought_hash = e._artifact_store.store_text(thought.thought, "log")  # noqa: SLF001
-        e._enqueue_vector_index("thought", thought_record.id, thought_hash)  # noqa: SLF001
-
-        # Reference edges
-        e._write_reference_edges(candidate.id, inspiration, parent_ids=parent_ids)  # noqa: SLF001
-
-        # MCTS 扩展
+        纯委托: prepare() 执行步骤 1-10（LLM + sandbox），
+        commit_result() 执行步骤 11（串行状态更新）。
+        """
         prepared = self.prepare(generation, task_name, island_id)
         if prepared is None:
             return None, ""
@@ -478,6 +229,7 @@ class FastLoopStep:
             existing_similarities=existing_sims or None,
         )
         if novelty_result.decision == NoveltyDecision.REJECT:
+            e._mcts.rollback_last_select()  # noqa: SLF001
             return None
 
         # 步骤 6: Coder + Critic
@@ -510,8 +262,6 @@ class FastLoopStep:
             parents=parents_with_relation or None,
             meta={"thought": thought.thought[:500], "relation": relation, "model": model},
         )
-        e._total_candidates += 1  # noqa: SLF001
-
         e._enqueue_vector_index("candidate", candidate.id, artifact_hash)  # noqa: SLF001
         thought_record = e._candidate_repo.create_thought(  # noqa: SLF001
             experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
@@ -546,6 +296,9 @@ class FastLoopStep:
         在 prepare() 并行执行后，此方法单线程串行合并结果到引擎状态。
         """
         e = self._e
+
+        # Fix 5: 计数器递增移到串行区域（避免并行 prepare 竞态）
+        e._total_candidates += 1  # noqa: SLF001
 
         # MCTS 扩展（延迟到 commit）
         if prepared.parent_ids:
@@ -667,6 +420,8 @@ class FastLoopStep:
             if output.passed:
                 e._update_best(candidate_id, output.score)  # noqa: SLF001
             e._recent_scores.append(output.score)  # noqa: SLF001
+            if len(e._recent_scores) > 200:  # noqa: SLF001
+                e._recent_scores = e._recent_scores[-100:]  # noqa: SLF001
             e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
 
         return output
@@ -732,6 +487,11 @@ class FastLoopStep:
                 job_type="evaluate_candidate",
                 payload={"candidate_id": candidate_id, "artifact_hash": artifact_hash},
             )
+            # Fix 2: 立即 claim 使 job 进入 running 状态，否则 complete/fail 永远失败
+            if job:
+                claimed = e._job_store.claim_job(job_type="evaluate_candidate")  # noqa: SLF001
+                if claimed:
+                    job = claimed
         except Exception:
             logger.debug("Could not create job record", exc_info=True)
 
@@ -850,6 +610,8 @@ class FastLoopStep:
 
         # 记录分数供 Slow Loop
         e._recent_scores.append(output.score)  # noqa: SLF001
+        if len(e._recent_scores) > 200:  # noqa: SLF001
+            e._recent_scores = e._recent_scores[-100:]  # noqa: SLF001
 
         # meta-scratchpad
         thought_text = ""

@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 class AsyncEvolutionEngine:
-    """异步进化引擎包装器.
+    """[已废弃] 异步进化引擎包装器.
 
-    并行度由 concurrency 参数控制，默认等于 population_size。
+    警告: 本类存在竞态条件（并行线程修改共享状态），仅为向后兼容保留。
+    请使用 AsyncPipelineEngine（prepare/commit 拆分，串行状态合并）。
     """
 
     def __init__(
@@ -37,6 +38,14 @@ class AsyncEvolutionEngine:
         concurrency: int | None = None,
         config: EvolutionConfig | None = None,
     ) -> None:
+        import warnings
+
+        warnings.warn(
+            "AsyncEvolutionEngine is deprecated due to race conditions. "
+            "Use AsyncPipelineEngine instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._engine = engine
         self._config = config or EvolutionConfig()
         self._concurrency = concurrency or self._config.population_size
@@ -154,7 +163,7 @@ class AsyncEvolutionEngine:
                 engine._island_manager.migrate(gen)  # noqa: SLF001
 
             # Slow Loop
-            if gen % self._config.health_window_gens == 0:
+            if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:
                 engine._run_slow_loop(gen)  # noqa: SLF001
 
             logger.info(
@@ -331,7 +340,7 @@ class AsyncPipelineEngine:
         if engine._island_manager.should_migrate(gen):  # noqa: SLF001
             await asyncio.to_thread(engine._island_manager.migrate, gen)  # noqa: SLF001
 
-        if gen % self._config.health_window_gens == 0:  # noqa: SLF001
+        if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:  # noqa: SLF001
             await asyncio.to_thread(engine._run_slow_loop, gen)  # noqa: SLF001
 
         # 每代后消费向量索引 Outbox

@@ -324,8 +324,11 @@ class ArtifactStore:
                 os.close(dir_fd)
 
         except Exception:
-            # 清理临时文件
-            os.close(fd) if not os.get_inheritable(fd) else None
+            # 清理临时文件（fd 可能已在 L314 关闭）
+            try:
+                os.close(fd)
+            except OSError:
+                pass  # fd already closed
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise
