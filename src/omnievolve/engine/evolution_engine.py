@@ -629,6 +629,8 @@ class EvolutionEngine:
 
         if use_exploitation:
             # Top-K 利用模式：从全局最高分中加权选择
+            # Fix 3: MCTS select() 已加虚拟损失但不会被 backprop，立即回滚
+            self._mcts.rollback_last_select()  # noqa: SLF001
             all_scored = self._parent_selector._get_scored_candidates(  # noqa: SLF001
                 self._experiment_id,
                 self._evaluator_version_id,
