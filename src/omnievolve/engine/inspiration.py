@@ -118,7 +118,7 @@ class InspirationCollector:
             try:
                 stderr_text = self._artifact_store.load_text(row["stderr_hash"])
             except Exception:
-                pass
+                logger.debug("Failed to load stderr artifact %s", row["stderr_hash"], exc_info=True)
 
         # Combine: failure_reason first (if any), then stderr tail
         parts: list[str] = []
@@ -210,7 +210,7 @@ class InspirationCollector:
                     if count >= random_k:
                         break
                 except Exception:
-                    pass
+                    logger.debug("Failed to collect random inspiration candidate", exc_info=True)
         except Exception:
             logger.debug("Failed to collect random inspirations", exc_info=True)
 

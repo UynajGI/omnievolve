@@ -58,7 +58,7 @@ class VectorStore:
             query_vector = vectors[0]
 
             # 根据 purpose 选择集合
-            collection = f"candidate_default"
+            collection = "candidate_default"
             filters = dict(scope) if scope else None
 
             return self._backend.query(collection, query_vector, top_k, filters=filters)
@@ -198,6 +198,28 @@ class VectorStore:
                 deduped.append(r)
 
         return deduped[:top_k]
+
+    def check_novelty(
+        self,
+        text: str,
+        collection: str = "candidate_default",
+        threshold: float = 0.92,
+    ) -> tuple[bool, float]:
+        """检查文本新颖性（委托到底层 backend 查询）.
+
+        Returns:
+            (is_novel, max_similarity)
+        """
+        try:
+            vectors = self._embedder.embed([text])
+            hits = self._backend.query(collection, vectors[0], top_k=1)
+            if not hits:
+                return True, 0.0
+            max_sim = hits[0].similarity
+            return max_sim < threshold, max_sim
+        except Exception as e:
+            logger.warning("Novelty check failed, defaulting to novel: %s", e)
+            return True, 0.0
 
     @staticmethod
     def _cosine_sim(a: list[float] | Any, b: list[float] | Any) -> float:

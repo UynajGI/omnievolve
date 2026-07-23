@@ -26,10 +26,11 @@ import json
 import statistics
 import time
 import tracemalloc
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 logger = __import__("logging").getLogger(__name__)
 

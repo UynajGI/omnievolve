@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
 
     from omnievolve.storage.db import Database
 

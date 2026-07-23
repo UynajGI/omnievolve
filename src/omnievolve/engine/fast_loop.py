@@ -158,12 +158,12 @@ class FastLoopStep:
                     vector_order = {h["id"]: i for i, h in enumerate(vector_hits)}
                     memory_hits.sort(key=lambda m: vector_order.get(m.id, 999))
             except Exception:
-                pass
+                logger.debug("Vector memory rerank failed, keeping SQL order", exc_info=True)
         for m in memory_hits:
             try:
                 e._memory_store.record_citation(m.id)  # noqa: SLF001
             except Exception:
-                pass
+                logger.debug("Memory citation recording failed", exc_info=True)
         # P2-3 formatting
         memory_summaries = []
         for m in memory_hits:
@@ -176,7 +176,7 @@ class FastLoopStep:
                     raw = e._artifact_store.load_text(m.code_diff_hash)  # noqa: SLF001
                     diff_text = raw[:200] if raw else ""
                 except Exception:
-                    pass
+                    logger.debug("Failed to load diff for memory %s", m.id, exc_info=True)
             outcome_text = str(m.outcome_summary)[:150]
             parts = [f"[L{m.scope_level}/{'SUCCESS' if m.success_flag else 'FAIL'}] {score_str}"]
             if diff_text:
@@ -199,7 +199,7 @@ class FastLoopStep:
                     parent_thoughts[0][:300], experiment_id=e._experiment_id, top_k=3,  # noqa: SLF001
                 )
             except Exception:
-                pass
+                logger.debug("Director RAG search failed", exc_info=True)
 
         ctx = AgentContext(
             experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
@@ -234,7 +234,7 @@ class FastLoopStep:
                     if max_sim > 0:
                         existing_sims = [max_sim]
                 except Exception:
-                    pass
+                    logger.debug("Novelty vector check failed", exc_info=True)
             novelty_result = e._novelty_gate.check(  # noqa: SLF001
                 thought=thought.thought, code=base_code,
                 existing_similarities=existing_sims or None,
@@ -309,8 +309,6 @@ class FastLoopStep:
 
         在 prepare() 并行执行后，此方法单线程串行合并结果到引擎状态。
         """
-        e = self._e
-
         with self._prof_step("commit", 0):
             return self._commit_inner(prepared)
 
@@ -348,7 +346,7 @@ class FastLoopStep:
             try:
                 e._memory_store.record_adoption(prepared.memory_hits[0].id)  # noqa: SLF001
             except Exception:
-                pass
+                logger.warning("Memory adoption recording failed", exc_info=True)
 
         # Router 奖励更新
         if e._router is not None and prepared.model and prepared.output is not None:  # noqa: SLF001
@@ -540,7 +538,7 @@ class FastLoopStep:
                 try:
                     e._job_store.fail_job(job.id, "sandbox execution error")  # noqa: SLF001
                 except Exception:
-                    pass
+                    logger.warning("Job fail_job failed for %s", job.id, exc_info=True)
             return None, run, job, None
 
         # 步骤 11: parse + 更新状态
@@ -607,7 +605,7 @@ class FastLoopStep:
         e._candidate_repo.update_status(candidate_id, "evaluated" if output.passed else "failed")  # noqa: SLF001
 
         # Phase 4: 数据泄漏检测（高分候选自动触发）
-        if output.passed and output.score > 0.9 and getattr(e, "_leakage_detector", None):  # noqa: SLF001
+        if output.passed and output.score > e._config.leakage_score_threshold and getattr(e, "_leakage_detector", None):  # noqa: SLF001
             try:
                 code_text = e._artifact_store.load_text(artifact_hash)  # noqa: SLF001
                 baseline = e._get_baseline_score()  # noqa: SLF001
@@ -617,7 +615,7 @@ class FastLoopStep:
                 if leak_result.has_leakage and leak_result.confidence == "high":
                     logger.warning("Data leakage detected: %s", leak_result.reason)
                     output = type(output)(
-                        score=output.score * 0.5,
+                        score=output.score * e._config.leakage_penalty_factor,
                         metrics={**output.metrics, "leakage_penalty": True},
                         passed=True,
                         failure_reason=f"Leakage suspect: {leak_result.reason}",
@@ -692,7 +690,7 @@ class FastLoopStep:
                 job_id = job if isinstance(job, str) else job.id
                 e._job_store.complete_job(job_id, result_ref=artifact_hash)  # noqa: SLF001
             except Exception:
-                pass
+                logger.warning("Job complete_job failed for %s", job_id, exc_info=True)
 
     def _enrich_with_plugins(
         self,

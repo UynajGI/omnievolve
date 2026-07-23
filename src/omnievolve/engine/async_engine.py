@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import signal
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from omnievolve.engine.evolution_engine import EvolutionConfig, EvolutionEngine, EvolutionResult
@@ -27,8 +29,13 @@ logger = logging.getLogger(__name__)
 class AsyncEvolutionEngine:
     """[已废弃] 异步进化引擎包装器.
 
-    警告: 本类存在竞态条件（并行线程修改共享状态），仅为向后兼容保留。
-    请使用 AsyncPipelineEngine（prepare/commit 拆分，串行状态合并）。
+    警告: 本类存在竞态条件 — _evolve_one() 通过 asyncio.to_thread 并行调用，
+    多线程同时修改 _mcts、_best_candidate、_island_manager、_recent_scores 等共享状态。
+    仅为向后兼容保留，请使用 AsyncPipelineEngine（prepare/commit 拆分，串行状态合并）。
+
+    迁移指南:
+        将 ``AsyncEvolutionEngine(engine).run(code, task)``
+        替换为 ``AsyncPipelineEngine(engine).run(code, task)``
     """
 
     def __init__(
@@ -56,8 +63,15 @@ class AsyncEvolutionEngine:
     async def run(self, initial_code: str, task_name: str) -> EvolutionResult:
         """异步进化主循环.
 
-        使用 ThreadPoolExecutor 并行执行 should_stop_generation() 中的候选生成。
+        .. deprecated:: 使用 AsyncPipelineEngine.run() 代替。
         """
+        import warnings
+
+        warnings.warn(
+            "AsyncEvolutionEngine.run() is deprecated. Use AsyncPipelineEngine.run() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._shutdown_event.clear()
         max_workers = max(1, self._concurrency)
 
@@ -203,10 +217,6 @@ class SlotPool:
     def release(self, slot_id: str) -> None:
         self._active.discard(slot_id)
         self._semaphore.release()
-
-
-import math
-import time
 
 
 class AsyncPipelineEngine:

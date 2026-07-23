@@ -105,6 +105,8 @@ class EvolutionConfig:
     fusion_mode: str = "mechanical"  # 2.2: mechanical / llm
     epiplexity_beta: float = 0.0  # 辅助适应度权重（0=关闭）
     self_evolve_enabled: bool = True
+    leakage_score_threshold: float = 0.9  # 触发泄漏检测的分数阈值
+    leakage_penalty_factor: float = 0.5  # 泄漏嫌疑时的分数惩罚系数
 
 
 @dataclass
@@ -927,7 +929,7 @@ class EvolutionEngine:
                     self._current_generation,
                 )
             except Exception:
-                pass
+                logger.warning("Slow loop trigger failed", exc_info=True)
 
         best_artifact_hash: str | None = None
         if self._best_candidate:

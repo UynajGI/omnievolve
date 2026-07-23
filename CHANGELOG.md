@@ -2,6 +2,16 @@
 
 ## [Unreleased] — 2026-07-22
 
+### 14 项不成熟点修复
+- **MCTS 线程安全**: `_last_select_path` 改为 `threading.local()`，消除并行 prepare 竞态
+- **异常吞噬修复**: 30 处 `except: pass` 按三级分类补充 logger.debug/warning
+- **AsyncEvolutionEngine 废弃护栏**: run() 入口追加 DeprecationWarning + 迁移指南
+- **魔术数字提取**: `leakage_score_threshold`/`leakage_penalty_factor` 加入 EvolutionConfig
+- **ruff lint**: 16 个错误全部修复（0 errors）
+- **测试补全**: 新增 7 个测试文件（prompt_evolver/graph_store_write/vector_indexer/headless_provider/monty_unit/async_pipeline/repository_crud），796 tests passed
+- **VectorStore.check_novelty**: 补充设计文档 §8 要求的 Facade 方法
+- **已知债务**: `engine/scheduler.py` 设计文档要求但功能已吸收进 evolution_engine.py 主循环，后续迭代提取
+
 ### 异步流水线引擎
 - **AsyncDatabase** (`storage/async_db.py`): asyncio.to_thread + Semaphore(1) 写串行化，WAL 并发读
 - **prepare/commit 拆分**: FastLoopStep.evolve_one 拆为 prepare()（无状态变更）+ commit_result()（串行状态更新）
@@ -19,7 +29,7 @@
 - 安装 zvec==0.6.0，HNSW ANN 全链路验证通过
 
 ### 测试
-- **672 tests**, 5 skipped, 0 failures
+- **735 tests**, 5 skipped, 0 failures
 
 ## [Unreleased] — 2026-07-21
 

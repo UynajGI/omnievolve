@@ -88,15 +88,15 @@ class GraphStore:
             # Outbox 通知（向量索引最终一致性）
             conn.execute(
                 """
-                INSERT OR IGNORE INTO vector_outbox
-                    (entity_id, entity_type, event_type, payload)
-                VALUES (?, ?, ?, ?)
+                INSERT OR IGNORE INTO vector_index_job
+                    (entity_type, entity_id, embedding_profile_id, content_hash, operation, status)
+                VALUES (?, ?, ?, ?, 'upsert', 'pending')
                 """,
                 (
-                    candidate_id,
                     "candidate",
-                    "created",
-                    json.dumps({"artifact_hash": candidate.get("artifact_hash", "")}),
+                    candidate_id,
+                    "profile-code-default",
+                    candidate.get("artifact_hash", ""),
                 ),
             )
 

@@ -13,7 +13,7 @@ make test-slow             # 慢速/集成测试（Docker, soak）
 make test-all              # 全量（不含 LLM）
 
 # 等效 pytest 命令
-.venv/bin/python -m pytest -q -m "not slow and not llm"   # 672 tests
+.venv/bin/python -m pytest -q -m "not slow and not llm"   # 735 tests
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
@@ -45,7 +45,7 @@ src/omnievolve/
   sandbox/    TrustedSubprocessBackend（默认，本地）, DockerBackend, MontyBackend, HardenedBackend (Protocol: SandboxBackend)
   storage/    SQLite DB, AsyncDatabase, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, HybridRetriever, ZvecBackend (HNSW), JobStore, UnitOfWork
   plugins/    BasePlugin, QuantPlugin, GeoPlugin, PluginDiscovery (namespace autoload)
-  utils/      Embedding (SentenceTransformerEmbedder + LiteLLMEmbedder + FakeEmbedder, create_embedder factory, HF→hf-mirror→ModelScope auto-fallback), TokenCounter, SeedManager, ConfigSnapshot, Hashing
+  utils/      Embedding (SentenceTransformerEmbedder + LiteLLMEmbedder + FakeEmbedder, create_embedder factory, HF→hf-mirror→ModelScope auto-fallback), TokenCounter, SeedManager, ConfigSnapshot, Hashing, Profiling (PipelineProfiler + StepTimer + @profile_step)
   cli.py      Typer CLI (run/status/best/export/policy/audit/recover/migrate/doctor)
   config.py   OmniEvolveSettings (pydantic-settings)
   exceptions.py  类型化异常层次 (OmniEvolveError → Sandbox/LLM/Evolution/…)
@@ -53,10 +53,11 @@ docs/         User-facing docs (NOT project-design specs)
 docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
 reports/      Phase acceptance + gap analysis reports
 examples/     python_optimization + circle_packing demo projects
-tests/        672 tests across 57 files (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
-uv.lock       Deterministic dependency lock (159 packages)
+tests/        735 tests across 58 files (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
+uv.lock       Deterministic dependency lock (163 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
+scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
 ```
 
 ## Design red-lines (do not cross)

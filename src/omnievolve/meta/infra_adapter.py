@@ -9,7 +9,7 @@ L1 变更不需要 Replay/Canary，但需要审计记录和可回滚。
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)

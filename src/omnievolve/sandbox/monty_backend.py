@@ -95,7 +95,7 @@ class MontyBackend:
                     "utf-8", errors="replace"
                 )
             except Exception:
-                pass
+                logger.warning("Failed to load source from artifact store", exc_info=True)
 
         if not source_code:
             return SandboxExecutionResult(

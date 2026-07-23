@@ -142,6 +142,8 @@ class ProgressiveMCGS:
         self._progress: float = 0.0  # 0.0 → 1.0
         self._nodes: dict[str, MCTSNode] = {}
         self._max_nodes = max_nodes
+        # 线程局部存储：并行 prepare() 时各线程独立记录 select 路径
+        self._select_local = threading.local()
         # P1-3: 强制反向传播计数器
         self._nodes_since_backprop: int = 0
         self._backprop_lock = threading.Lock()
@@ -234,7 +236,7 @@ class ProgressiveMCGS:
             选中的叶节点 ID
         """
         current = root_id
-        self._last_select_path: list[str] = []
+        self._select_local.path = []
 
         while True:
             node = self._nodes.get(current)
@@ -243,7 +245,7 @@ class ProgressiveMCGS:
 
             # 应用虚拟损失
             node.virtual_loss += self._virtual_loss
-            self._last_select_path.append(current)
+            self._select_local.path.append(current)
 
             # 选择最优子节点
             total_visits = (
@@ -362,11 +364,11 @@ class ProgressiveMCGS:
         当候选被 Novelty/Critic 拒绝而不会 backpropagate 时调用，
         避免虚拟损失永久累积损害搜索多样性。
         """
-        for node_id in getattr(self, "_last_select_path", []):
+        for node_id in getattr(self._select_local, "path", []):
             node = self._nodes.get(node_id)
             if node:
                 node.virtual_loss = max(0.0, node.virtual_loss - self._virtual_loss)
-        self._last_select_path = []
+        self._select_local.path = []
 
     def clear_virtual_losses(self) -> None:
         """清除所有虚拟损失."""

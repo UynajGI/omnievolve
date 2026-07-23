@@ -78,7 +78,6 @@ def _analyze_python(code: str) -> dict:
     # 归一化复杂度分数 (0-1)
     cc = metrics["cyclomatic_complexity"]
     nd = metrics["nesting_depth"]
-    loc = metrics["lines_of_code"]
     # 复杂度分数 = 归一化的 CC × 嵌套因子
     metrics["complexity_score"] = min(1.0, (cc / 20.0) * 0.6 + (nd / 10.0) * 0.4)
 
@@ -88,7 +87,7 @@ def _analyze_python(code: str) -> dict:
 def _analyze_generic(code: str) -> dict:
     """通用复杂度分析（行数 + 基础启发式）."""
     lines = code.splitlines()
-    loc = len([l for l in lines if l.strip() and not l.strip().startswith("#")])
+    loc = len([line for line in lines if line.strip() and not line.strip().startswith("#")])
 
     # 估算 cyclomatic complexity
     control_keywords = (
