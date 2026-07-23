@@ -646,10 +646,14 @@ class EvolutionEngine:
         use_crossover = len(scored) >= 2 and random.random() < self._config.crossover_rate
 
         if use_crossover:
+            # Fix 3: crossover 使用 ParentSelector 结果而非 MCTS 路径，回滚虚拟损失
+            self._mcts.rollback_last_select()  # noqa: SLF001
             return scored, "crossover"
         if mcts_parent:
             return [mcts_parent], "mutate"
         if scored:
+            # Fix 3: ParentSelector fallback 非 MCTS 路径，回滚虚拟损失
+            self._mcts.rollback_last_select()  # noqa: SLF001
             return scored[:1], "mutate"
         return [], "mutate"
 
