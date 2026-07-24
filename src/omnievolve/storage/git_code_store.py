@@ -76,6 +76,31 @@ class GitCodeStore:
         self._task_name: str | None = None
         self._repo_path: Path | None = None  # 绑定后赋值
         self._wt_root: Path | None = None
+        self._db: Any = None  # DB 引用（FK 兼容）
+
+    def set_database(self, db: Any) -> None:
+        """注入 DB 引用 — 用于 FK 兼容."""
+        self._db = db
+
+    def _ensure_artifact_fk(self, ref: str, artifact_type: str = "source") -> None:
+        """在 artifact 表中创建占位行以满足 FK 约束.
+
+        Git ref 是 commit/blob SHA，不在 artifact 表中。
+        此方法 INSERT OR IGNORE 一行占位。
+        """
+        if self._db is None:
+            return
+        try:
+            self._db.execute(
+                """
+                INSERT OR IGNORE INTO artifact
+                    (hash, artifact_type, byte_size, relative_path)
+                VALUES (?, ?, 0, ?)
+                """,
+                (ref, artifact_type, f"git://{self._task_name}/{ref[:8]}"),
+            )
+        except Exception:
+            logger.debug("FK artifact insert failed for %s", ref[:12], exc_info=True)
 
     def bind_experiment(self, experiment_id: str, task_name: str = "") -> None:
         """绑定实验 — 创建该进化任务专属的 git 仓库.
@@ -102,6 +127,63 @@ class GitCodeStore:
     def backend_name(self) -> str:
         """后端名称."""
         return "git"
+
+    # ─── ArtifactStore 兼容接口 ───────────────────────────
+    # 这些方法让 GitCodeStore 可以直接替换 ArtifactStore
+    # 而不需要修改所有调用点
+
+    def store_text(self, text: str, artifact_type: str = "source", **kwargs) -> str:
+        """ArtifactStore 兼容: 存储文本 → 返回 ref.
+
+        对于 source 类型使用 store_snapshot（创建 commit），
+        其他类型（log/report）只创建 blob 不创建 commit。
+        """
+        if artifact_type == "source":
+            return self.store_snapshot(text, message=kwargs.get("message", ""))
+        else:
+            # 非 source 类型只存 blob（thought/log/report）
+            ref = self._git(["hash-object", "-w", "--stdin"], input_data=text)
+            self._ensure_artifact_fk(ref, artifact_type)
+            return ref
+
+    def load_text(self, ref: str) -> str:
+        """ArtifactStore 兼容: 加载文本.
+
+        自动检测 ref 类型：commit SHA → 读 tree 中 main.py，blob hash → 直接读 blob。
+        """
+        if self._repo_path is None:
+            raise RuntimeError("Not bound")
+        # 先尝试作为 commit 读取（source 类型）
+        try:
+            return self.load_snapshot(ref)
+        except Exception:
+            # 可能是 blob hash（log/report 类型），直接读
+            result = subprocess.run(
+                ["git", "--git-dir", str(self._repo_path), "cat-file", "blob", ref],
+                capture_output=True, env={**os.environ, **_GIT_ENV},
+            )
+            if result.returncode == 0:
+                return result.stdout.decode("utf-8")
+            raise
+
+    def store(self, data: bytes, artifact_type: str = "source", **kwargs) -> str:
+        """ArtifactStore 兼容: 存储二进制."""
+        import subprocess as sp
+        result = sp.run(
+            ["git", "--git-dir", str(self._repo_path), "hash-object", "-w", "--stdin"],
+            input=data, capture_output=True, env={**os.environ, **_GIT_ENV},
+        )
+        return result.stdout.decode().strip()
+
+    def load(self, ref: str) -> bytes:
+        """ArtifactStore 兼容: 加载二进制."""
+        if self._repo_path is None:
+            raise RuntimeError("Not bound")
+        result = subprocess.run(
+            ["git", "--git-dir", str(self._repo_path), "cat-file", "blob", ref],
+            capture_output=True, env={**os.environ, **_GIT_ENV},
+        )
+        return result.stdout
 
     # ─── 内部工具 ──────────────────────────────────────────
 
@@ -206,6 +288,7 @@ class GitCodeStore:
         args += ["-m", msg]
 
         commit_sha = self._git(args)
+        self._ensure_artifact_fk(commit_sha, "source")
         return commit_sha
 
     def load_snapshot(self, ref: str) -> str:

@@ -374,12 +374,17 @@ class EvolutionEngine:
         """进化主循环（内部实现）."""
         logger.info("Starting evolution: %s", task_name)
 
+        # Git 后端: 绑定到当前 task（确保正确的 per-task 仓库）
+        store = self._artifact_store
+        if hasattr(store, "bind_experiment"):
+            store.bind_experiment(self._experiment_id, task_name=task_name)
+
         # 注册初始 Champion Policy
         self._ensure_champion_policy()
         self._ensure_version_rows()
 
         # 存储并评估初始代码
-        initial_hash = self._artifact_store.store_text(initial_code, "source")
+        initial_hash = store.store_text(initial_code, "source")
         initial_candidate = self._candidate_repo.create_candidate(
             experiment_id=self._experiment_id,
             task_id=task_name,

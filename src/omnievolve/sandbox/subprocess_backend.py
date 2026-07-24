@@ -122,8 +122,8 @@ class TrustedSubprocessBackend:
         timed_out = False
 
         try:
-            # 写入候选代码
-            if self._artifact_store:
+            # 写入候选代码（仅非 worktree 模式需要）
+            if self._artifact_store and not ws_handle:
                 source_code = self._artifact_store.load(candidate.source_hash)
                 code_file = exec_dir / "main.py"
                 code_file.write_bytes(source_code)

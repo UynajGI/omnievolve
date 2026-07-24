@@ -117,7 +117,9 @@ def create_code_store(settings: StorageSettings, db: Database) -> CodeStore:
     if settings.code_backend == "git":
         from omnievolve.storage.git_code_store import GitCodeStore
 
-        return GitCodeStore(settings.git_repo_path, settings.git_worktree_dir)
+        store = GitCodeStore(settings.git_repo_path, settings.git_worktree_dir)
+        store.set_database(db)  # 注入 DB 用于 FK 兼容
+        return store
     else:
         from omnievolve.storage.artifact_store import ArtifactStore
         from omnievolve.storage.cas_code_store import CASCodeStore
