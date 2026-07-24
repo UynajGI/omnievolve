@@ -73,6 +73,7 @@ class LLMGateway:
         circuit_breaker: Any | None = None,
         rate_limiter: Any | None = None,
         budget_guard: Any | None = None,
+        request_timeout: float = 120.0,
     ) -> None:
         self._db = db
         self._default_model = default_model
@@ -88,6 +89,8 @@ class LLMGateway:
         self._rate_limiter = rate_limiter
         # 1.1: BudgetGuard — LLM token 消耗传播到预算系统
         self._budget_guard = budget_guard
+        # 网络超时保护（秒），防止 API 无响应时线程永久挂起
+        self._request_timeout = request_timeout
 
     def chat(
         self,
@@ -149,6 +152,7 @@ class LLMGateway:
                         max_tokens=max_tokens,
                         api_key=self._api_key,
                         api_base=self._api_base,
+                        timeout=self._request_timeout,
                     )
 
                     latency_ms = (time.time() - start_time) * 1000

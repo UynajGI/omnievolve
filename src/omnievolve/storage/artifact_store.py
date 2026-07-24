@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from omnievolve.storage.db import Database
+from omnievolve.utils import safe_json_loads
 from omnievolve.utils.hashing import (
     ArtifactManifest,
     artifact_path_from_hash,
@@ -200,7 +201,7 @@ class ArtifactStore:
             media_type=row["media_type"],
             relative_path=row["relative_path"],
             base_artifact_hash=row["base_artifact_hash"],
-            meta=json.loads(row["meta"]) if row["meta"] else None,
+            meta=safe_json_loads(row["meta"], default=None),
         )
 
     def verify(self, artifact_hash: str) -> bool:
@@ -359,7 +360,7 @@ class ArtifactStore:
                 media_type=row["media_type"],
                 relative_path=row["relative_path"],
                 base_artifact_hash=row["base_artifact_hash"],
-                meta=json.loads(row["meta"]) if row["meta"] else None,
+                meta=safe_json_loads(row["meta"], default=None),
             )
             for row in rows
         ]

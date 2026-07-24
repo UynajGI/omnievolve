@@ -81,6 +81,7 @@ class LiteLLMEmbedder:
         self._model = model
         self._dimension = dimension
         self._api_key = api_key
+        self._timeout = 60.0  # embedding API 超时保护（秒）
 
     @property
     def dimension(self) -> int:
@@ -95,6 +96,7 @@ class LiteLLMEmbedder:
                 model=self._model,
                 input=texts,
                 api_key=self._api_key,
+                timeout=self._timeout,
             )
             return [item["embedding"] for item in response.data]
         except ImportError:

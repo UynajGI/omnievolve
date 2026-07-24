@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -55,7 +56,7 @@ class MontyBackend:
             work_dir: 工作目录（Monty 不使用宿主 FS）
             artifact_store: ArtifactStore 实例
         """
-        self._work_dir = Path(work_dir) if work_dir else Path("/tmp") / "omnievolve_monty"
+        self._work_dir = Path(work_dir) if work_dir else Path(tempfile.gettempdir()) / "omnievolve_monty"
         self._artifact_store = artifact_store
         self._environment_version_id = f"monty-{uuid.uuid4().hex[:8]}"
 

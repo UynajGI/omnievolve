@@ -43,6 +43,13 @@ class ParentSelector:
         self._power_law_alpha = power_law_alpha
         self._weighted_lambda = weighted_lambda
 
+    def __repr__(self) -> str:
+        return (
+            f"ParentSelector(strategy={self._strategy!r}, "
+            f"tourn_size={self._tournament_size}, "
+            f"pow_law_a={self._power_law_alpha:.1f})"
+        )
+
     def select(
         self,
         experiment_id: str,

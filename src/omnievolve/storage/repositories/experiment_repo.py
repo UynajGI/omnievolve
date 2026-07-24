@@ -11,6 +11,7 @@ from typing import Any
 
 from omnievolve.storage.db import Database
 from omnievolve.storage.repositories.base import generate_id, now_iso
+from omnievolve.utils import safe_json_loads
 
 
 @dataclass
@@ -175,7 +176,7 @@ class ExperimentRepository:
             id=row["id"],
             task_id=row["task_id"],
             task_name=row["task_name"],
-            config_snapshot=json.loads(row["config_snapshot"]),
+            config_snapshot=safe_json_loads(row["config_snapshot"], default={}),
             domain_id=row["domain_id"],
             status=row["status"],
             baseline_candidate_id=row["baseline_candidate_id"],

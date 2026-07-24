@@ -35,6 +35,13 @@ class CrossoverOperator:
         self._max_parents = max_parents
         self._similarity_threshold = similarity_threshold
 
+    def __repr__(self) -> str:
+        return (
+            f"CrossoverOperator(min_parents={self._min_parents}, "
+            f"max_parents={self._max_parents}, "
+            f"sim={self._similarity_threshold:.2f})"
+        )
+
     @property
     def min_parents(self) -> int:
         """最少父代数（供引擎查询以决定选择数量）."""

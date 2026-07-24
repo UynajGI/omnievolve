@@ -37,7 +37,7 @@ class UnitOfWork:
         try:
             uow.connection.execute("INSERT ...")
             uow.commit()
-        except:
+        except Exception:
             uow.rollback()
             raise
     """

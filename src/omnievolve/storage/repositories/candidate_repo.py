@@ -15,6 +15,7 @@ from typing import Any
 
 from omnievolve.storage.db import Database
 from omnievolve.storage.repositories.base import generate_id, now_iso
+from omnievolve.utils import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -422,6 +423,6 @@ class CandidateRepository:
             manifest_hash=row["manifest_hash"],
             status=row["status"],
             novelty_score=row["novelty_score"],
-            meta=json.loads(row["meta"]) if row["meta"] else {},
+            meta=safe_json_loads(row["meta"], default={}),
             created_at=row["created_at"],
         )

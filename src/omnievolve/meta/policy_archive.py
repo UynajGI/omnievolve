@@ -15,6 +15,7 @@ from typing import Any
 from omnievolve.meta.policy_genome import SearchPolicyGenome
 from omnievolve.storage.db import Database
 from omnievolve.storage.repositories.base import generate_id, now_iso
+from omnievolve.utils import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +264,7 @@ class PolicyArchive:
         return [self._row_to_policy(row) for row in rows]
 
     def _row_to_policy(self, row: Any) -> PolicyVersion:
-        genome_data = json.loads(row["genome"])
+        genome_data = safe_json_loads(row["genome"], default={})
         return PolicyVersion(
             id=row["id"],
             version=row["version"],

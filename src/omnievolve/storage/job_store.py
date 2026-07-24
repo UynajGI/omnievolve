@@ -16,6 +16,7 @@ from typing import Any
 
 from omnievolve.storage.db import Database
 from omnievolve.storage.repositories.base import generate_id, now_iso
+from omnievolve.utils import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +317,7 @@ class JobStore:
             id=row["id"],
             experiment_id=row["experiment_id"],
             job_type=row["job_type"],
-            payload=json.loads(row["payload"]),
+            payload=safe_json_loads(row["payload"], default={}),
             status=row["status"],
             attempt=row["attempt"],
             max_attempts=row["max_attempts"],

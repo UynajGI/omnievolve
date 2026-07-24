@@ -72,8 +72,13 @@ def check_headless_available(agent: str) -> bool:
         return False
 
 
-def _build_command(hm: HeadlessModel, prompt_file: str) -> list[str]:
-    """构建 CLI 命令."""
+def _build_command(hm: HeadlessModel, prompt_file: str | None = None) -> list[str]:
+    """构建 CLI 命令.
+
+    Args:
+        hm: 解析后的 headless 模型描述
+        prompt_file: prompt 文件路径（aider 用 --message-file）
+    """
     commands: dict[str, list[str]] = {
         "claude-code": ["claude", "--print"],
         "codex": ["codex", "--quiet"],
@@ -89,9 +94,11 @@ def _build_command(hm: HeadlessModel, prompt_file: str) -> list[str]:
     elif hm.agent == "codex" and hm.model:
         cmd.extend(["--model", hm.model])
 
-    cmd.append(open(prompt_file).read().strip() if False else "")  # placeholder
-    # 实际使用 stdin 或文件参数
-    return [c for c in cmd if c]
+    # aider 需要 --message-file 参数指向 prompt 文件
+    if hm.agent == "aider" and prompt_file:
+        cmd.append(prompt_file)
+
+    return cmd
 
 
 def query_headless(
