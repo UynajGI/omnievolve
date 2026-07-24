@@ -1,6 +1,9 @@
 """量化策略领域插件.
 
 提供 A 股量化策略优化场景的领域提示和评估增强。
+
+TODO(延后): 实现完整的 enrich_evaluation（多窗口 IC 稳定性、过拟合检测、
+            交易成本建模）和回测数据管道集成。
 """
 
 from __future__ import annotations

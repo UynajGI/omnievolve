@@ -3,6 +3,9 @@
 S2: 可接 gVisor、nsjail、Firecracker、E2B、Modal 等实现
 
 这是一个占位实现，实际使用时需要替换为具体的强隔离后端。
+
+TODO(延后): 实现至少一个具体的强隔离后端（推荐 nsjail 或 gVisor），
+            包括镜像构建、资源限制、网络隔离、文件系统只读挂载。
 """
 
 from __future__ import annotations

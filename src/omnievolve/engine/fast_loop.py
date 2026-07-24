@@ -818,11 +818,13 @@ class FastLoopStep:
         e._router.update(model=model, role="director", reward=director_reward)  # noqa: SLF001
 
         # Critic 奖励: 缺陷召回 + 低误拒 + 节省评估成本
-        # 如果候选通过了评估，说明 Critic 没有误拒（false_rejection=0）
-        # 如果候选失败了但 Critic 通过了它，说明 defect_recall 低
-        defect_recall = 0.0 if output.passed else 0.5  # 失败候选被 Critic 放过 = 召回不足
-        false_rejection = 0.0 if critic_passed else 0.3  # Critic 拒绝但最终通过 = 误拒
-        cost_saved = 0.3 if not output.passed else 0.0  # 提前拦截失败候选节省 sandbox 成本
+        # 交叉引用 output.passed 和 critic_passed:
+        # - defect_recall 高: Critic 正确拒绝了坏候选 (not passed & not critic_passed)
+        # - false_rejection 高: Critic 错误拒绝了好候选 (passed & not critic_passed)
+        # - cost_saved 高: Critic 正确拦截坏候选，节省 sandbox 成本
+        defect_recall = 0.5 if (not output.passed and not critic_passed) else 0.0
+        false_rejection = 0.3 if (output.passed and not critic_passed) else 0.0
+        cost_saved = 0.3 if (not output.passed and not critic_passed) else 0.0
         critic_reward = compute_critic_reward(
             defect_recall=defect_recall,
             false_rejection_rate=false_rejection,

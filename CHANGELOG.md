@@ -10,7 +10,7 @@
 - **ruff lint**: 16 个错误全部修复（0 errors）
 - **测试补全**: 新增 7 个测试文件（prompt_evolver/graph_store_write/vector_indexer/headless_provider/monty_unit/async_pipeline/repository_crud），796 tests passed
 - **VectorStore.check_novelty**: 补充设计文档 §8 要求的 Facade 方法
-- **已知债务**: `engine/scheduler.py` 设计文档要求但功能已吸收进 evolution_engine.py 主循环，后续迭代提取
+- **不修**: `engine/scheduler.py` 设计文档要求但功能已完全吸收进 evolution_engine.py 主循环，拆分无增益且引入循环依赖风险，决定不修
 
 ### 异步流水线引擎
 - **AsyncDatabase** (`storage/async_db.py`): asyncio.to_thread + Semaphore(1) 写串行化，WAL 并发读

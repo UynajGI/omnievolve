@@ -297,16 +297,25 @@ class ReplayEvaluator:
 
         base = self.compare(champion_scores, challenger_scores)
 
+        # 数据不足时跳过约束检查
+        if base["decision"] == "inconclusive":
+            base["champion_cost"] = champion_cost_usd
+            base["challenger_cost"] = challenger_cost_usd
+            base["budget_equal"] = True
+            return base
+
         # 成本约束
         if champion_cost_usd > 0 and challenger_cost_usd > champion_cost_usd * 1.5:
             base["decision"] = "reject"
-            base["reason"] += f" | Cost regression: {challenger_cost_usd:.4f} > 1.5x champion"
+            reason = f"Cost regression: {challenger_cost_usd:.4f} > 1.5x champion"
+            base["reason"] = f"{base['reason']} | {reason}" if base["reason"] else reason
             return base
 
         # 时间约束
         if champion_wall_sec > 0 and challenger_wall_sec > champion_wall_sec * 2.0:
             base["decision"] = "reject"
-            base["reason"] += f" | Time regression: {challenger_wall_sec:.1f}s > 2x champion"
+            reason = f"Time regression: {challenger_wall_sec:.1f}s > 2x champion"
+            base["reason"] = f"{base['reason']} | {reason}" if base["reason"] else reason
             return base
 
         # 稳定性约束
@@ -314,7 +323,8 @@ class ReplayEvaluator:
             champ_std = float(np.std(champion_scores))
             chall_std = float(np.std(challenger_scores))
             if chall_std > champ_std * 2.0 and champ_std > 0:
-                base["reason"] += f" | Stability warning: std {chall_std:.4f} > 2x champion {champ_std:.4f}"
+                reason = f"Stability warning: std {chall_std:.4f} > 2x champion {champ_std:.4f}"
+                base["reason"] = f"{base['reason']} | {reason}" if base["reason"] else reason
                 if base["decision"] == "promote":
                     base["decision"] = "hold"  # 降级为 hold
 

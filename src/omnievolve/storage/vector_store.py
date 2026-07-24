@@ -247,19 +247,27 @@ class VectorStore:
             logger.warning("Embedding failed for parallel query: %s", e)
             return []
 
+        if not collections:
+            return []
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         all_hits: list[dict[str, Any]] = []
-        for collection in collections:
-            try:
-                hits = self._backend.query(collection, query_vec, top_k=top_k)
-                for h in hits:
-                    all_hits.append({
-                        "id": h.id,
-                        "score": h.similarity,
-                        "collection": collection,
-                        "metadata": h.metadata,
-                    })
-            except Exception as e:
-                logger.debug("Parallel query failed for %s: %s", collection, e)
+
+        def _query_one(collection: str) -> list[dict[str, Any]]:
+            hits = self._backend.query(collection, query_vec, top_k=top_k)
+            return [
+                {"id": h.id, "score": h.similarity, "collection": collection, "metadata": h.metadata}
+                for h in hits
+            ]
+
+        with ThreadPoolExecutor(max_workers=min(len(collections), 4)) as pool:
+            futures = {pool.submit(_query_one, c): c for c in collections}
+            for future in as_completed(futures):
+                try:
+                    all_hits.extend(future.result())
+                except Exception as e:
+                    logger.warning("Parallel query failed for %s: %s", futures[future], e)
 
         # 去重 + 按相似度排序
         seen: set[str] = set()

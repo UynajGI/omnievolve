@@ -34,6 +34,8 @@ class HealthMetrics:
     thought_cluster_entropy: float = 0.0
     knn_distance_distribution: float = 0.0
     ast_feature_coverage: float = 0.0
+    behavior_signature_entropy: float = 0.0
+    mechanism_tag_coverage: float = 0.0
     branch_balance: float = 0.0
 
     # 记忆有效性

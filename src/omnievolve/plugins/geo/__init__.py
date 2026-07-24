@@ -1,6 +1,9 @@
 """地理空间计算领域插件.
 
 提供地理空间算法优化场景的领域提示。
+
+TODO(延后): 实现完整的 enrich_evaluation（坐标系误差检测、空间索引性能指标）
+            和 get_rag_corpus（地理空间算法语料库）。
 """
 
 from __future__ import annotations
