@@ -348,7 +348,10 @@ class AsyncPipelineEngine:
 
         # Phase C: 后代同步
         if engine._island_manager.should_migrate(gen):  # noqa: SLF001
-            await asyncio.to_thread(engine._island_manager.migrate, gen)  # noqa: SLF001
+            try:
+                await asyncio.to_thread(engine._island_manager.migrate, gen)  # noqa: SLF001
+            except Exception:
+                logger.warning("Island migration failed at gen %d", gen, exc_info=True)
 
         if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:  # noqa: SLF001
             await asyncio.to_thread(engine._run_slow_loop, gen)  # noqa: SLF001

@@ -211,12 +211,19 @@ class SlowLoopController:
                 current_gen,
                 decision.get("reason"),
             )
-            self._record_tuner_feedback(action, decision.get("gain", 0.0))
+            self._safe_tuner_feedback(action, decision.get("gain", 0.0))
             return new_genome, challenger.id
         else:
             self._policy_archive.reject(challenger.id, decision.get("reason", ""))
-            self._record_tuner_feedback(action, decision.get("gain", -0.01))
+            self._safe_tuner_feedback(action, decision.get("gain", -0.01))
             return None, None
+
+    def _safe_tuner_feedback(self, action: MetaAction, gain: float) -> None:
+        """安全记录 tuner feedback — DB 写入失败不影响 slow loop 主流程."""
+        try:
+            self._record_tuner_feedback(action, gain)
+        except Exception:
+            logger.debug("Tuner feedback recording failed", exc_info=True)
 
     def _apply_evolve_prompt(
         self,

@@ -101,16 +101,22 @@ class ArtifactMaterializer:
                 capture_output=True,
                 text=True,
                 cwd=str(target_dir),
+                timeout=30,
             )
             if result.returncode != 0:
                 # patch 失败，使用简单替换
-                logger.warning(f"patch failed: {result.stderr}, using fallback")
+                logger.warning("patch failed: %s, using fallback", result.stderr)
                 # 如果 diff 是完整代码，直接使用
                 if not diff_text.startswith("---"):
                     base_file.write_text(diff_text)
         except FileNotFoundError:
             # patch 命令不可用
             logger.warning("patch command not available, using diff as full code")
+            if not diff_text.startswith("---"):
+                base_file.write_text(diff_text)
+        except Exception:
+            # patch 超时或其他错误
+            logger.warning("patch execution failed, using diff as full code", exc_info=True)
             if not diff_text.startswith("---"):
                 base_file.write_text(diff_text)
 
