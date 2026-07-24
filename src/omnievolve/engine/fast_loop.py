@@ -581,9 +581,15 @@ class FastLoopStep:
             except Exception:
                 logger.debug("Epiplexity scoring failed for %s", artifact_hash, exc_info=True)
 
-        # 完成评估运行记录
-        if run:
+        # 完成评估运行记录（含 stdout/stderr 存储用于 debug）
+        if run and result:
             try:
+                stdout_hash = None
+                stderr_hash = None
+                if getattr(result, "stdout", None):
+                    stdout_hash = e._artifact_store.store_text(result.stdout[:5000], "log")  # noqa: SLF001
+                if getattr(result, "stderr", None):
+                    stderr_hash = e._artifact_store.store_text(result.stderr[:5000], "log")  # noqa: SLF001
                 e._eval_repo.complete(  # noqa: SLF001
                     run.id,
                     passed=output.passed,
@@ -592,6 +598,8 @@ class FastLoopStep:
                     execution_time_ms=result.execution_time_ms,
                     memory_peak_kb=result.memory_peak_kb,
                     cpu_time_ms=result.cpu_time_ms,
+                    stdout_hash=stdout_hash,
+                    stderr_hash=stderr_hash,
                 )
             except StorageError:
                 logger.debug("Could not complete evaluation_run record", exc_info=True)
