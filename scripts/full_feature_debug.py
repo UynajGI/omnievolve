@@ -54,6 +54,7 @@ def t_graph_store():
     gs = GraphStore(db)
     # FK 数据准备
     db.execute("INSERT OR IGNORE INTO embedding_profile (id, purpose, provider, model, dimension, collection_path) VALUES ('p1', 'code', 'local', 'test', 128, '/tmp/t')")
+    db.execute("INSERT OR IGNORE INTO embedding_profile (id, purpose, provider, model, dimension, collection_path) VALUES ('profile-code-default', 'code', 'local', 'test', 128, '/tmp/t')")
     db.execute("INSERT INTO experiment (id, task_id, task_name, config_snapshot) VALUES ('e1', 't', 't', '{}')")
     db.execute("INSERT OR IGNORE INTO artifact (hash, artifact_type, byte_size, relative_path) VALUES ('h1', 'source', 10, 'a/h/1')")
     db.execute("INSERT OR IGNORE INTO task_evaluator_version (id, name, semantic_version, implementation_hash, task_semantics_hash, score_schema) VALUES ('ev1', 'test', '1.0', 'h', 'h', '{}')")
