@@ -66,7 +66,6 @@ from omnievolve.meta.policy_genome import SearchPolicyGenome
 from omnievolve.sandbox.base import (
     SandboxBackend,
 )
-from omnievolve.storage.artifact_store import ArtifactStore
 from omnievolve.storage.db import Database
 from omnievolve.storage.graph_store import GraphStore
 from omnievolve.storage.repositories.candidate_repo import CandidateRepository
@@ -136,7 +135,7 @@ class EvolutionEngine:
     def __init__(
         self,
         db: Database,
-        artifact_store: ArtifactStore,
+        artifact_store: Any,
         task_evaluator: TaskEvaluator,
         sandbox: SandboxBackend,
         llm: LLMGateway,
@@ -163,6 +162,9 @@ class EvolutionEngine:
     ) -> None:
         self._db = db
         self._artifact_store = artifact_store
+        # CodeStore: 代码存储后端（如果有 CodeStore Protocol 能力则直接使用）
+        # artifact_store 可能是 ArtifactStore / CASCodeStore / GitCodeStore
+        # 所有通过 CodeStore Protocol 的调用点会检查 backend_name
         self._task_evaluator = task_evaluator
         self._sandbox = sandbox
         self._llm = llm
@@ -372,12 +374,17 @@ class EvolutionEngine:
         """进化主循环（内部实现）."""
         logger.info("Starting evolution: %s", task_name)
 
+        # Git 后端: 绑定到当前 task（确保正确的 per-task 仓库）
+        store = self._artifact_store
+        if hasattr(store, "bind_experiment"):
+            store.bind_experiment(self._experiment_id, task_name=task_name)
+
         # 注册初始 Champion Policy
         self._ensure_champion_policy()
         self._ensure_version_rows()
 
         # 存储并评估初始代码
-        initial_hash = self._artifact_store.store_text(initial_code, "source")
+        initial_hash = store.store_text(initial_code, "source")
         initial_candidate = self._candidate_repo.create_candidate(
             experiment_id=self._experiment_id,
             task_id=task_name,

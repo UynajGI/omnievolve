@@ -263,7 +263,22 @@ class FastLoopStep:
                 passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
 
         # 步骤 8: 存储代码 + 创建候选
-        artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
+        # CodeStore: 优先使用 store_snapshot（支持 Git ancestry）
+        if hasattr(e._artifact_store, "store_snapshot"):  # noqa: SLF001
+            # 从 DB 查父代 artifact_hash（Git 模式 = commit SHA）
+            parent_refs = []
+            for pid in parent_ids:
+                prow = e._db.fetchone("SELECT artifact_hash FROM candidate WHERE id=?", (pid,))  # noqa: SLF001
+                if prow:
+                    parent_refs.append(prow["artifact_hash"])
+            artifact_hash = e._artifact_store.store_snapshot(  # noqa: SLF001
+                code.full_code,
+                parents=parent_refs or None,
+                message=thought.thought[:200],
+                meta={"thought": thought.thought[:500], "relation": relation, "model": model},
+            )
+        else:
+            artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
         parents_with_relation = [(pid, relation) for pid in parent_ids]
         candidate = e._candidate_repo.create_candidate(  # noqa: SLF001
             experiment_id=e._experiment_id,  # noqa: SLF001
@@ -566,9 +581,15 @@ class FastLoopStep:
             except Exception:
                 logger.debug("Epiplexity scoring failed for %s", artifact_hash, exc_info=True)
 
-        # 完成评估运行记录
-        if run:
+        # 完成评估运行记录（含 stdout/stderr 存储用于 debug）
+        if run and result:
             try:
+                stdout_hash = None
+                stderr_hash = None
+                if getattr(result, "stdout", None):
+                    stdout_hash = e._artifact_store.store_text(result.stdout[:5000], "log")  # noqa: SLF001
+                if getattr(result, "stderr", None):
+                    stderr_hash = e._artifact_store.store_text(result.stderr[:5000], "log")  # noqa: SLF001
                 e._eval_repo.complete(  # noqa: SLF001
                     run.id,
                     passed=output.passed,
@@ -577,6 +598,8 @@ class FastLoopStep:
                     execution_time_ms=result.execution_time_ms,
                     memory_peak_kb=result.memory_peak_kb,
                     cpu_time_ms=result.cpu_time_ms,
+                    stdout_hash=stdout_hash,
+                    stderr_hash=stderr_hash,
                 )
             except StorageError:
                 logger.debug("Could not complete evaluation_run record", exc_info=True)
@@ -743,12 +766,26 @@ class FastLoopStep:
         model: str,
         output: EvalOutput,
         parent_ids: list[str],
+        thought_adopted: bool = True,
+        mechanism_novelty: float = 0.5,
+        critic_passed: bool = True,
     ) -> None:
-        """Router 奖励更新（ShinkaEvolve 相对奖励公式，T3: 批量查询）."""
-        from omnievolve.agents.router import compute_shinka_reward
+        """Router 奖励更新 — 设计文档 §5.5 角色奖励分离.
+
+        Director: thought_adoption + mechanism_novelty + frontier_contribution
+        Coder: patch_apply + compile + test_pass + performance_gain (Shinka)
+        Critic: defect_recall + false_rejection + cost_saved
+        """
+        from omnievolve.agents.router import (
+            compute_critic_reward,
+            compute_director_reward,
+            compute_shinka_reward,
+        )
 
         e = self._e
+        assert e._router is not None  # noqa: SLF001
 
+        # 查父代分数
         parent_score = 0.0
         if parent_ids:
             placeholders = ",".join(["?"] * len(parent_ids))
@@ -766,9 +803,34 @@ class FastLoopStep:
             parent_score = max(parent_scores) if parent_scores else 0.0
 
         baseline_score = e._get_baseline_score()  # noqa: SLF001
-        reward = compute_shinka_reward(output.score, parent_score, baseline_score)
-        assert e._router is not None  # noqa: SLF001 — guarded by caller
-        e._router.update(model=model, role="coder", reward=reward)  # noqa: SLF001
+
+        # Coder 奖励: Shinka 相对改进
+        coder_reward = compute_shinka_reward(output.score, parent_score, baseline_score)
+        e._router.update(model=model, role="coder", reward=coder_reward)  # noqa: SLF001
+
+        # Director 奖励: thought 被采纳 + 机制新颖性 + 前沿贡献
+        frontier_contribution = max(output.score - baseline_score, 0.0)
+        director_reward = compute_director_reward(
+            thought_adopted=thought_adopted,
+            mechanism_novelty=mechanism_novelty,
+            frontier_contribution=frontier_contribution,
+        )
+        e._router.update(model=model, role="director", reward=director_reward)  # noqa: SLF001
+
+        # Critic 奖励: 缺陷召回 + 低误拒 + 节省评估成本
+        # 交叉引用 output.passed 和 critic_passed:
+        # - defect_recall 高: Critic 正确拒绝了坏候选 (not passed & not critic_passed)
+        # - false_rejection 高: Critic 错误拒绝了好候选 (passed & not critic_passed)
+        # - cost_saved 高: Critic 正确拦截坏候选，节省 sandbox 成本
+        defect_recall = 0.5 if (not output.passed and not critic_passed) else 0.0
+        false_rejection = 0.3 if (output.passed and not critic_passed) else 0.0
+        cost_saved = 0.3 if (not output.passed and not critic_passed) else 0.0
+        critic_reward = compute_critic_reward(
+            defect_recall=defect_recall,
+            false_rejection_rate=false_rejection,
+            evaluator_cost_saved=cost_saved,
+        )
+        e._router.update(model=model, role="critic", reward=critic_reward)  # noqa: SLF001
 
     def _compute_stagnation_level(self, island_id: str) -> int:
         """P2-1: 计算停滞等级.
