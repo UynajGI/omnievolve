@@ -59,12 +59,12 @@ class GitCodeStore:
         """初始化 Git 后端.
 
         Args:
-            repo_path: bare git 仓库根目录（每个实验在此目录下创建子仓库）
+            repo_path: git 仓库根目录（每个进化任务在此目录下创建子仓库）
             worktree_root: worktree 工作目录根
 
-        每个实验有独立的 git 仓库：
-            {repo_path}/{experiment_id}/code.git
-            {worktree_root}/{experiment_id}/
+        每个进化任务（如 sort/matmul）有独立的 git 仓库：
+            {repo_path}/{task_name}/code.git
+            {worktree_root}/{task_name}/
 
         在 bind_experiment() 之前仓库未绑定，操作会延迟到绑定后执行。
         """
@@ -73,19 +73,28 @@ class GitCodeStore:
         self._repo_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()  # 仅保护 gc 等全局操作
         self._experiment_id: str | None = None
+        self._task_name: str | None = None
         self._repo_path: Path | None = None  # 绑定后赋值
         self._wt_root: Path | None = None
 
-    def bind_experiment(self, experiment_id: str) -> None:
-        """绑定实验 ID — 创建该实验专属的 git 仓库.
+    def bind_experiment(self, experiment_id: str, task_name: str = "") -> None:
+        """绑定实验 — 创建该进化任务专属的 git 仓库.
 
-        每个实验有完全隔离的 git 仓库和 worktree 目录。
+        同一 task_name 的多次实验共享一个 git 仓库（可以看到历史进化树）。
+        不同 task_name 完全隔离。
+
+        Args:
+            experiment_id: 实验 UUID
+            task_name: 进化任务名称（如 "sort", "matmul"）
         """
-        if self._experiment_id == experiment_id and self._repo_path:
-            return  # 已绑定
+        # 用 task_name 做目录名，experiment_id 仅做去重后缀
+        dir_name = task_name or experiment_id[:8]
+        if self._task_name == dir_name and self._repo_path:
+            return  # 已绑定同一任务
         self._experiment_id = experiment_id
-        self._repo_path = self._repo_root / experiment_id / "code.git"
-        self._wt_root = self._wt_root_orig / experiment_id
+        self._task_name = dir_name
+        self._repo_path = self._repo_root / dir_name / "code.git"
+        self._wt_root = self._wt_root_orig / dir_name
         self._wt_root.mkdir(parents=True, exist_ok=True)
         self._init_repo()
 

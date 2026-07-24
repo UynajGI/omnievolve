@@ -21,7 +21,7 @@ def git_store(tmp_path: Path) -> GitCodeStore:
     repo = tmp_path / "code_root"
     wt = tmp_path / "worktrees"
     store = GitCodeStore(repo, wt)
-    store.bind_experiment("test_exp")
+    store.bind_experiment("test_exp_001", task_name="sort")
     return store
 
 
