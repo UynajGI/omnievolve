@@ -270,6 +270,10 @@ def run(
         )
         experiment_id = exp.id
 
+    # Git 后端: 绑定实验 ID（创建 per-experiment 仓库）
+    if hasattr(artifact_store, "bind_experiment"):
+        artifact_store.bind_experiment(experiment_id)
+
     # 构造引擎
     from omnievolve.engine.evolution_engine import EvolutionEngine
 

@@ -17,10 +17,12 @@ from omnievolve.storage.git_code_store import GitCodeStore
 
 @pytest.fixture
 def git_store(tmp_path: Path) -> GitCodeStore:
-    """创建临时 GitCodeStore."""
-    repo = tmp_path / "code.git"
+    """创建临时 GitCodeStore（已绑定实验）."""
+    repo = tmp_path / "code_root"
     wt = tmp_path / "worktrees"
-    return GitCodeStore(repo, wt)
+    store = GitCodeStore(repo, wt)
+    store.bind_experiment("test_exp")
+    return store
 
 
 class TestGitCodeStoreBasic:

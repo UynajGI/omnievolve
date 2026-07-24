@@ -59,13 +59,34 @@ class GitCodeStore:
         """初始化 Git 后端.
 
         Args:
-            repo_path: bare git 仓库路径
+            repo_path: bare git 仓库根目录（每个实验在此目录下创建子仓库）
             worktree_root: worktree 工作目录根
+
+        每个实验有独立的 git 仓库：
+            {repo_path}/{experiment_id}/code.git
+            {worktree_root}/{experiment_id}/
+
+        在 bind_experiment() 之前仓库未绑定，操作会延迟到绑定后执行。
         """
-        self._repo_path = Path(repo_path)
-        self._wt_root = Path(worktree_root)
-        self._wt_root.mkdir(parents=True, exist_ok=True)
+        self._repo_root = Path(repo_path)
+        self._wt_root_orig = Path(worktree_root)
+        self._repo_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()  # 仅保护 gc 等全局操作
+        self._experiment_id: str | None = None
+        self._repo_path: Path | None = None  # 绑定后赋值
+        self._wt_root: Path | None = None
+
+    def bind_experiment(self, experiment_id: str) -> None:
+        """绑定实验 ID — 创建该实验专属的 git 仓库.
+
+        每个实验有完全隔离的 git 仓库和 worktree 目录。
+        """
+        if self._experiment_id == experiment_id and self._repo_path:
+            return  # 已绑定
+        self._experiment_id = experiment_id
+        self._repo_path = self._repo_root / experiment_id / "code.git"
+        self._wt_root = self._wt_root_orig / experiment_id
+        self._wt_root.mkdir(parents=True, exist_ok=True)
         self._init_repo()
 
     @property
@@ -87,6 +108,8 @@ class GitCodeStore:
 
         所有 git 调用集中在此方法，便于审计和 mock。
         """
+        if self._repo_path is None:
+            raise RuntimeError("GitCodeStore not bound to experiment. Call bind_experiment() first.")
         full_env = {**os.environ, **_GIT_ENV, **(env or {})}
         result = subprocess.run(
             ["git", "--git-dir", str(self._repo_path)] + args,
