@@ -101,8 +101,19 @@ class TrustedSubprocessBackend:
         在子进程中执行候选代码，应用基本资源限制。
         """
         # 准备工作目录
-        exec_dir = self._work_dir / f"exec_{uuid.uuid4().hex[:8]}"
-        exec_dir.mkdir(parents=True, exist_ok=True)
+        # CodeStore: 优先使用 materialize（支持 Git worktree 零拷贝）
+        code_store = self._artifact_store
+        ws_handle = None
+        if hasattr(code_store, "materialize"):
+            ws_handle = code_store.materialize(candidate.source_hash)
+            exec_dir = ws_handle.path
+        else:
+            exec_dir = self._work_dir / f"exec_{uuid.uuid4().hex[:8]}"
+            exec_dir.mkdir(parents=True, exist_ok=True)
+            if self._artifact_store:
+                source_code = self._artifact_store.load(candidate.source_hash)
+                code_file = exec_dir / "main.py"
+                code_file.write_bytes(source_code)
 
         start_time = time.time()
         return_codes = []
@@ -172,12 +183,15 @@ class TrustedSubprocessBackend:
 
         finally:
             # 清理工作目录
-            import shutil
+            if ws_handle and hasattr(code_store, "release"):
+                code_store.release(ws_handle)
+            else:
+                import shutil
 
-            try:
-                shutil.rmtree(exec_dir, ignore_errors=True)
-            except Exception:
-                pass
+                try:
+                    shutil.rmtree(exec_dir, ignore_errors=True)
+                except Exception:
+                    pass
 
     def _run_command(
         self,

@@ -360,6 +360,16 @@ class AsyncPipelineEngine:
         if engine._vector_indexer:  # noqa: SLF001
             await asyncio.to_thread(self._safe_process_batch)
 
+        # Git 后端: 周期性 GC
+        code_store = getattr(engine, "_artifact_store", None)
+        if (
+            hasattr(code_store, "gc")
+            and hasattr(code_store, "backend_name")
+            and code_store.backend_name == "git"
+            and gen % self._config.git_auto_gc_interval == 0  # noqa: SLF001
+        ):
+            await asyncio.to_thread(code_store.gc)
+
     def _safe_process_batch(self) -> None:
         try:
             self._engine._vector_indexer.process_batch()  # noqa: SLF001

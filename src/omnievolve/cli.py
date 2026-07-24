@@ -56,7 +56,6 @@ def _bootstrap(
     """
     settings = load_settings(config_path)
 
-    from omnievolve.storage.artifact_store import ArtifactStore
     from omnievolve.storage.db import Database
     from omnievolve.storage.migrations import initialize_database
 
@@ -67,7 +66,10 @@ def _bootstrap(
     db = Database(storage.db_path)
     initialize_database(db)
 
-    artifact_store = ArtifactStore(storage.artifact_dir, db)
+    # 代码存储后端：根据 config.code_backend 选择 CAS 或 Git
+    from omnievolve.storage.code_store import create_code_store
+
+    artifact_store = create_code_store(storage, db)
 
     from omnievolve.sandbox.registry import create_backend
 

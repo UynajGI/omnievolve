@@ -147,6 +147,11 @@ class StorageSettings(BaseSettings):
     artifact_dir: str = ".omnievolve/artifacts"
     export_dir: str = ".omnievolve/exports"
     jobs: StorageJobsSettings = Field(default_factory=StorageJobsSettings)
+    # ── Git 代码存储后端 ──
+    code_backend: str = "cas"  # "cas" | "git"
+    git_repo_path: str = ".omnievolve/code.git"  # bare repo
+    git_worktree_dir: str = ".omnievolve/worktrees"  # worktree 根
+    git_auto_gc_interval: int = 50  # 每 N 代 GC
 
 
 class MemorySettings(BaseSettings):

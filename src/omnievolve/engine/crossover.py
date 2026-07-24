@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import random
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +87,17 @@ class CrossoverOperator:
         self,
         parent_codes: list[str],
         strategy: str = "segment",
+        *,
+        code_store: Any = None,
+        parent_refs: list[str] | None = None,
     ) -> str:
         """融合多个父代代码.
 
         Args:
             parent_codes: 父代代码列表
             strategy: 融合策略 (segment/function_level/feature_merge)
+            code_store: CodeStore 实例（Git 后端优先尝试 merge）
+            parent_refs: 父代 ref 列表（用于 Git merge）
 
         Returns:
             融合后的代码
@@ -99,6 +105,16 @@ class CrossoverOperator:
         if len(parent_codes) == 1:
             return parent_codes[0]
 
+        # Git 后端: 优先尝试 git merge crossover
+        if code_store and parent_refs and len(parent_refs) >= 2:
+            merged = code_store.merge(parent_refs)
+            if merged is not None:
+                try:
+                    return code_store.load_snapshot(merged)
+                except Exception:
+                    logger.debug("Git merge load failed, falling back to text crossover", exc_info=True)
+
+        # Fallback: 文本/AST 策略
         if strategy == "segment":
             return self._segment_crossover(parent_codes)
         elif strategy == "function_level":

@@ -263,7 +263,22 @@ class FastLoopStep:
                 passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
 
         # 步骤 8: 存储代码 + 创建候选
-        artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
+        # CodeStore: 优先使用 store_snapshot（支持 Git ancestry）
+        if hasattr(e._artifact_store, "store_snapshot"):  # noqa: SLF001
+            # 从 DB 查父代 artifact_hash（Git 模式 = commit SHA）
+            parent_refs = []
+            for pid in parent_ids:
+                prow = e._db.fetchone("SELECT artifact_hash FROM candidate WHERE id=?", (pid,))  # noqa: SLF001
+                if prow:
+                    parent_refs.append(prow["artifact_hash"])
+            artifact_hash = e._artifact_store.store_snapshot(  # noqa: SLF001
+                code.full_code,
+                parents=parent_refs or None,
+                message=thought.thought[:200],
+                meta={"thought": thought.thought[:500], "relation": relation, "model": model},
+            )
+        else:
+            artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
         parents_with_relation = [(pid, relation) for pid in parent_ids]
         candidate = e._candidate_repo.create_candidate(  # noqa: SLF001
             experiment_id=e._experiment_id,  # noqa: SLF001
