@@ -65,26 +65,22 @@ class AsyncDatabase:
     async def transaction_async(self):
         """异步事务上下文管理器.
 
-        写操作自动串行化。
+        写操作自动串行化。在上下文内使用 execute_async 写操作会被同一个
+        写信号量保护，但 BEGIN/COMMIT/ROLLBACK 由本方法管理。
         """
         async with self._write_sem:
-            # 在写线程中执行同步事务
-            @asynccontextmanager
-            async def _wrap():
-                # transaction() 是同步上下文管理器，需要在线程中执行
-                # 但上下文管理器不能跨线程传递，所以这里直接获取连接并手动管理
-                conn = await asyncio.to_thread(self._db.get_connection)
+            # 获取连接并启动事务
+            conn = await asyncio.to_thread(self._db.get_connection)
+            try:
+                await asyncio.to_thread(conn.execute, "BEGIN IMMEDIATE")
+                yield self
+                await asyncio.to_thread(conn.execute, "COMMIT")
+            except Exception:
                 try:
-                    await asyncio.to_thread(conn.execute, "BEGIN IMMEDIATE")
-                    yield conn
-                    await asyncio.to_thread(conn.execute, "COMMIT")
-                except Exception:
                     await asyncio.to_thread(conn.execute, "ROLLBACK")
-                    raise
-
-            # 简化版：直接在写线程中执行整个事务块
-            # 调用方应在 transaction_async 内使用 execute_async
-            yield self
+                except Exception:
+                    pass  # ROLLBACK 失败不影响原始异常传播
+                raise
 
     async def read_op(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         """在线程池中执行读操作."""

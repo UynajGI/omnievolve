@@ -46,21 +46,62 @@ def extract_code(text: str) -> str:
     return "\n\n".join(valid_code_blocks)
 
 
+def _extract_balanced_json_objects(text: str) -> list[str]:
+    """用括号匹配提取完整的 JSON 对象字符串.
+
+    正则 `{.*?}` 是非贪婪的，遇到嵌套 JSON 时在第一个 } 截断。
+    此函数用计数器正确匹配 { 和 } 的层级。
+    """
+    results: list[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] == "{":
+            depth = 0
+            in_string = False
+            escape = False
+            for j in range(i, len(text)):
+                ch = text[j]
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"' and not escape:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        results.append(text[i : j + 1])
+                        i = j + 1
+                        break
+            else:
+                # 未闭合的 JSON，跳过
+                break
+        else:
+            i += 1
+    return results
+
+
 def extract_jsons(text: str) -> list[dict]:
-    """从文本提取 JSON 对象."""
+    """从文本提取 JSON 对象.
+
+    使用括号匹配算法正确处理嵌套 JSON。
+    """
     json_objects: list[dict] = []
-    matches = re.findall(r"\{.*?\}", text, re.DOTALL)
-    for match in matches:
+    candidates = _extract_balanced_json_objects(text)
+    for candidate in candidates:
         try:
-            json_obj = json.loads(match)
-            json_objects.append(json_obj)
+            json_obj = json.loads(candidate)
+            if isinstance(json_obj, dict):
+                json_objects.append(json_obj)
         except json.JSONDecodeError:
             pass
-
-    if not json_objects and not text.endswith("}"):
-        json_objects = extract_jsons(text + "}")
-        if json_objects:
-            return json_objects
 
     return json_objects
 

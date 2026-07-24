@@ -8,12 +8,15 @@ S1-02: 建立数据库连接与 PRAGMA 策略
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -146,6 +149,18 @@ class Database:
         cursor = self.execute(sql, params)
         return cursor.fetchall()
 
+    def checkpoint(self) -> None:
+        """执行 WAL checkpoint，将 WAL 日志合并到主数据库文件.
+
+        长时间运行后 WAL 文件会持续增长，定期 checkpoint 防止磁盘空间
+        占用过大并保持查询性能。设计文档 §4 要求。
+        """
+        try:
+            conn = self.get_connection()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            logger.debug("WAL checkpoint failed", exc_info=True)
+
     def close(self) -> None:
         """关闭当前线程连接."""
         if hasattr(self._local, "conn") and self._local.conn is not None:
@@ -154,12 +169,14 @@ class Database:
 
     def close_all(self) -> None:
         """关闭所有线程的连接（用于多线程清理）."""
+        # 先执行 WAL checkpoint 将数据刷入主数据库
+        self.checkpoint()
         with self._lock:
             for conn in self._all_connections:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    logger.debug("Connection close failed during close_all", exc_info=True)
             self._all_connections.clear()
         self._local.conn = None
 
