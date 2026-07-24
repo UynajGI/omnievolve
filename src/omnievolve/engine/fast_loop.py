@@ -766,12 +766,26 @@ class FastLoopStep:
         model: str,
         output: EvalOutput,
         parent_ids: list[str],
+        thought_adopted: bool = True,
+        mechanism_novelty: float = 0.5,
+        critic_passed: bool = True,
     ) -> None:
-        """Router 奖励更新（ShinkaEvolve 相对奖励公式，T3: 批量查询）."""
-        from omnievolve.agents.router import compute_shinka_reward
+        """Router 奖励更新 — 设计文档 §5.5 角色奖励分离.
+
+        Director: thought_adoption + mechanism_novelty + frontier_contribution
+        Coder: patch_apply + compile + test_pass + performance_gain (Shinka)
+        Critic: defect_recall + false_rejection + cost_saved
+        """
+        from omnievolve.agents.router import (
+            compute_critic_reward,
+            compute_director_reward,
+            compute_shinka_reward,
+        )
 
         e = self._e
+        assert e._router is not None  # noqa: SLF001
 
+        # 查父代分数
         parent_score = 0.0
         if parent_ids:
             placeholders = ",".join(["?"] * len(parent_ids))
@@ -789,9 +803,32 @@ class FastLoopStep:
             parent_score = max(parent_scores) if parent_scores else 0.0
 
         baseline_score = e._get_baseline_score()  # noqa: SLF001
-        reward = compute_shinka_reward(output.score, parent_score, baseline_score)
-        assert e._router is not None  # noqa: SLF001 — guarded by caller
-        e._router.update(model=model, role="coder", reward=reward)  # noqa: SLF001
+
+        # Coder 奖励: Shinka 相对改进
+        coder_reward = compute_shinka_reward(output.score, parent_score, baseline_score)
+        e._router.update(model=model, role="coder", reward=coder_reward)  # noqa: SLF001
+
+        # Director 奖励: thought 被采纳 + 机制新颖性 + 前沿贡献
+        frontier_contribution = max(output.score - baseline_score, 0.0)
+        director_reward = compute_director_reward(
+            thought_adopted=thought_adopted,
+            mechanism_novelty=mechanism_novelty,
+            frontier_contribution=frontier_contribution,
+        )
+        e._router.update(model=model, role="director", reward=director_reward)  # noqa: SLF001
+
+        # Critic 奖励: 缺陷召回 + 低误拒 + 节省评估成本
+        # 如果候选通过了评估，说明 Critic 没有误拒（false_rejection=0）
+        # 如果候选失败了但 Critic 通过了它，说明 defect_recall 低
+        defect_recall = 0.0 if output.passed else 0.5  # 失败候选被 Critic 放过 = 召回不足
+        false_rejection = 0.0 if critic_passed else 0.3  # Critic 拒绝但最终通过 = 误拒
+        cost_saved = 0.3 if not output.passed else 0.0  # 提前拦截失败候选节省 sandbox 成本
+        critic_reward = compute_critic_reward(
+            defect_recall=defect_recall,
+            false_rejection_rate=false_rejection,
+            evaluator_cost_saved=cost_saved,
+        )
+        e._router.update(model=model, role="critic", reward=critic_reward)  # noqa: SLF001
 
     def _compute_stagnation_level(self, island_id: str) -> int:
         """P2-1: 计算停滞等级.

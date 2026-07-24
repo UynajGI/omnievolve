@@ -273,6 +273,56 @@ class ReplayEvaluator:
             "effect_size": effect_size,
         }
 
+    def compare_equal_budget(
+        self,
+        champion_scores: list[float],
+        challenger_scores: list[float],
+        *,
+        champion_cost_usd: float = 0.0,
+        challenger_cost_usd: float = 0.0,
+        champion_wall_sec: float = 0.0,
+        challenger_wall_sec: float = 0.0,
+    ) -> dict[str, Any]:
+        """设计文档 §6.2: 等预算比较.
+
+        Champion 与 Challenger 使用相同快照和预算，
+        比较任务前沿、成本、稳定性和健康度。
+
+        额外检查:
+        - 成本回归: Challenger 成本不得超过 Champion 的 1.5 倍
+        - 时间回归: Challenger 墙钟时间不得超过 Champion 的 2 倍
+        - 稳定性: 标准差不得显著增大
+        """
+        import numpy as np
+
+        base = self.compare(champion_scores, challenger_scores)
+
+        # 成本约束
+        if champion_cost_usd > 0 and challenger_cost_usd > champion_cost_usd * 1.5:
+            base["decision"] = "reject"
+            base["reason"] += f" | Cost regression: {challenger_cost_usd:.4f} > 1.5x champion"
+            return base
+
+        # 时间约束
+        if champion_wall_sec > 0 and challenger_wall_sec > champion_wall_sec * 2.0:
+            base["decision"] = "reject"
+            base["reason"] += f" | Time regression: {challenger_wall_sec:.1f}s > 2x champion"
+            return base
+
+        # 稳定性约束
+        if len(champion_scores) > 2 and len(challenger_scores) > 2:
+            champ_std = float(np.std(champion_scores))
+            chall_std = float(np.std(challenger_scores))
+            if chall_std > champ_std * 2.0 and champ_std > 0:
+                base["reason"] += f" | Stability warning: std {chall_std:.4f} > 2x champion {champ_std:.4f}"
+                if base["decision"] == "promote":
+                    base["decision"] = "hold"  # 降级为 hold
+
+        base["champion_cost"] = champion_cost_usd
+        base["challenger_cost"] = challenger_cost_usd
+        base["budget_equal"] = True
+        return base
+
 
 class MetaPlanner:
     """Meta 规划器.

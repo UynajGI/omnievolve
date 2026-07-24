@@ -176,13 +176,17 @@ class MetricsCalculator:
         knn_distances: list[float],
         ast_features: list[str],
         branch_sizes: list[int],
+        behavior_signatures: list[str] | None = None,
+        mechanism_tags: list[str] | None = None,
     ) -> dict[str, float]:
         """计算搜索空间覆盖率.
 
-        S8-05:
+        设计文档 §5.2.1 要求的 6 种信号:
         - thought_cluster_entropy: 思想簇分布的归一化熵
-        - knn_distance_distribution: KNN 距离分布
+        - knn_distance_distribution: KNN 距离分布（变异系数）
         - ast_feature_coverage: AST 特征覆盖
+        - behavior_signature_entropy: 行为签名多样性
+        - mechanism_tag_coverage: 机制标签覆盖率
         - branch_balance: 分支平衡度
         """
         result = {}
@@ -209,18 +213,36 @@ class MetricsCalculator:
         else:
             result["ast_feature_coverage"] = 0.0
 
-        # 4. 分支平衡度（归一化熵）
+        # 4. 行为签名多样性（归一化熵）
+        if behavior_signatures:
+            from collections import Counter
+            sig_counts = list(Counter(behavior_signatures).values())
+            result["behavior_signature_entropy"] = self._normalized_entropy(sig_counts)
+        else:
+            result["behavior_signature_entropy"] = 0.0
+
+        # 5. 机制标签覆盖率
+        if mechanism_tags:
+            unique_tags = len(set(mechanism_tags))
+            # 归一化: 假设 50 种可能的机制标签
+            result["mechanism_tag_coverage"] = min(unique_tags / 50.0, 1.0)
+        else:
+            result["mechanism_tag_coverage"] = 0.0
+
+        # 6. 分支平衡度（归一化熵）
         if branch_sizes:
             result["branch_balance"] = self._normalized_entropy(branch_sizes)
         else:
             result["branch_balance"] = 0.0
 
-        # 综合覆盖率
+        # 综合覆盖率（6 信号加权）
         result["coverage_entropy"] = (
-            0.3 * result["thought_cluster_entropy"]
-            + 0.25 * result["knn_distance_distribution"]
-            + 0.25 * result["ast_feature_coverage"]
-            + 0.2 * result["branch_balance"]
+            0.20 * result["thought_cluster_entropy"]
+            + 0.15 * result["knn_distance_distribution"]
+            + 0.20 * result["ast_feature_coverage"]
+            + 0.15 * result["behavior_signature_entropy"]
+            + 0.15 * result["mechanism_tag_coverage"]
+            + 0.15 * result["branch_balance"]
         )
 
         return result

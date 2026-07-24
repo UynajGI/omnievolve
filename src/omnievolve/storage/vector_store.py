@@ -221,6 +221,56 @@ class VectorStore:
             logger.warning("Novelty check failed, defaulting to novel: %s", e)
             return True, 0.0
 
+    def query_parallel_profiles(
+        self,
+        text: str,
+        collections: list[str],
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """设计文档 §8.2: 新旧 Profile 并行查询.
+
+        Embedding 模型更换时，新旧索引并行查询，
+        合并结果后按相似度排序。达到覆盖率后再切换默认 Profile。
+
+        Args:
+            text: 查询文本
+            collections: 多个 collection 名称（如 ["candidate_old_profile", "candidate_new_profile"]）
+            top_k: 每个 collection 返回的最大结果数
+
+        Returns:
+            合并后的结果列表，按相似度降序
+        """
+        try:
+            vectors = self._embedder.embed([text])
+            query_vec = vectors[0]
+        except Exception as e:
+            logger.warning("Embedding failed for parallel query: %s", e)
+            return []
+
+        all_hits: list[dict[str, Any]] = []
+        for collection in collections:
+            try:
+                hits = self._backend.query(collection, query_vec, top_k=top_k)
+                for h in hits:
+                    all_hits.append({
+                        "id": h.id,
+                        "score": h.similarity,
+                        "collection": collection,
+                        "metadata": h.metadata,
+                    })
+            except Exception as e:
+                logger.debug("Parallel query failed for %s: %s", collection, e)
+
+        # 去重 + 按相似度排序
+        seen: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for h in sorted(all_hits, key=lambda x: x["score"], reverse=True):
+            if h["id"] not in seen:
+                seen.add(h["id"])
+                deduped.append(h)
+
+        return deduped[:top_k]
+
     @staticmethod
     def _cosine_sim(a: list[float] | Any, b: list[float] | Any) -> float:
         """Cosine similarity."""
