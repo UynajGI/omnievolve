@@ -15,7 +15,9 @@ zvec 0.6 API:
 
 from __future__ import annotations
 
+import atexit
 import logging
+import shutil
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -53,6 +55,7 @@ class ZvecBackend:
             ef_construction: HNSW 构建时候选列表大小
         """
         self._storage_path = storage_path or tempfile.mkdtemp(prefix="omnievolve_zvec_")
+        self._owns_storage = storage_path is None  # 标记是否为自建临时目录
         self._metric = metric
         self._m = m
         self._ef_construction = ef_construction
@@ -74,6 +77,10 @@ class ZvecBackend:
                 "zvec not installed, falling back to NumPy backend. "
                 "Install with: pip install omnievolve[vector]"
             )
+
+        # 进程退出时自动清理临时目录
+        if self._owns_storage:
+            atexit.register(self.cleanup)
 
     def _metric_type(self) -> Any:
         """获取 zvec MetricType."""
@@ -246,6 +253,14 @@ class ZvecBackend:
     def is_using_fallback(self) -> bool:
         """是否使用 NumPy fallback."""
         return self._zvec is None
+
+    def cleanup(self) -> None:
+        """清理自建临时目录."""
+        if self._owns_storage:
+            try:
+                shutil.rmtree(self._storage_path, ignore_errors=True)
+            except Exception:
+                logger.debug("Failed to clean up zvec storage: %s", self._storage_path)
 
 
 def create_vector_backend(

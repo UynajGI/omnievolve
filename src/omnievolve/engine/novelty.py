@@ -267,7 +267,7 @@ Respond with exactly one word: allow, reject, or allow_with_penalty"""
                 [{"role": "user", "content": prompt}],
                 agent_role="meta",
             )
-            decision = response.content.strip().lower()
+            decision = (response.content or "").strip().lower()
             for valid in ("allow", "reject", "allow_with_penalty"):
                 if valid in decision:
                     return valid

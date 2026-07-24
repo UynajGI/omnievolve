@@ -18,19 +18,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class EvolutionSettings(BaseSettings):
     """进化引擎配置."""
 
-    max_generations: int = 50
-    population_size: int = 8
-    island_count: int = 4
-    novelty_threshold: float = 0.92
-    novelty_retry_limit: int = 3
-    mutation_rate: float = 0.3
-    crossover_rate: float = 0.15
-    max_stagnation_gens: int = 5
-    token_budget: int = 2_000_000
-    compute_budget_sec: float = 0  # 0 表示不单独限制
-    sandbox_timeout: float = 30.0
-    sandbox_mem_limit_mb: int = 4096
-    health_window_gens: int = 3
+    max_generations: int = Field(default=50, gt=0)
+    population_size: int = Field(default=8, gt=0)
+    island_count: int = Field(default=4, gt=0)
+    novelty_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
+    novelty_retry_limit: int = Field(default=3, ge=0)
+    mutation_rate: float = Field(default=0.3, ge=0.0, le=1.0)
+    crossover_rate: float = Field(default=0.15, ge=0.0, le=1.0)
+    max_stagnation_gens: int = Field(default=5, gt=0)
+    token_budget: int = Field(default=2_000_000, gt=0)
+    compute_budget_sec: float = Field(default=0, ge=0)  # 0 表示不单独限制
+    sandbox_timeout: float = Field(default=30.0, gt=0)
+    sandbox_mem_limit_mb: int = Field(default=4096, gt=0)
+    health_window_gens: int = Field(default=3, gt=0)
     self_evolve_enabled: bool = True
     async_pipeline_enabled: bool = False  # Phase 4: 原生异步流水线
 

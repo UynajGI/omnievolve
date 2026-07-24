@@ -65,6 +65,7 @@ def check_headless_available(agent: str) -> bool:
         result = subprocess.run(
             ["which", cmd],
             capture_output=True,
+            text=True,
             timeout=5,
         )
         return result.returncode == 0
