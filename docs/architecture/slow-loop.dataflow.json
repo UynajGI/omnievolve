@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "OmniEvolve Slow Loop — 策略评估与受控元进化",
+    "subtitle": "每 health_window_gens 代触发 · 遥测聚合 → 健康策略 → 元规划 → 治理分级 → Champion/Challenger",
+    "visual_preset": "signal-flow",
+    "quality_profile": "standard",
+    "animation": "trace",
+    "views": [
+      {
+        "id": "full-cycle",
+        "label": "完整 Slow Loop",
+        "focus": ["telemetry", "health", "metaplanner", "governance", "experiment", "replay", "decision"],
+        "note": "从遥测聚合到策略提升/拒绝的完整 Slow Loop 周期"
+      },
+      {
+        "id": "governance-flow",
+        "label": "治理分级",
+        "focus": ["metaplanner", "governance"],
+        "note": "L0 自动 / L1 需 Replay / L2 禁止 — 评估语义不可变边界"
+      }
+    ],
+    "viewBox": [1080, 760]
+  },
+  "stages": [
+    { "label": "1. Telemetry" },
+    { "label": "2. Health" },
+    { "label": "3. Meta Planning" },
+    { "label": "4. Governance" },
+    { "label": "5. Decision" }
+  ],
+  "nodes": [
+    { "id": "telemetry", "type": "backend", "label": "TelemetryAggregator", "sublabel": "ROI + 覆盖率 + 记忆 + 污染", "stage": 0, "row": 0 },
+    { "id": "db", "type": "database", "label": "SQLite + GraphStore", "sublabel": "候选 / 评估 / 血缘", "stage": 0, "row": 2 },
+
+    { "id": "health", "type": "backend", "label": "HealthPolicy", "sublabel": "assess() → OK/WARN/CRITICAL", "stage": 1, "row": 0 },
+
+    { "id": "metaplanner", "type": "backend", "label": "MetaPlanner", "sublabel": "propose() → MetaActions", "stage": 2, "row": 0 },
+    { "id": "tuner", "type": "backend", "label": "BayesianTuner", "sublabel": "GP + EI 超参搜索", "stage": 2, "row": 2, "tag": "高斯过程" },
+
+    { "id": "governance", "type": "security", "label": "Governance", "sublabel": "L0 auto / L1 replay / L2 forbid", "stage": 3, "row": 0, "tag": "不可变边界" },
+
+    { "id": "experiment", "type": "backend", "label": "PolicyExperiment", "sublabel": "Champion vs Challenger", "stage": 4, "row": 0 },
+    { "id": "replay", "type": "backend", "label": "ReplayEvaluator", "sublabel": "等预算比较", "stage": 4, "row": 2 },
+    { "id": "decision", "type": "backend", "label": "Promote / Reject", "sublabel": "策略提升或回滚", "stage": 4, "row": 4, "tag": "审计日志" }
+  ],
+  "flows": [
+    { "id": "s1", "from": "db", "to": "telemetry", "label": "query", "variant": "dashed" },
+    { "id": "s2", "from": "telemetry", "to": "health", "label": "metrics", "variant": "emphasis" },
+    { "id": "s3", "from": "health", "to": "metaplanner", "label": "health output" },
+    { "id": "s4", "from": "tuner", "to": "metaplanner", "label": "EI suggestion", "route": "vertical-channel", "channelX": 470 },
+    { "id": "s5", "from": "metaplanner", "to": "governance", "label": "MetaActions" },
+    { "id": "s6", "from": "governance", "to": "experiment", "label": "L0 approved" },
+    { "id": "s7", "from": "governance", "to": "replay", "label": "L1 → canary", "variant": "dashed" },
+    { "id": "s8", "from": "experiment", "to": "decision", "label": "result", "route": "vertical-channel", "channelX": 1020, "labelDy": 53 },
+    { "id": "s9", "from": "replay", "to": "decision", "label": "comparison" },
+    { "id": "s10", "from": "decision", "to": "db", "label": "audit log", "variant": "dashed", "route": "bottom-channel", "channelY": 720 }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "评估语义不可变边界", "items": ["L2: 语义/测试/隐藏数据/指标公式 永久禁止修改", "L1: 超时/渐进阶段/资源 可提 Challenger 但须 Replay", "L0: 日志/追踪/临时目录 可自动调整"] },
+    { "dot": "cyan", "title": "BayesianTuner", "items": ["高斯过程回归 + Expected Improvement", "搜索 exploration_c / crossover_rate / mutation_rate", "比网格搜索/随机搜索高效 10-50x"] },
+    { "dot": "emerald", "title": "Champion vs Challenger", "items": ["等预算比较：相同代数下比较分数", "Challenger 须显著优于 Champion 才提升", "拒绝时自动回滚，保留审计轨迹"] }
+  ]
+}

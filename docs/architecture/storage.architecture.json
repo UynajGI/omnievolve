@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OmniEvolve 存储架构",
+    "subtitle": "SQLite + CAS Artifact Store + Vector (HNSW) + Graph + Git Code Store",
+    "quality_profile": "standard",
+    "views": [
+      {
+        "id": "write-path",
+        "label": "写入路径",
+        "focus": ["engine", "artifact", "db", "vector_indexer", "zvec"],
+        "note": "候选代码经 SHA-256 存入 CAS，元数据入 SQLite，向量索引入 zvec"
+      },
+      {
+        "id": "read-path",
+        "label": "检索路径",
+        "focus": ["engine", "hybrid", "vector_store", "graph_store"],
+        "note": "HybridRetriever 融合向量相似 + 图谱血缘 + 关键词检索"
+      }
+    ],
+    "viewBox": [1180, 580]
+  },
+  "components": [
+    { "id": "engine", "type": "external", "label": "EvolutionEngine", "sublabel": "生产者/消费者", "pos": [30, 40], "size": [140, 50] },
+
+    { "id": "artifact", "type": "backend", "label": "ArtifactStore", "sublabel": "SHA-256 CAS", "pos": [250, 40], "size": [130, 56], "tag": "内容寻址" },
+    { "id": "git_store", "type": "backend", "label": "GitCodeStore", "sublabel": "per-task 仓库", "pos": [250, 150], "size": [130, 50], "tag": "原生 Git" },
+
+    { "id": "db", "type": "database", "label": "Database", "sublabel": "SQLite + WAL + Repos", "pos": [470, 40], "size": [140, 56], "tag": "UnitOfWork" },
+    { "id": "vector_indexer", "type": "backend", "label": "VectorIndexer", "sublabel": "Outbox 消费者", "pos": [470, 150], "size": [140, 50], "tag": "vector_index_job" },
+
+    { "id": "embedder", "type": "backend", "label": "Embedder", "sublabel": "ST + LiteLLM + Fake", "pos": [700, 150], "size": [140, 50], "tag": "HF→mirror→ModelScope" },
+    { "id": "zvec", "type": "database", "label": "ZvecBackend", "sublabel": "HNSW 索引", "pos": [920, 150], "size": [130, 50], "tag": "近似最近邻" },
+
+    { "id": "hybrid", "type": "backend", "label": "HybridRetriever", "sublabel": "融合检索", "pos": [470, 290], "size": [140, 56], "tag": "回忆+灵感" },
+    { "id": "vector_store", "type": "database", "label": "VectorStore", "sublabel": "嵌入 + 元数据", "pos": [700, 290], "size": [130, 50] },
+    { "id": "graph_store", "type": "database", "label": "GraphStore", "sublabel": "父子 + 引用边", "pos": [920, 290], "size": [130, 50] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "storage/ — 持久化层", "wraps": ["artifact", "git_store", "db", "vector_indexer", "embedder", "zvec", "hybrid", "vector_store", "graph_store"] },
+    { "kind": "security-group", "label": "Vector Pipeline", "wraps": ["vector_indexer", "embedder", "zvec", "vector_store"] }
+  ],
+  "connections": [
+    { "id": "c1", "from": "engine", "to": "artifact", "label": "save source" },
+    { "id": "c2", "from": "engine", "to": "git_store", "label": "commit", "fromSide": "bottom", "toSide": "top" },
+    { "id": "c3", "from": "artifact", "to": "db", "label": "hash ref" },
+    { "id": "c4", "from": "db", "to": "vector_indexer", "label": "outbox", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "c5", "from": "vector_indexer", "to": "embedder", "label": "embed" },
+    { "id": "c6", "from": "embedder", "to": "zvec", "label": "vector" },
+    { "id": "c7", "from": "zvec", "to": "vector_store", "label": "index", "fromSide": "bottom", "toSide": "top" },
+    { "id": "c8", "from": "engine", "to": "hybrid", "label": "retrieve", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "via": [[100, 290], [400, 290]], "labelDy": 100 },
+    { "id": "c9", "from": "hybrid", "to": "vector_store", "label": "semantic" },
+    { "id": "c10", "from": "hybrid", "to": "graph_store", "label": "lineage", "fromSide": "right", "toSide": "left", "via": [[610, 318], [610, 260], [985, 260], [985, 290]], "labelDy": -30 },
+    { "id": "c11", "from": "hybrid", "to": "db", "label": "keyword", "fromSide": "left", "toSide": "left", "via": [[400, 318], [400, 68]], "labelDy": 120 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Vector Outbox 一致性", "items": ["候选/思想创建时必须 enqueue vector_index_job", "VectorIndexer 消费 outbox → embed → zvec", "保证 CAS/SQLite/zvec 最终一致"] },
+    { "dot": "emerald", "title": "ArtifactStore CAS", "items": ["SHA-256 内容寻址，绝不写临时路径", "去重：相同内容只存一份", "支持 Git 后端和 SQLite 后端"] },
+    { "dot": "rose", "title": "HybridRetriever", "items": ["语义相似 (zvec HNSW) + 血缘图谱 (GraphStore)", "+ 关键词 (FTS5) 三路融合", "为 Director 灵感和 Coder 上下文提供回忆"] }
+  ]
+}

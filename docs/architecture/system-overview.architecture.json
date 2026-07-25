@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OmniEvolve 系统架构",
+    "subtitle": "LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + MCTS 树搜索 + 受控元进化",
+    "quality_profile": "standard",
+    "views": [
+      {
+        "id": "fast-loop-path",
+        "label": "Fast Loop 主路径",
+        "focus": ["cli", "engine", "fastloop", "agents", "gateway", "storage", "evaluator", "sandbox"],
+        "note": "单候选的完整进化链：选父 → Director → Coder → 存储 → 评估 → 沙箱执行 → 提交状态"
+      },
+      {
+        "id": "meta-evolution",
+        "label": "Slow Loop 元进化",
+        "focus": ["engine", "slowloop", "telemetry", "meta"],
+        "note": "每 N 代聚合遥测 → 健康策略 → 元规划 → 治理分级 (L0/L1/L2) → Champion/Challenger"
+      },
+      {
+        "id": "llm-path",
+        "label": "LLM 调用链",
+        "focus": ["agents", "gateway", "llm"],
+        "note": "Director/Coder/Critic 通过 LLMGateway + CircuitBreaker 访问外部 LLM"
+      }
+    ],
+    "viewBox": [1240, 680]
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "User", "sublabel": "task.py + evaluator", "pos": [30, 50], "size": [100, 50] },
+    { "id": "llm", "type": "external", "label": "LLM Providers", "sublabel": "DeepSeek / OpenAI / Gemini", "pos": [1060, 50], "size": [150, 50], "tag": "外部 API" },
+
+    { "id": "cli", "type": "backend", "label": "Typer CLI", "sublabel": "run / status / best / doctor", "pos": [30, 210], "size": [120, 56] },
+    { "id": "engine", "type": "backend", "label": "EvolutionEngine", "sublabel": "orchestrator · 958L", "pos": [220, 210], "size": [150, 60], "tag": "核心编排" },
+    { "id": "fastloop", "type": "backend", "label": "FastLoopStep", "sublabel": "11-step pipeline", "pos": [450, 210], "size": [140, 56], "tag": "prepare / commit" },
+    { "id": "agents", "type": "backend", "label": "Agents", "sublabel": "Director → Coder → Critic", "pos": [680, 210], "size": [140, 56] },
+    { "id": "gateway", "type": "backend", "label": "LLMGateway", "sublabel": "Router + CircuitBreaker", "pos": [910, 210], "size": [140, 56] },
+    { "id": "storage", "type": "database", "label": "Storage Layer", "sublabel": "SQLite + CAS + Vector + Graph + Git", "pos": [1060, 330], "size": [160, 64], "tag": "SHA-256 内容寻址" },
+
+    { "id": "mcts", "type": "backend", "label": "ProgressiveMCGS", "sublabel": "UCB1 + Beta backprop", "pos": [220, 370], "size": [150, 56], "tag": "树边搜索" },
+    { "id": "evaluator", "type": "backend", "label": "TaskEvaluator", "sublabel": "Protocol · build_plan", "pos": [680, 370], "size": [140, 56] },
+    { "id": "sandbox", "type": "backend", "label": "Sandbox", "sublabel": "Subprocess / Docker / Hardened", "pos": [910, 370], "size": [140, 56], "tag": "default-deny" },
+
+    { "id": "slowloop", "type": "backend", "label": "SlowLoop", "sublabel": "meta-evaluation cycle", "pos": [220, 510], "size": [150, 56] },
+    { "id": "telemetry", "type": "backend", "label": "Telemetry", "sublabel": "ROI + coverage + health", "pos": [450, 510], "size": [140, 56] },
+    { "id": "meta", "type": "security", "label": "Meta Governance", "sublabel": "L0 auto / L1 replay / L2 forbid", "pos": [680, 510], "size": [150, 56], "tag": "BayesianTuner GP+EI" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "engine/ — 进化引擎", "wraps": ["engine", "fastloop", "mcts", "slowloop"] },
+    { "kind": "security-group", "label": "隔离执行", "wraps": ["evaluator", "sandbox"] }
+  ],
+  "connections": [
+    { "id": "user-to-cli", "from": "user", "to": "cli", "label": "run task.py" },
+    { "id": "cli-to-engine", "from": "cli", "to": "engine", "label": "evolve", "variant": "emphasis" },
+    { "id": "engine-to-fastloop", "from": "engine", "to": "fastloop", "label": "per candidate" },
+    { "id": "engine-to-mcts", "from": "engine", "to": "mcts", "label": "select", "fromSide": "bottom", "toSide": "top", "labelDy": 30 },
+    { "id": "mcts-to-fastloop", "from": "mcts", "to": "fastloop", "label": "parent", "fromSide": "right", "toSide": "bottom", "via": [[400, 397], [400, 266]], "labelDy": -20 },
+    { "id": "fastloop-to-agents", "from": "fastloop", "to": "agents" },
+    { "id": "agents-to-gateway", "from": "agents", "to": "gateway", "label": "LLM call" },
+    { "id": "gateway-to-llm", "from": "gateway", "to": "llm", "label": "completion", "variant": "security", "fromSide": "top", "toSide": "bottom", "via": [[980, 184], [980, 100], [1135, 100], [1135, 50]], "labelDy": -30 },
+    { "id": "fastloop-to-storage", "from": "fastloop", "to": "storage", "label": "ArtifactStore", "fromSide": "right", "toSide": "left", "via": [[590, 238], [590, 330], [1060, 330]], "labelDy": 40 },
+    { "id": "fastloop-to-evaluator", "from": "fastloop", "to": "evaluator", "label": "build plan", "fromSide": "bottom", "toSide": "top", "labelDy": 30 },
+    { "id": "evaluator-to-sandbox", "from": "evaluator", "to": "sandbox", "label": "execute" },
+    { "id": "sandbox-to-fastloop", "from": "sandbox", "to": "fastloop", "label": "commit", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "via": [[850, 344], [850, 300], [590, 300], [590, 266]], "labelDy": 20 },
+    { "id": "engine-to-slowloop", "from": "engine", "to": "slowloop", "label": "every N gens", "fromSide": "left", "toSide": "left", "via": [[160, 240], [160, 510]], "labelDy": 120 },
+    { "id": "slowloop-to-telemetry", "from": "slowloop", "to": "telemetry", "label": "aggregate" },
+    { "id": "telemetry-to-meta", "from": "telemetry", "to": "meta", "label": "health report" },
+    { "id": "meta-to-slowloop", "from": "meta", "to": "slowloop", "label": "L0/L1/L2", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[755, 566], [755, 610], [295, 610], [295, 566]], "labelDy": 36 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Fast Loop（快速循环）", "items": ["每候选 11 步：选父 → Director → NoveltyGate → Coder → Critic 重试", "prepare/commit 拆分支持异步并行流水线", "P0-1: 评估失败反馈回流 Coder（通过率 19%→57%）"] },
+    { "dot": "emerald", "title": "MCTS 树搜索", "items": ["ProgressiveMCGS: UCB1 + Beta 贝叶斯回传", "渐进式探索衰减（UCT→Elite 软切换）", "虚拟损失 + 回滚防止并行泄漏"] },
+    { "dot": "rose", "title": "安全边界", "items": ["Sandbox default-deny: 网络/只读/非root/drop caps", "Governance L2: 评估语义永久禁止自动修改", "ArtifactStore: SHA-256 内容寻址，绝不写临时路径"] }
+  ]
+}
