@@ -46,9 +46,9 @@
 
 ### 新增
 - `configs/sort_optimization.toml`: 排序优化专用配置（慢循环 enabled）
-- `reports/optimization_plan_v0.3.md`: v0.3 优化计划（P0/P1/P2 路线图）
-- `reports/omnievolve-pipeline.html`: 进化管道架构图（archify）
-- 10 个新测试 (`tests/agents/test_eval_feedback.py`)，总计 659 tests
+- `.archive/reports/optimization_plan_v0.3.md`: v0.3 优化计划（P0/P1/P2 全部完成）
+- `docs/architecture/`: 4 张交互式 HTML 架构图（archify）
+- 10 个新测试 (`tests/agents/test_eval_feedback.py`)，总计 849 tests
 
 ## [0.2.0-beta] — 2026-07-20
 
