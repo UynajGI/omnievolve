@@ -280,21 +280,6 @@ def compute_director_reward(
     )
 
 
-def compute_coder_reward(
-    patch_applied: bool,
-    compile_success: bool,
-    test_pass_rate: float,
-    performance_gain: float,
-) -> float:
-    """计算 Coder 奖励."""
-    return (
-        0.2 * (1.0 if patch_applied else 0.0)
-        + 0.2 * (1.0 if compile_success else 0.0)
-        + 0.3 * test_pass_rate
-        + 0.3 * performance_gain
-    )
-
-
 def compute_critic_reward(
     defect_recall: float,
     false_rejection_rate: float,

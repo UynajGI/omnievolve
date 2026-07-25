@@ -140,7 +140,7 @@ class DockerBackend:
                     logger.warning("Container timed out after %ds", policy.timeout_sec)
                 else:
                     logger.warning("Container wait failed: %s: %s", err_name, e)
-                    timed_out = True
+                    timed_out = False
                 try:
                     container.kill()
                 except Exception:

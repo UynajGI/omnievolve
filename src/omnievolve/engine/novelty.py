@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 
@@ -63,8 +64,8 @@ class NoveltyGate:
         self._use_epiplexity = use_epiplexity
         self._epiplexity_min = epiplexity_min
         self._llm_judge = llm_judge
-        # AST 签名缓存（最近 N 个候选的结构签名）
-        self._recent_signatures: set[str] = set()
+        # AST 签名缓存（LRU 淘汰，最近 N 个候选的结构签名）
+        self._recent_signatures: OrderedDict[str, None] = OrderedDict()
         self._max_cached_signatures = max_cached_signatures
 
     def check(
@@ -169,11 +170,10 @@ class NoveltyGate:
             # 与现有签名比较：完全相同则不新颖
             if signature in self._recent_signatures:
                 return False
-            # 加入缓存（维护大小上限）
-            self._recent_signatures.add(signature)
+            # 加入缓存（LRU 淘汰）
+            self._recent_signatures[signature] = None
             if len(self._recent_signatures) > self._max_cached_signatures:
-                # 简单策略：超限时清空重建（避免内存无限增长）
-                self._recent_signatures = {signature}
+                self._recent_signatures.popitem(last=False)
             return True
         except SyntaxError:
             return True  # 语法错误时不阻止
