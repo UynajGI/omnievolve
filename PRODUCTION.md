@@ -1,6 +1,15 @@
 # OmniEvolve 生产运维指南
 
-> v0.2.0-beta | 735 tests | 70% coverage | ruff+mypy clean
+> v0.2.0-beta | 735 tests | 80% coverage | ruff+mypy clean
+
+## 架构参考
+
+交互式 HTML 架构图位于 `docs/architecture/`（浏览器打开即可）：
+
+- [系统总览](docs/architecture/system-overview.html) — 全局模块数据流与控制流
+- [Fast Loop](docs/architecture/fast-loop.html) — 单候选 11 步进化流水线
+- [Slow Loop](docs/architecture/slow-loop.html) — 策略窗口评估与受控元进化
+- [存储架构](docs/architecture/storage.html) — SQLite + CAS + Vector + Graph + Git
 
 ## 快速健康检查
 
@@ -62,6 +71,12 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 # 每代自动持久化检查点到 experiment.checkpoint_data
 # 崩溃后从中断处继续：
 omnievolve run ./code.py -e eval:MyEvaluator -c config.toml --resume <experiment_id>
+
+# 审计完整性（哈希、版本、缺失索引）
+omnievolve audit <experiment_id>
+
+# 扫描并修复过期租约、未完成 Outbox、孤立 Artifact
+omnievolve recover <experiment_id> --apply
 ```
 
 ### 数据库损坏
