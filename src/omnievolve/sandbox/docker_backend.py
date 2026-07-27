@@ -245,10 +245,12 @@ class DockerBackend:
         if not plan.commands:
             return ["echo", "No commands specified"]
 
-        # 将所有命令串联
+        import shlex
+
+        # 将所有命令串联，每个参数做 shell 转义
         commands = []
         for cmd in plan.commands:
-            commands.append(" ".join(cmd.argv))
+            commands.append(" ".join(shlex.quote(a) for a in cmd.argv))
 
         return ["/bin/sh", "-c", " && ".join(commands)]
 
