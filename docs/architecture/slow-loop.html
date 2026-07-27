@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-preset="classic">
+<html lang="en" data-theme="dark" data-preset="signal-flow">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 2.11.0">
-  <title>OmniEvolve Evolution Pipeline Diagram</title>
+  <title>OmniEvolve Slow Loop — 策略评估与受控元进化 Diagram</title>
   <script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -3766,12 +3766,12 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>OmniEvolve Evolution Pipeline</h1>
+        <h1>OmniEvolve Slow Loop — 策略评估与受控元进化</h1>
       </div>
-      <p class="subtitle">Fast Loop (11-step) + Slow Loop + P0-1 Feedback Loop</p>
+      <p class="subtitle">每 health_window_gens 代触发 · 遥测聚合 → 健康策略 → 元规划 → 治理分级 → Champion/Challenger</p>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"full-cycle","label":"完整 Slow Loop","focus":["telemetry","health","metaplanner","governance","experiment","replay","decision"],"note":"从遥测聚合到策略提升/拒绝的完整 Slow Loop 周期"},{"id":"governance-flow","label":"治理分级","focus":["metaplanner","governance"],"note":"L0 自动 / L1 需 Replay / L2 禁止 — 评估语义不可变边界"}]</script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
       <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
       <div class="guided-view-copy">
@@ -3813,9 +3813,9 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="map">
-      <svg viewBox="0 0 1020 458" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="standard" data-quality-gates="advisory">
-        <title id="archify-diagram-title">OmniEvolve Evolution Pipeline</title>
-        <desc id="archify-diagram-description">Fast Loop (11-step) + Slow Loop + P0-1 Feedback Loop</desc>
+      <svg viewBox="0 0 1080 760" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-animation="trace" data-preset="signal-flow" data-quality-profile="standard">
+        <title id="archify-diagram-title">OmniEvolve Slow Loop — 策略评估与受控元进化</title>
+        <desc id="archify-diagram-description">每 health_window_gens 代触发 · 遥测聚合 → 健康策略 → 元规划 → 治理分级 → Champion/Challenger</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -3838,241 +3838,191 @@
         <!-- Background Grid -->
         <rect width="100%" height="100%" fill="url(#grid)" />
 
-        <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" x="10" y="30" width="970" height="100" rx="12" class="c-region" stroke-width="1"/>
-        <text x="18" y="48" class="t-cloud" font-size="9" font-weight="600">Fast Loop — per candidate</text>
+        <!-- Data Stages -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="0" x="16" y="46" width="168" height="640" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="100" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">01 / 1. Telemetry</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" x="10" y="170" width="810" height="100" rx="12" class="c-region" stroke-width="1"/>
-        <text x="18" y="188" class="t-cloud" font-size="9" font-weight="600">Slow Loop — every N gens</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="1" x="231" y="46" width="168" height="640" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="315" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">02 / 2. Health</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="2" x="170" y="290" width="650" height="100" rx="12" class="c-region" stroke-width="1"/>
-        <text x="178" y="308" class="t-cloud" font-size="9" font-weight="600">Persistence</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="2" x="446" y="46" width="168" height="640" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="530" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">03 / 3. Meta Planning</text>
 
-        <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="select" data-edge-to="director" data-edge-key="0" data-edge-id="select-director" data-composition-points="150,85;200,85" d="M 150 85 L 200 85" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="director" data-edge-to="coder" data-edge-key="1" data-edge-id="director-coder" data-composition-points="310,85;360,85" d="M 310 85 L 360 85" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="coder" data-edge-to="critic" data-edge-key="2" data-edge-id="coder-critic" data-composition-points="470,85;520,85" d="M 470 85 L 520 85" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="critic" data-edge-to="sandbox" data-edge-key="3" data-edge-id="critic-sandbox" data-composition-points="630,85;680,85" d="M 630 85 L 680 85" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="sandbox" data-edge-to="evaluator" data-edge-key="4" data-edge-id="sandbox-evaluator" data-composition-points="790,85;840,85" d="M 790 85 L 840 85" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="evaluator" data-edge-to="coder" data-edge-label="P0-1: stderr + failure_reason" data-edge-key="5" data-edge-id="p0-feedback" data-composition-points="895,60;655,60;655,60;415,60" d="M 895 60 L 655 60 L 655 60 L 415 60" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="evaluator" data-edge-to="telemetry" data-edge-label="every N gens" data-edge-key="6" data-edge-id="eval-telemetry" data-composition-points="895,110;895,167.5;150,167.5;150,225" d="M 895 110 L 895 159.5 Q 895 167.5 887 167.5 L 158 167.5 Q 150 167.5 150 175.5 L 150 225" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="telemetry" data-edge-to="health" data-edge-key="7" data-edge-id="telemetry-health" data-composition-points="150,225;200,225" d="M 150 225 L 200 225" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="health" data-edge-to="metaplanner" data-edge-key="8" data-edge-id="health-metaplanner" data-composition-points="310,225;360,225" d="M 310 225 L 360 225" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="metaplanner" data-edge-to="governance" data-edge-key="9" data-edge-id="metaplanner-governance" data-composition-points="470,225;520,225" d="M 470 225 L 520 225" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="governance" data-edge-to="challenger" data-edge-key="10" data-edge-id="governance-challenger" data-composition-points="630,225;680,225" d="M 630 225 L 680 225" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="challenger" data-edge-to="select" data-edge-label="update policy" data-edge-key="11" data-edge-id="challenger-select" data-composition-points="735,200;735,155;95,155;95,110" d="M 735 200 L 735 163 Q 735 155 727 155 L 103 155 Q 95 155 95 147 L 95 110" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="evaluator" data-edge-to="sqlite" data-edge-key="12" data-edge-id="eval-sqlite" data-composition-points="895,110;895,215;255,215;255,320" d="M 895 110 L 895 207 Q 895 215 887 215 L 263 215 Q 255 215 255 223 L 255 320" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="coder" data-edge-to="cas" data-edge-label="artifact" data-edge-key="13" data-edge-id="coder-cas" data-composition-points="415,110;415,215;495,215;495,320" d="M 415 110 L 415 207 Q 415 215 423 215 L 487 215 Q 495 215 495 223 L 495 320" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="evaluator" data-edge-to="vector" data-edge-label="outbox" data-edge-key="14" data-edge-id="eval-vector" data-composition-points="895,110;895,215;735,215;735,320" d="M 895 110 L 895 207 Q 895 215 887 215 L 743 215 Q 735 215 735 223 L 735 320" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="3" x="661" y="46" width="168" height="640" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="745" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">04 / 4. Governance</text>
 
-        <!-- Components -->
-        <g id="node-select" data-node-id="select" data-node-label="Selection" tabindex="0" role="button" aria-label="Focus Selection, Router + MCTS, Fast Loop — per candidate" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Router + MCTS" data-node-context="Fast Loop — per candidate">
-          <title>Selection · Router + MCTS · Fast Loop — per candidate</title>
-          <rect x="40" y="60" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="40" y="60" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 66) scale(0.6875)">
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="stage" data-composition-frame-id="4" x="876" y="46" width="168" height="640" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="960" y="68" class="t-dim" font-size="9" font-weight="600" text-anchor="middle">05 / 5. Decision</text>
+
+        <!-- Flow paths -->
+        <path data-edge-from="db" data-edge-to="telemetry" data-edge-label="query" data-edge-key="0" data-edge-id="s1" data-composition-points="100,356;100,356;100,186;100,186" d="M 100 356 L 100 356 L 100 186 L 100 186" class="a-dashed" data-animate="edge" style="--step:0" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="telemetry" data-edge-to="health" data-edge-label="metrics" data-edge-key="1" data-edge-id="s2" data-composition-points="156,157;259,157" d="M 156 157 L 259 157" class="a-emphasis" data-animate="edge" style="--step:1" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="health" data-edge-to="metaplanner" data-edge-label="health output" data-edge-key="2" data-edge-id="s3" data-composition-points="371,157;474,157" d="M 371 157 L 474 157" class="a-default" data-animate="edge" style="--step:2" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="tuner" data-edge-to="metaplanner" data-edge-label="EI suggestion" data-edge-key="3" data-edge-id="s4" data-composition-points="530,356;470,356;470,186;530,186" d="M 530 356 L 470 356 L 470 186 L 530 186" class="a-default" data-animate="edge" style="--step:3" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="metaplanner" data-edge-to="governance" data-edge-label="MetaActions" data-edge-key="4" data-edge-id="s5" data-composition-points="586,157;689,157" d="M 586 157 L 689 157" class="a-default" data-animate="edge" style="--step:4" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="governance" data-edge-to="experiment" data-edge-label="L0 approved" data-edge-key="5" data-edge-id="s6" data-composition-points="801,157;904,157" d="M 801 157 L 904 157" class="a-default" data-animate="edge" style="--step:5" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="governance" data-edge-to="replay" data-edge-label="L1 → canary" data-edge-key="6" data-edge-id="s7" data-composition-points="801,157;852.5,157;852.5,385;904,385" d="M 801 157 L 852.5 157 L 852.5 385 L 904 385" class="a-dashed" data-animate="edge" style="--step:6" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="experiment" data-edge-to="decision" data-edge-label="result" data-edge-key="7" data-edge-id="s8" data-composition-points="960,186;1020,186;1020,584;960,584" d="M 960 186 L 1020 186 L 1020 584 L 960 584" class="a-default" data-animate="edge" style="--step:7" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="replay" data-edge-to="decision" data-edge-label="comparison" data-edge-key="8" data-edge-id="s9" data-composition-points="960,414;960,414;960,584;960,584" d="M 960 414 L 960 414 L 960 584 L 960 584" class="a-default" data-animate="edge" style="--step:8" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="decision" data-edge-to="db" data-edge-label="audit log" data-edge-key="9" data-edge-id="s10" data-composition-points="904,613;904,720;156,720;156,385" d="M 904 613 L 904 720 L 156 720 L 156 385" class="a-dashed" data-animate="edge" style="--step:9" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+
+        <!-- Nodes -->
+        <g id="node-telemetry" data-node-id="telemetry" data-node-label="TelemetryAggregator" tabindex="0" role="button" aria-label="Focus TelemetryAggregator, ROI + 覆盖率 + 记忆 + 污染, 01 / 1. Telemetry" aria-pressed="false" data-node-kind="backend" data-node-sublabel="ROI + 覆盖率 + 记忆 + 污染" data-node-context="01 / 1. Telemetry">
+          <title>TelemetryAggregator · ROI + 覆盖率 + 记忆 + 污染 · 01 / 1. Telemetry</title>
+          <rect x="44" y="128" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="44" y="128" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:1" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(50 134) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="95" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Selection</text>
-        <text data-detail="context" x="95" y="99" class="t-muted" font-size="9" text-anchor="middle">Router + MCTS</text>
+          <text data-detail-anchor x="100" y="149" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">TelemetryAggregator</text>
+          <text data-detail="context" x="100" y="165" class="t-muted" font-size="7" text-anchor="middle">ROI + 覆盖率 + 记忆 + 污染</text>
         </g>
 
-        <g id="node-director" data-node-id="director" data-node-label="Director" tabindex="0" role="button" aria-label="Focus Director, thought + rationale, Fast Loop — per candidate" aria-pressed="false" data-node-kind="backend" data-node-sublabel="thought + rationale" data-node-context="Fast Loop — per candidate">
-          <title>Director · thought + rationale · Fast Loop — per candidate</title>
-          <rect x="200" y="60" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="200" y="60" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(206 66) scale(0.6875)">
+        <g id="node-db" data-node-id="db" data-node-label="SQLite + GraphStore" tabindex="0" role="button" aria-label="Focus SQLite + GraphStore, 候选 / 评估 / 血缘, 01 / 1. Telemetry" aria-pressed="false" data-node-kind="database" data-node-sublabel="候选 / 评估 / 血缘" data-node-context="01 / 1. Telemetry">
+          <title>SQLite + GraphStore · 候选 / 评估 / 血缘 · 01 / 1. Telemetry</title>
+          <rect x="44" y="356" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="44" y="356" width="112" height="58" rx="6" class="c-database" data-animate="node" style="--step:0" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(50 362) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-detail-anchor x="100" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">SQLite + GraphStore</text>
+          <text data-detail="context" x="100" y="393" class="t-muted" font-size="7" text-anchor="middle">候选 / 评估 / 血缘</text>
+        </g>
+
+        <g id="node-health" data-node-id="health" data-node-label="HealthPolicy" tabindex="0" role="button" aria-label="Focus HealthPolicy, assess() → OK/WARN/CRITICAL, 02 / 2. Health" aria-pressed="false" data-node-kind="backend" data-node-sublabel="assess() → OK/WARN/CRITICAL" data-node-context="02 / 2. Health">
+          <title>HealthPolicy · assess() → OK/WARN/CRITICAL · 02 / 2. Health</title>
+          <rect x="259" y="128" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="259" y="128" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:2" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(265 134) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="255" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Director</text>
-        <text data-detail="context" x="255" y="99" class="t-muted" font-size="9" text-anchor="middle">thought + rationale</text>
+          <text data-detail-anchor x="315" y="149" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">HealthPolicy</text>
+          <text data-detail="context" x="315" y="165" class="t-muted" font-size="7" text-anchor="middle">assess() → OK/WARN/CRITICAL</text>
         </g>
 
-        <g id="node-coder" data-node-id="coder" data-node-label="Coder" tabindex="0" role="button" aria-label="Focus Coder, SEARCH/REPLACE diff, Fast Loop — per candidate" aria-pressed="false" data-node-kind="backend" data-node-sublabel="SEARCH/REPLACE diff" data-node-context="Fast Loop — per candidate">
-          <title>Coder · SEARCH/REPLACE diff · Fast Loop — per candidate</title>
-          <rect x="360" y="60" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="360" y="60" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(366 66) scale(0.6875)">
+        <g id="node-metaplanner" data-node-id="metaplanner" data-node-label="MetaPlanner" tabindex="0" role="button" aria-label="Focus MetaPlanner, propose() → MetaActions, 03 / 3. Meta Planning" aria-pressed="false" data-node-kind="backend" data-node-sublabel="propose() → MetaActions" data-node-context="03 / 3. Meta Planning">
+          <title>MetaPlanner · propose() → MetaActions · 03 / 3. Meta Planning</title>
+          <rect x="474" y="128" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="474" y="128" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:3" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(480 134) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="415" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Coder</text>
-        <text data-detail="context" x="415" y="99" class="t-muted" font-size="9" text-anchor="middle">SEARCH/REPLACE diff</text>
+          <text data-detail-anchor x="530" y="149" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">MetaPlanner</text>
+          <text data-detail="context" x="530" y="165" class="t-muted" font-size="7" text-anchor="middle">propose() → MetaActions</text>
         </g>
 
-        <g id="node-critic" data-node-id="critic" data-node-label="Critic" tabindex="0" role="button" aria-label="Focus Critic, static + LLM review, Fast Loop — per candidate" aria-pressed="false" data-node-kind="backend" data-node-sublabel="static + LLM review" data-node-context="Fast Loop — per candidate">
-          <title>Critic · static + LLM review · Fast Loop — per candidate</title>
-          <rect x="520" y="60" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="520" y="60" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(526 66) scale(0.6875)">
+        <g id="node-tuner" data-node-id="tuner" data-node-label="BayesianTuner" tabindex="0" role="button" aria-label="Focus BayesianTuner, GP + EI 超参搜索, 03 / 3. Meta Planning" aria-pressed="false" data-node-kind="backend" data-node-sublabel="GP + EI 超参搜索" data-node-tag="高斯过程" data-node-context="03 / 3. Meta Planning">
+          <title>BayesianTuner · GP + EI 超参搜索 · 03 / 3. Meta Planning · 高斯过程</title>
+          <rect x="474" y="356" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="474" y="356" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:3" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(480 362) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="575" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Critic</text>
-        <text data-detail="context" x="575" y="99" class="t-muted" font-size="9" text-anchor="middle">static + LLM review</text>
+          <text data-detail-anchor x="530" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">BayesianTuner</text>
+          <text data-detail="context" x="530" y="393" class="t-muted" font-size="7" text-anchor="middle">GP + EI 超参搜索</text>
+        <text data-detail="fine" x="530" y="403" class="t-backend" font-size="7" text-anchor="middle">高斯过程</text>
         </g>
 
-        <g id="node-sandbox" data-node-id="sandbox" data-node-label="Sandbox" tabindex="0" role="button" aria-label="Focus Sandbox, subprocess / Docker, Fast Loop — per candidate" aria-pressed="false" data-node-kind="security" data-node-sublabel="subprocess / Docker" data-node-context="Fast Loop — per candidate">
-          <title>Sandbox · subprocess / Docker · Fast Loop — per candidate</title>
-          <rect x="680" y="60" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="680" y="60" width="110" height="50" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(686 66) scale(0.6875)">
+        <g id="node-governance" data-node-id="governance" data-node-label="Governance" tabindex="0" role="button" aria-label="Focus Governance, L0 auto / L1 replay / L2 forbid, 04 / 4. Governance" aria-pressed="false" data-node-kind="security" data-node-sublabel="L0 auto / L1 replay / L2 forbid" data-node-tag="不可变边界" data-node-context="04 / 4. Governance">
+          <title>Governance · L0 auto / L1 replay / L2 forbid · 04 / 4. Governance · 不可变边界</title>
+          <rect x="689" y="128" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="689" y="128" width="112" height="58" rx="6" class="c-security" data-animate="node" style="--step:5" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(695 134) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-detail-anchor x="735" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Sandbox</text>
-        <text data-detail="context" x="735" y="99" class="t-muted" font-size="9" text-anchor="middle">subprocess / Docker</text>
+          <text data-detail-anchor x="745" y="149" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Governance</text>
+          <text data-detail="context" x="745" y="165" class="t-muted" font-size="7" text-anchor="middle">L0 auto / L1 replay / L2 forbid</text>
+        <text data-detail="fine" x="745" y="175" class="t-security" font-size="7" text-anchor="middle">不可变边界</text>
         </g>
 
-        <g id="node-evaluator" data-node-id="evaluator" data-node-label="Evaluator" tabindex="0" role="button" aria-label="Focus Evaluator, score + metrics, Fast Loop — per candidate" aria-pressed="false" data-node-kind="backend" data-node-sublabel="score + metrics" data-node-context="Fast Loop — per candidate">
-          <title>Evaluator · score + metrics · Fast Loop — per candidate</title>
-          <rect x="840" y="60" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="840" y="60" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(846 66) scale(0.6875)">
+        <g id="node-experiment" data-node-id="experiment" data-node-label="PolicyExperiment" tabindex="0" role="button" aria-label="Focus PolicyExperiment, Champion vs Challenger, 05 / 5. Decision" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Champion vs Challenger" data-node-context="05 / 5. Decision">
+          <title>PolicyExperiment · Champion vs Challenger · 05 / 5. Decision</title>
+          <rect x="904" y="128" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="904" y="128" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:6" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(910 134) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="895" y="83" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Evaluator</text>
-        <text data-detail="context" x="895" y="99" class="t-muted" font-size="9" text-anchor="middle">score + metrics</text>
+          <text data-detail-anchor x="960" y="149" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">PolicyExperiment</text>
+          <text data-detail="context" x="960" y="165" class="t-muted" font-size="7" text-anchor="middle">Champion vs Challenger</text>
         </g>
 
-        <g id="node-telemetry" data-node-id="telemetry" data-node-label="Telemetry" tabindex="0" role="button" aria-label="Focus Telemetry, aggregate metrics, Slow Loop — every N gens" aria-pressed="false" data-node-kind="backend" data-node-sublabel="aggregate metrics" data-node-context="Slow Loop — every N gens">
-          <title>Telemetry · aggregate metrics · Slow Loop — every N gens</title>
-          <rect x="40" y="200" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="40" y="200" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(46 206) scale(0.6875)">
+        <g id="node-replay" data-node-id="replay" data-node-label="ReplayEvaluator" tabindex="0" role="button" aria-label="Focus ReplayEvaluator, 等预算比较, 05 / 5. Decision" aria-pressed="false" data-node-kind="backend" data-node-sublabel="等预算比较" data-node-context="05 / 5. Decision">
+          <title>ReplayEvaluator · 等预算比较 · 05 / 5. Decision</title>
+          <rect x="904" y="356" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="904" y="356" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:7" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(910 362) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="95" y="223" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Telemetry</text>
-        <text data-detail="context" x="95" y="239" class="t-muted" font-size="9" text-anchor="middle">aggregate metrics</text>
+          <text data-detail-anchor x="960" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">ReplayEvaluator</text>
+          <text data-detail="context" x="960" y="393" class="t-muted" font-size="7" text-anchor="middle">等预算比较</text>
         </g>
 
-        <g id="node-health" data-node-id="health" data-node-label="HealthPolicy" tabindex="0" role="button" aria-label="Focus HealthPolicy, alert + ROI, Slow Loop — every N gens" aria-pressed="false" data-node-kind="backend" data-node-sublabel="alert + ROI" data-node-context="Slow Loop — every N gens">
-          <title>HealthPolicy · alert + ROI · Slow Loop — every N gens</title>
-          <rect x="200" y="200" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="200" y="200" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(206 206) scale(0.6875)">
+        <g id="node-decision" data-node-id="decision" data-node-label="Promote / Reject" tabindex="0" role="button" aria-label="Focus Promote / Reject, 策略提升或回滚, 05 / 5. Decision" aria-pressed="false" data-node-kind="backend" data-node-sublabel="策略提升或回滚" data-node-tag="审计日志" data-node-context="05 / 5. Decision">
+          <title>Promote / Reject · 策略提升或回滚 · 05 / 5. Decision · 审计日志</title>
+          <rect x="904" y="584" width="112" height="58" rx="6" class="c-mask"/>
+          <rect x="904" y="584" width="112" height="58" rx="6" class="c-backend" data-animate="node" style="--step:8" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(910 590) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="255" y="223" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">HealthPolicy</text>
-        <text data-detail="context" x="255" y="239" class="t-muted" font-size="9" text-anchor="middle">alert + ROI</text>
+          <text data-detail-anchor x="960" y="605" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Promote / Reject</text>
+          <text data-detail="context" x="960" y="621" class="t-muted" font-size="7" text-anchor="middle">策略提升或回滚</text>
+        <text data-detail="fine" x="960" y="631" class="t-backend" font-size="7" text-anchor="middle">审计日志</text>
         </g>
 
-        <g id="node-metaplanner" data-node-id="metaplanner" data-node-label="MetaPlanner" tabindex="0" role="button" aria-label="Focus MetaPlanner, propose actions, Slow Loop — every N gens" aria-pressed="false" data-node-kind="backend" data-node-sublabel="propose actions" data-node-context="Slow Loop — every N gens">
-          <title>MetaPlanner · propose actions · Slow Loop — every N gens</title>
-          <rect x="360" y="200" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="360" y="200" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(366 206) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="415" y="223" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">MetaPlanner</text>
-        <text data-detail="context" x="415" y="239" class="t-muted" font-size="9" text-anchor="middle">propose actions</text>
+        <!-- Flow labels -->
+        <g data-detail="context" data-edge-from="db" data-edge-to="telemetry" data-edge-label="query" data-edge-key="0" data-edge-id="s1">
+          <rect x="81.75" y="250" width="36.5" height="16" rx="4" class="c-mask"/>
+          <text x="100" y="261" class="t-messagebus" font-size="8" text-anchor="middle">query</text>
         </g>
-
-        <g id="node-governance" data-node-id="governance" data-node-label="Governance" tabindex="0" role="button" aria-label="Focus Governance, L0 / L1 / L2, Slow Loop — every N gens" aria-pressed="false" data-node-kind="security" data-node-sublabel="L0 / L1 / L2" data-node-context="Slow Loop — every N gens">
-          <title>Governance · L0 / L1 / L2 · Slow Loop — every N gens</title>
-          <rect x="520" y="200" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="520" y="200" width="110" height="50" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(526 206) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-detail-anchor x="575" y="223" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Governance</text>
-        <text data-detail="context" x="575" y="239" class="t-muted" font-size="9" text-anchor="middle">L0 / L1 / L2</text>
+        <g data-detail="context" data-edge-from="telemetry" data-edge-to="health" data-edge-label="metrics" data-edge-key="1" data-edge-id="s2">
+          <rect x="184.35" y="136" width="46.300000000000004" height="16" rx="4" class="c-mask"/>
+          <text x="207.5" y="147" class="t-backend" font-size="8" text-anchor="middle">metrics</text>
         </g>
-
-        <g id="node-challenger" data-node-id="challenger" data-node-label="Challenger" tabindex="0" role="button" aria-label="Focus Challenger, replay + promote, Slow Loop — every N gens" aria-pressed="false" data-node-kind="backend" data-node-sublabel="replay + promote" data-node-context="Slow Loop — every N gens">
-          <title>Challenger · replay + promote · Slow Loop — every N gens</title>
-          <rect x="680" y="200" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="680" y="200" width="110" height="50" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(686 206) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-detail-anchor x="735" y="223" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Challenger</text>
-        <text data-detail="context" x="735" y="239" class="t-muted" font-size="9" text-anchor="middle">replay + promote</text>
+        <g data-detail="context" data-edge-from="health" data-edge-to="metaplanner" data-edge-label="health output" data-edge-key="2" data-edge-id="s3">
+          <rect x="384.65" y="136" width="75.7" height="16" rx="4" class="c-mask"/>
+          <text x="422.5" y="147" class="t-muted" font-size="8" text-anchor="middle">health output</text>
         </g>
-
-        <g id="node-sqlite" data-node-id="sqlite" data-node-label="SQLite" tabindex="0" role="button" aria-label="Focus SQLite, WAL mode, Persistence" aria-pressed="false" data-node-kind="database" data-node-sublabel="WAL mode" data-node-context="Persistence">
-          <title>SQLite · WAL mode · Persistence</title>
-          <rect x="200" y="320" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="200" y="320" width="110" height="50" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(206 326) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-detail-anchor x="255" y="343" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">SQLite</text>
-        <text data-detail="context" x="255" y="359" class="t-muted" font-size="9" text-anchor="middle">WAL mode</text>
+        <g data-detail="context" data-edge-from="tuner" data-edge-to="metaplanner" data-edge-label="EI suggestion" data-edge-key="3" data-edge-id="s4">
+          <rect x="432.15" y="250" width="75.7" height="16" rx="4" class="c-mask"/>
+          <text x="470" y="261" class="t-muted" font-size="8" text-anchor="middle">EI suggestion</text>
         </g>
-
-        <g id="node-cas" data-node-id="cas" data-node-label="ArtifactStore" tabindex="0" role="button" aria-label="Focus ArtifactStore, SHA-256 CAS, Persistence" aria-pressed="false" data-node-kind="database" data-node-sublabel="SHA-256 CAS" data-node-context="Persistence">
-          <title>ArtifactStore · SHA-256 CAS · Persistence</title>
-          <rect x="440" y="320" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="440" y="320" width="110" height="50" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(446 326) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-detail-anchor x="495" y="343" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ArtifactStore</text>
-        <text data-detail="context" x="495" y="359" class="t-muted" font-size="9" text-anchor="middle">SHA-256 CAS</text>
+        <g data-detail="context" data-edge-from="metaplanner" data-edge-to="governance" data-edge-label="MetaActions" data-edge-key="4" data-edge-id="s5">
+          <rect x="604.55" y="136" width="65.9" height="16" rx="4" class="c-mask"/>
+          <text x="637.5" y="147" class="t-muted" font-size="8" text-anchor="middle">MetaActions</text>
         </g>
-
-        <g id="node-vector" data-node-id="vector" data-node-label="VectorStore" tabindex="0" role="button" aria-label="Focus VectorStore, FTS5 + embed, Persistence" aria-pressed="false" data-node-kind="database" data-node-sublabel="FTS5 + embed" data-node-context="Persistence">
-          <title>VectorStore · FTS5 + embed · Persistence</title>
-          <rect x="680" y="320" width="110" height="50" rx="6" class="c-mask"/>
-          <rect x="680" y="320" width="110" height="50" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(686 326) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-detail-anchor x="735" y="343" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">VectorStore</text>
-        <text data-detail="context" x="735" y="359" class="t-muted" font-size="9" text-anchor="middle">FTS5 + embed</text>
+        <g data-detail="context" data-edge-from="governance" data-edge-to="experiment" data-edge-label="L0 approved" data-edge-key="5" data-edge-id="s6">
+          <rect x="819.55" y="136" width="65.9" height="16" rx="4" class="c-mask"/>
+          <text x="852.5" y="147" class="t-muted" font-size="8" text-anchor="middle">L0 approved</text>
         </g>
-
-        <!-- Connection labels -->
-
-
-
-
-
-        <g data-detail="context" data-edge-from="evaluator" data-edge-to="coder" data-edge-label="P0-1: stderr + failure_reason" data-edge-key="5" data-edge-id="p0-feedback">
-          <rect x="580.4" y="30" width="149.2" height="14" rx="3" class="c-mask"/>
-          <text x="655" y="40" class="t-messagebus" font-size="8" text-anchor="middle">P0-1: stderr + failure_reason</text>
+        <g data-detail="context" data-edge-from="governance" data-edge-to="replay" data-edge-label="L1 → canary" data-edge-key="6" data-edge-id="s7">
+          <rect x="819.55" y="250" width="65.9" height="16" rx="4" class="c-mask"/>
+          <text x="852.5" y="261" class="t-messagebus" font-size="8" text-anchor="middle">L1 → canary</text>
         </g>
-        <g data-detail="context" data-edge-from="evaluator" data-edge-to="telemetry" data-edge-label="every N gens" data-edge-key="6" data-edge-id="eval-telemetry">
-          <rect x="488.7" y="147.5" width="67.6" height="14" rx="3" class="c-mask"/>
-          <text x="522.5" y="157.5" class="t-messagebus" font-size="8" text-anchor="middle">every N gens</text>
+        <g data-detail="context" data-edge-from="experiment" data-edge-to="decision" data-edge-label="result" data-edge-key="7" data-edge-id="s8">
+          <rect x="999.3" y="417" width="41.400000000000006" height="16" rx="4" class="c-mask"/>
+          <text x="1020" y="428" class="t-muted" font-size="8" text-anchor="middle">result</text>
         </g>
-
-
-
-
-        <g data-detail="context" data-edge-from="challenger" data-edge-to="select" data-edge-label="update policy" data-edge-key="11" data-edge-id="challenger-select">
-          <rect x="378.8" y="135" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="415" y="145" class="t-messagebus" font-size="8" text-anchor="middle">update policy</text>
+        <g data-detail="context" data-edge-from="replay" data-edge-to="decision" data-edge-label="comparison" data-edge-key="8" data-edge-id="s9">
+          <rect x="929.5" y="478" width="61" height="16" rx="4" class="c-mask"/>
+          <text x="960" y="489" class="t-muted" font-size="8" text-anchor="middle">comparison</text>
         </g>
-
-        <g data-detail="context" data-edge-from="coder" data-edge-to="cas" data-edge-label="artifact" data-edge-key="13" data-edge-id="coder-cas">
-          <rect x="430.8" y="260" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="455" y="270" class="t-messagebus" font-size="8" text-anchor="middle">artifact</text>
-        </g>
-        <g data-detail="context" data-edge-from="evaluator" data-edge-to="vector" data-edge-label="outbox" data-edge-key="14" data-edge-id="eval-vector">
-          <rect x="795.6" y="195" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="815" y="205" class="t-messagebus" font-size="8" text-anchor="middle">outbox</text>
+        <g data-detail="context" data-edge-from="decision" data-edge-to="db" data-edge-label="audit log" data-edge-key="9" data-edge-id="s10">
+          <rect x="501.95" y="699" width="56.1" height="16" rx="4" class="c-mask"/>
+          <text x="530" y="710" class="t-messagebus" font-size="8" text-anchor="middle">audit log</text>
         </g>
 
         <!-- Legend -->
-        <g data-legend-bridge>
-          <text x="40" y="429" class="t-primary" font-size="9" font-weight="600">Legend</text>
-          <g data-legend-kind="backend">
-            <rect x="40" y="434" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="60" y="442" class="t-muted" font-size="8">Backend</text>
-          </g>
-          <g data-legend-kind="security">
-            <rect x="139" y="434" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-            <text x="159" y="442" class="t-muted" font-size="8">Security</text>
-          </g>
-          <g data-legend-kind="database">
-            <rect x="243" y="434" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="263" y="442" class="t-muted" font-size="8">Database</text>
-          </g>
-        </g>
+        <text x="214" y="704" class="t-primary" font-size="10" font-weight="600">Legend</text>
+        <path d="M 214 724 L 248 724" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <text x="257" y="727" class="t-muted" font-size="8">primary data</text>
+        <path d="M 340 724 L 374 724" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <text x="383" y="727" class="t-muted" font-size="8">policy / PII</text>
+        <path d="M 480 724 L 514 724" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <text x="523" y="727" class="t-muted" font-size="8">async batch</text>
+        <rect x="625" y="716" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+        <text x="646" y="724" class="t-muted" font-size="8">data store</text>
       </svg>
       <p class="intent-trace-status no-print" id="intent-trace-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <div class="share-chapter-cue no-print" id="share-chapter-cue" hidden role="status" aria-live="polite">
@@ -4239,33 +4189,44 @@
     <div class="cards">
       <div class="card">
         <div class="card-header">
-          <div class="card-dot cyan"></div>
-          <h3>P0-1: Eval Feedback Loop</h3>
+          <div class="card-dot rose"></div>
+          <h3>评估语义不可变边界</h3>
         </div>
         <ul>
-          <li>&bull; Evaluator stderr + failure_reason → Coder via AgentContext.last_eval_failure</li>
-          <li>&bull; Pass rate: 19% → 57% (3x improvement)</li>
+          <li>&bull; L2: 语义/测试/隐藏数据/指标公式 永久禁止修改</li>
+          <li>&bull; L1: 超时/渐进阶段/资源 可提 Challenger 但须 Replay</li>
+          <li>&bull; L0: 日志/追踪/临时目录 可自动调整</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <div class="card-dot rose"></div>
-          <h3>Design Red-Lines</h3>
+          <div class="card-dot cyan"></div>
+          <h3>BayesianTuner</h3>
         </div>
         <ul>
-          <li>&bull; MCTS tree-edge only — never greedy/sequential</li>
-          <li>&bull; Evaluator L2 immutable — task semantics frozen</li>
-          <li>&bull; Sandbox default-deny — network=none, read-only, non-root</li>
-          <li>&bull; Artifact CAS — SHA-256 content-addressed</li>
-          <li>&bull; Vector outbox consistency — enqueue on creation</li>
+          <li>&bull; 高斯过程回归 + Expected Improvement</li>
+          <li>&bull; 搜索 exploration_c / crossover_rate / mutation_rate</li>
+          <li>&bull; 比网格搜索/随机搜索高效 10-50x</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Champion vs Challenger</h3>
+        </div>
+        <ul>
+          <li>&bull; 等预算比较：相同代数下比较分数</li>
+          <li>&bull; Challenger 须显著优于 Champion 才提升</li>
+          <li>&bull; 拒绝时自动回滚，保留审计轨迹</li>
         </ul>
       </div>
     </div>
 
     <!-- Footer -->
     <p class="footer">
-      Architecture diagram &bull; Built with Archify<span class="no-print"> &bull; Hover to trace &bull; <kbd>R</kbd> route &bull; Click to focus &bull; <kbd>+</kbd>/<kbd>&minus;</kbd> zoom &bull; <kbd>M</kbd> radar &bull; <kbd>T</kbd> theme &bull; <kbd>E</kbd> export</span>
+      Data-flow diagram &bull; Built with Archify<span class="no-print"> &bull; Hover to trace &bull; <kbd>R</kbd> route &bull; Click to focus &bull; <kbd>+</kbd>/<kbd>&minus;</kbd> zoom &bull; <kbd>M</kbd> radar &bull; <kbd>[</kbd>/<kbd>]</kbd> views &bull; <kbd>P</kbd> play story &bull; <kbd>T</kbd> theme &bull; <kbd>E</kbd> export</span>
     </p>
   </div>
 

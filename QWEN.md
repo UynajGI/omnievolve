@@ -13,7 +13,7 @@ make test-slow             # 慢速/集成测试（Docker, soak）
 make test-all              # 全量（不含 LLM）
 
 # 等效 pytest 命令
-.venv/bin/python -m pytest -q -m "not slow and not llm"   # 735 tests
+.venv/bin/python -m pytest -q -m "not slow and not llm"   # 849 tests
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
@@ -49,11 +49,10 @@ src/omnievolve/
   cli.py      Typer CLI (run/status/best/export/policy/audit/recover/migrate/doctor)
   config.py   OmniEvolveSettings (pydantic-settings)
   exceptions.py  类型化异常层次 (OmniEvolveError → Sandbox/LLM/Evolution/…)
-docs/         User-facing docs (NOT project-design specs)
-docs/project-design/  Design specs — DO NOT MODIFY (frozen requirements)
-reports/      Phase acceptance + gap analysis reports
-examples/     python_optimization + circle_packing demo projects
-tests/        735 tests across 58 files (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
+docs/         User-facing docs (health_metrics, evaluator_guide, prompt_agent_guide, storage_adr, etc.)
+docs/architecture/  Interactive HTML architecture diagrams (system-overview, fast-loop, slow-loop, storage)
+examples/     python_optimization + circle_packing + heilbronn + matmul demo projects
+tests/        849 tests (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
 uv.lock       Deterministic dependency lock (163 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
@@ -74,7 +73,7 @@ scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
 - **Fast Loop** (11 steps per candidate): Router → MCTS parent selection → crossover/mutation → Director → NoveltyGate → Coder → Critic retry → ArtifactStore → TaskEvaluator → Sandbox → state update. **P0-1**: Evaluator stderr/failure_reason flows back to Coder via `AgentContext.last_eval_failure` (pass rate 19%→57%).
 - **Slow Loop** (every `health_window_gens`): TelemetryAggregator → HealthPolicy → MetaPlanner → Governance L0/L1/L2 → Challenger policy → Replay comparison → promote/reject
 - **Protocols are duck-typed** (`@runtime_checkable`): TaskEvaluator, SandboxBackend, VectorBackend, Repository, Embedder, Plugin, DirectorAgent, CoderAgent, CriticAgent. Concrete classes use different names (e.g. `Director` implements `DirectorAgent`).
-- **`docs/project-design/`** is the frozen spec (31 files). Do not modify these — they are the source-of-truth requirements, not editable documentation.
+- **`docs/project-design/`** has been archived to `.archive/` (not git-tracked). The frozen spec lives at `.archive/project-design/reference/OmniEvolve_v0.2_设计文档.md`.
 
 ## Deep-dive docs
 
@@ -87,6 +86,6 @@ scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
 | Storage ADR & operations | `docs/storage_adr.md` |
 | Docker security baseline | `docs/docker_security_baseline.md` |
 | Vector config & migration | `docs/vector_configuration.md` |
+| Architecture diagrams (interactive) | `docs/architecture/` (4 HTML files) |
 | Release notes (features, known limits) | `docs/release_notes_v0.2.md` |
-| Gap analysis & compliance audit | `reports/gap_analysis_v0.2.md`, `reports/checklist_v0.2.md` |
-| Design specification (frozen) | `docs/project-design/reference/OmniEvolve_v0.2_设计文档.md` |
+| Source audit (dead code + bugs) | `.archive/reports/dead_code_and_bug_findings.md` |

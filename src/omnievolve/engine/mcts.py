@@ -369,6 +369,7 @@ class ProgressiveMCGS:
             if node:
                 node.virtual_loss = max(0.0, node.virtual_loss - self._virtual_loss)
         self._select_local.path = []
+        self._nodes_since_backprop = 0
 
     def clear_virtual_losses(self) -> None:
         """清除所有虚拟损失."""

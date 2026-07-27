@@ -80,6 +80,51 @@ OmniEvolve v0.2 需要持久化候选代码、评估结果、血缘图和搜索�
 
 ---
 
+## ADR-004: 可插拔代码存储后端（CAS / Git）
+
+**状态**: 已采纳
+**日期**: 2026-07-22
+
+### 背景
+
+v0.2 初期所有候选代码通过 `ArtifactStore`（SHA-256 CAS）存储。随着血缘深度增长，CAS 无法高效表达 ancestry、diff 和多父代合并（crossover），需要一种原生支持 DAG 的存储方案。
+
+### 决策
+
+引入 `CodeStore` Protocol 抽象层，提供两个可插拔后端：
+
+| 后端 | `code_backend` | 存储 ref | 血缘 | 适用场景 |
+|------|----------------|----------|------|----------|
+| **CASCodeStore** | `"cas"` | SHA-256 哈希 | DB 外键关联 | 简单场景、最小依赖 |
+| **GitCodeStore** | `"git"`（默认） | Git commit SHA | 原生 ancestry + worktree | 生产推荐、深血缘、crossover |
+
+工厂函数 `create_code_store(settings, db)` 根据配置选择后端：
+
+```python
+from omnievolve.storage.code_store import create_code_store
+
+# 配置 [storage] code_backend = "git"（默认）
+store = create_code_store(settings, db)
+```
+
+`CodeStore` Protocol 统一接口：`store_snapshot` / `load_snapshot` / `materialize` / `diff` / `get_parents` / `merge` / `checkpoint`。
+
+### GitCodeStore 细节
+
+- **per-project 仓库**：每个实验（task_name）对应一个独立 bare repo（`.omnievolve/code.git`）
+- **worktree 物化**：`materialize(ref)` 创建 Git worktree，沙箱直接 checkout，零拷贝
+- **原生 diff**：`diff(parent, child)` 调用 `git diff`，精确 unified diff
+- **多父代合并**：`merge(parent_refs)` 支持 crossover 场景的 ancestry 合并
+- **自动 GC**：每 `git_auto_gc_interval` 代（默认 50）执行 `git gc`
+
+### 影响
+
+- 引擎通过 `CodeStore` Protocol 操作代码，与后端实现解耦
+- Git 后端提供原生血缘 DAG，无需在 DB 中重建 ancestry
+- CAS 后端保持兼容，适合极简部署
+
+---
+
 ## 运维诊断
 
 ### 检查数据库完整性
@@ -99,8 +144,8 @@ sqlite3 .omnievolve/data.db "PRAGMA wal_checkpoint(TRUNCATE);"
 ### 检查 Artifact 完整性
 
 ```bash
-omnievolve recover  # 扫描过期租约、未完成 Outbox、孤立 Artifact
-omnievolve audit <experiment_id>  # 端到端审计
+omnievolve recover <experiment_id>  # 扫描过期租约、未完成 Outbox、孤立 Artifact
+omnievolve audit <experiment_id>    # 端到端审计（哈希、版本、缺失索引）
 ```
 
 ### 性能调优

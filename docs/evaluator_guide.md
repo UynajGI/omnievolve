@@ -19,6 +19,7 @@ from omnievolve.eval.task_evaluator import (
     EvaluationContext,
     EvaluationPlan,
     CommandSpec,
+    MountSpec,
     SandboxExecutionResult,
 )
 
@@ -114,6 +115,23 @@ def parse_result(self, result, context):
     )
 ```
 
+### 挂载数据文件
+
+当评估需要额外的测试数据、基准文件时，使用 `MountSpec` 挂载：
+
+```python
+from omnievolve.eval.task_evaluator import EvaluationPlan, CommandSpec, MountSpec
+
+def build_plan(self, candidate, context):
+    return EvaluationPlan(
+        commands=[CommandSpec(argv=["python", "-m", "pytest", "-v"])],
+        mounts=[
+            MountSpec(host_path="/abs/path/to/test_sort.py", container_path="/work/test_sort.py"),
+            MountSpec(host_path="/abs/path/to/benchmark.py", container_path="/work/benchmark.py"),
+        ],
+    )
+```
+
 ### Progressive Evaluation
 
 ```python
@@ -153,3 +171,5 @@ omnievolve run task.py -e my_module:MyEvaluator -c omnievolve.toml
 3. **`parse_result` 中的分数区间建议 [0, 1]** — 确保与 Beta 回传兼容
 4. **`get_baseline` 返回一个合理的下界** — 用于 ROI 计算
 5. **多候选共享评估器实例** — evaluator 应该是无状态的
+6. **`failure_reason` 会回流到 Coder** — P0-1 反馈闭环：评估失败时设置 `failure_reason`，框架自动注入到下一轮 Coder 的 Prompt 中（"fix root cause"），显著提升通过率
+7. **命令使用 `sys.executable` 而非 `"python"`** — 部分环境无 `python` 二进制，使用 `sys.executable` 确保指向正确的解释器

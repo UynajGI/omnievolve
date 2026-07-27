@@ -38,50 +38,60 @@ pip install -e ".[local-embed]"
 ## 配置
 
 向量后端通过 `create_vector_backend(prefer_zvec=True)` 自动选择，无需手动配置。
-如需显式控制，可在 `omnievolve.toml` 中配置：
+Embedding 模型通过 `omnievolve.toml` 的 `[embedding.code]` 和 `[embedding.thought]` 段配置：
 
 ```toml
-[vector]
-# 后端选择: "numpy" | "zvec"  (默认自动检测)
-backend = "numpy"
+# 代码嵌入（默认本地 Qwen3-Embedding-0.6B，1024d）
+[embedding.code]
+provider = "local"                      # local / openai / voyage / fake
+model = "Qwen/Qwen3-Embedding-0.6B"     # 2025 SOTA, Apache-2.0, ~1.2GB
+revision = "default"
+dimension = 1024
+normalization = "provider_default"
+input_type = "document"
 
-# Embedding 配置
-[vector.embedding]
-# 提供者: "openai" | "local" | "fake"
-provider = "openai"
-model = "text-embedding-3-small"
-
-# zvec 配置（仅 backend="zvec" 时需要）
-[vector.zvec]
-dimension = 1536
-metric = "cosine"       # cosine / l2 / ip
-m = 16                  # HNSW 双向链接数
-ef_construction = 200   # HNSW 构建候选列表大小
+# 思想嵌入（与 code 共用同一模型，只需下载一次）
+[embedding.thought]
+provider = "local"
+model = "Qwen/Qwen3-Embedding-0.6B"
+revision = "default"
+dimension = 1024
+normalization = "l2"
+input_type = "document"
 ```
+
+> **自动检测**: CLI 启动时调用 `create_vector_backend(prefer_zvec=True)`，自动检测 zvec 是否可用。
+> 可用则使用 HNSW ANN，否则透明回退 NumPy 精确检索。无需手动配置后端类型。
+
+> **本地 Embedding 回退链**: `SentenceTransformerEmbedder` 下载模型时自动按
+> HuggingFace → hf-mirror.com → ModelScope 顺序回退，确保国内网络可用。
 
 ## Embedding Profile
 
-每个可索引实体类型对应一个 EmbeddingProfile：
+每个可索引实体类型（code / thought）对应一个 `EmbeddingProfile`（`omnievolve.utils.embedding`）：
 
 ```python
 from omnievolve.utils.embedding import EmbeddingProfile
 
-# 代码嵌入
+# 代码嵌入 profile
 code_profile = EmbeddingProfile(
-    name="code",
-    provider="openai",
-    model="text-embedding-3-small",
-    chunk_size=2000,
-    overlap=200,
+    id="code-v1",
+    purpose="code",          # code / thought
+    provider="local",
+    model="Qwen/Qwen3-Embedding-0.6B",
+    dimension=1024,
+    normalization="provider_default",
+    input_type="document",
 )
 
-# 思想嵌入
+# 思想嵌入 profile
 thought_profile = EmbeddingProfile(
-    name="thought",
-    provider="openai",
-    model="text-embedding-3-small",
-    chunk_size=500,
-    overlap=50,
+    id="thought-v1",
+    purpose="thought",
+    provider="local",
+    model="Qwen/Qwen3-Embedding-0.6B",
+    dimension=1024,
+    normalization="l2",
 )
 ```
 
@@ -122,13 +132,13 @@ indexer.reconcile()  # 扫描 pending + 孤儿向量
 当向量数量超过 10 万时，建议从 NumPy 迁移到 zvec：
 
 ```bash
-# 1. 安装 zvec (0.6+)
+# 1. 安装 zvec（pyproject.toml 要求 >=0.3，实测 0.6 全链路验证通过）
 pip install -e ".[vector]"
 
 # 2. 无需修改配置 — create_vector_backend(prefer_zvec=True) 自动检测
 
 # 3. 触发重建
-omnievolve recover  # 检测到 backend 变更，自动触发 reindex
+omnievolve recover <experiment_id>  # 检测到 backend 变更，自动触发 reindex
 ```
 
 > **zvec 0.6 API 注意**: 适配器使用 `zvec.create_and_open(path, schema)` 创建集合，
@@ -137,13 +147,13 @@ omnievolve recover  # 检测到 backend 变更，自动触发 reindex
 
 ### Embedding 模型变更
 
-当切换 Embedding 模型时（如 `text-embedding-3-small` → `text-embedding-3-large`）：
+当切换 Embedding 模型时（如 `Qwen/Qwen3-Embedding-0.6B` → `text-embedding-3-large`）：
 
 ```bash
-# 1. 更新配置中的 embedding.model
+# 1. 更新配置中的 embedding.code.model / embedding.thought.model
 # 2. 增加 profile version
 # 3. 运行修复以重建所有向量
-omnievolve recover
+omnievolve recover <experiment_id>
 ```
 
 > **注意**: 模型变更会导致所有现有向量失效。索引器会检测到 `embedding_profile` 版本变更并触发全量重建。
@@ -167,7 +177,7 @@ sqlite3 .omnievolve/data.db \
   "SELECT status, COUNT(*) FROM vector_index_job GROUP BY status"
 
 # 手动触发消费
-omnievolve recover
+omnievolve recover <experiment_id>
 ```
 
 ### 内存不足

@@ -18,7 +18,7 @@ Critic → 静态审查（"代码是否有明显问题"）
 
 ## AgentContext 字段
 
-Agent 通过 `AgentContext` 接收上下文：
+Agent 通过 `AgentContext`（`omnievolve.agents.base`）接收上下文：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -29,13 +29,19 @@ Agent 通过 `AgentContext` 接收上下文：
 | `parent_candidate_ids` | list[str] | 父代候选 ID |
 | `parent_thoughts` | list[str] | 父代思想摘要 |
 | `parent_artifact_hashes` | list[str] | 父代代码哈希 |
-| `inspiration_programs` | list[dict] | 启发程序（高分+随机） |
+| `inspiration_programs` | list[dict] | 启发程序（高分+随机，排除直接父代） |
 | `memory_hits` | list[dict] | 检索到的分层记忆 |
 | `domain_hints` | list[str] | 领域插件提示 |
-| `meta_scratchpad` | str | 全局洞察（失败方向等） |
+| `meta_scratchpad` | str | 全局洞察（失败方向等，ShinkaEvolve 模式） |
+| `last_eval_failure` | str | P0-1：父代评估失败信息（stderr/failure_reason），供 Coder 修复根因 |
+| `stagnation_level` | int | P2-1：停滞等级（0=正常, 1=微调, 2=架构变更, 3=范式转变） |
+| `sibling_summaries` | list[str] | P2-2：兄弟节点摘要（同一 island，最近 2 代） |
+| `rag_context` | list[dict] | 向量 RAG 检索结果（语义相关的历史 thought） |
 | `search_policy_id` | str | 当前 Champion Policy ID |
 | `prompt_version_id` | str | 当前 Champion Prompt 版本 |
+| `system_prompt` | str | 系统提示词 |
 | `model` | str | 路由器分配的模型 |
+| `provenance` | dict | 来源追踪元数据 |
 
 ## Prompt 版本化
 
@@ -58,7 +64,9 @@ champion = prompt_repo.get_latest("director", "champion")
 
 ## 实现自定义 Agent
 
-实现 Protocol 接口即可：
+实现 Protocol 接口即可（`omnievolve.agents.base`）：
+
+### Director — 思想进化
 
 ```python
 from omnievolve.agents.base import AgentContext, ThoughtOutput, CodeOutput
@@ -66,6 +74,7 @@ from omnievolve.agents.base import AgentContext, ThoughtOutput, CodeOutput
 class MyDirector:
     def evolve_thought(self, ctx: AgentContext) -> ThoughtOutput:
         # 访问 ctx.parent_thoughts, ctx.memory_hits, ctx.inspiration_programs
+        # ctx.last_eval_failure / ctx.stagnation_level 可用于调整策略
         # 调用 LLM 生成新思想
         return ThoughtOutput(
             thought="...",
@@ -73,6 +82,35 @@ class MyDirector:
             confidence=0.8,
             mechanism_tags=["algorithm_change"],
         )
+```
+
+### Coder — 代码生成
+
+```python
+class MyCoder:
+    def generate_code(self, ctx: AgentContext, thought: ThoughtOutput) -> CodeOutput:
+        # ctx.last_eval_failure 包含父代评估失败信息（P0-1 反馈闭环）
+        # 据此修复根因而非重复相同错误
+        return CodeOutput(
+            diff="...",
+            full_code="...",
+            explanation="...",
+        )
+```
+
+### Critic — 静态审查 + 执行反馈审查
+
+```python
+class MyCritic:
+    def review(
+        self,
+        code: CodeOutput,
+        thought: ThoughtOutput,
+        last_eval_stderr: str = "",
+    ) -> tuple[bool, str]:
+        # last_eval_stderr 非空时启用执行反馈增强审查（P0-2）
+        # 返回 (passed, feedback)
+        return True, ""
 ```
 
 ## 结构化输出与修复

@@ -58,6 +58,7 @@ class PreparedCandidate:
     model: str
     island_id: str
     thought_confidence: float = 1.0
+    critic_passed: bool = True
     # 评估上下文（供 commit 使用）
     eval_run_id: str | None = None
     job_id: str | None = None
@@ -128,14 +129,20 @@ class FastLoopStep:
         base_code = None
         if relation == "crossover" and len(parent_codes) >= 2:
             base_code = e._crossover.combine(parent_codes, strategy="segment")  # noqa: SLF001
-        if (stagnation_level >= 2 and e._config.fusion_mode == "llm"  # noqa: SLF001
-                and parent_codes):
+        if (
+            stagnation_level >= 2
+            and e._config.fusion_mode == "llm"  # noqa: SLF001
+            and parent_codes
+        ):
             try:
                 from omnievolve.agents.fusion import FusionAgent
+
                 fusion_agent = FusionAgent(e._llm)  # noqa: SLF001
                 references = e._collect_inspiration_programs(parent_ids, top_k=2)  # noqa: SLF001
                 if references:
-                    fused = fusion_agent.fuse(parent_codes[0], references, experiment_id=e._experiment_id)  # noqa: SLF001
+                    fused = fusion_agent.fuse(
+                        parent_codes[0], references, experiment_id=e._experiment_id
+                    )  # noqa: SLF001
                     if fused:
                         base_code = fused.full_code
             except Exception:
@@ -144,14 +151,17 @@ class FastLoopStep:
         # 记忆检索 + 向量重排序
         scope_levels = [0, 1] if stagnation_level == 0 else [0, 1, 2, 3, 4]
         memory_hits = e._memory_store.retrieve(  # noqa: SLF001
-            experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
-            success_only=True, scope_levels=scope_levels,
+            experiment_id=e._experiment_id,
+            task_id=task_name,  # noqa: SLF001
+            success_only=True,
+            scope_levels=scope_levels,
             limit=e._search_policy.retrieval_budget,  # noqa: SLF001
         )
         if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
             try:
                 vector_hits = e._hybrid_retriever.search_memory(  # noqa: SLF001
-                    parent_thoughts[0][:500], experiment_id=e._experiment_id,  # noqa: SLF001
+                    parent_thoughts[0][:500],
+                    experiment_id=e._experiment_id,  # noqa: SLF001
                     top_k=e._search_policy.retrieval_budget,  # noqa: SLF001
                 )
                 if vector_hits:
@@ -182,31 +192,51 @@ class FastLoopStep:
             if diff_text:
                 parts.append(f"改动: {diff_text}")
             parts.append(f"效果: {outcome_text}")
-            memory_summaries.append({"outcome_summary": " → ".join(parts),
-                                     "scope_level": m.scope_level, "success": m.success_flag})
+            memory_summaries.append(
+                {
+                    "outcome_summary": " → ".join(parts),
+                    "scope_level": m.scope_level,
+                    "success": m.success_flag,
+                }
+            )
 
         inspiration = e._collect_inspiration_programs(parent_ids)  # noqa: SLF001
         for i, pid in enumerate(parent_ids):
             if i < len(parent_codes):
-                inspiration.insert(0, {"is_parent": True, "candidate_id": pid,
-                                       "score": 0.0, "code": parent_codes[i], "source": "parent"})
+                inspiration.insert(
+                    0,
+                    {
+                        "is_parent": True,
+                        "candidate_id": pid,
+                        "score": 0.0,
+                        "code": parent_codes[i],
+                        "source": "parent",
+                    },
+                )
 
         # Director RAG
         rag_context = []
         if e._hybrid_retriever and parent_thoughts:  # noqa: SLF001
             try:
                 rag_context = e._hybrid_retriever.search_thoughts(  # noqa: SLF001
-                    parent_thoughts[0][:300], experiment_id=e._experiment_id, top_k=3,  # noqa: SLF001
+                    parent_thoughts[0][:300],
+                    experiment_id=e._experiment_id,
+                    top_k=3,  # noqa: SLF001
                 )
             except Exception:
                 logger.debug("Director RAG search failed", exc_info=True)
 
         ctx = AgentContext(
-            experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
-            generation=generation, island_id=island_id,
-            parent_candidate_ids=parent_ids, parent_thoughts=parent_thoughts,
-            parent_artifact_hashes=[], inspiration_programs=inspiration,
-            memory_hits=memory_summaries, meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
+            experiment_id=e._experiment_id,
+            task_id=task_name,  # noqa: SLF001
+            generation=generation,
+            island_id=island_id,
+            parent_candidate_ids=parent_ids,
+            parent_thoughts=parent_thoughts,
+            parent_artifact_hashes=[],
+            inspiration_programs=inspiration,
+            memory_hits=memory_summaries,
+            meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
             last_eval_failure=_combine_failures(parent_failures),
             stagnation_level=stagnation_level,
             sibling_summaries=self._load_sibling_summaries(island_id, generation),
@@ -228,7 +258,8 @@ class FastLoopStep:
             if e._hybrid_retriever:  # noqa: SLF001
                 try:
                     _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
-                        thought.thought, collection="thought_default",
+                        thought.thought,
+                        collection="thought_default",
                         threshold=e._config.novelty_threshold,  # noqa: SLF001
                     )
                     if max_sim > 0:
@@ -236,7 +267,8 @@ class FastLoopStep:
                 except Exception:
                     logger.debug("Novelty vector check failed", exc_info=True)
             novelty_result = e._novelty_gate.check(  # noqa: SLF001
-                thought=thought.thought, code=base_code,
+                thought=thought.thought,
+                code=base_code,
                 existing_similarities=existing_sims or None,
             )
         if novelty_result.decision == NoveltyDecision.REJECT:
@@ -248,10 +280,13 @@ class FastLoopStep:
             code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
             if not code.full_code.strip():
                 if base_code:
-                    code = type(code)(diff="", full_code=base_code, explanation="crossover baseline")
+                    code = type(code)(
+                        diff="", full_code=base_code, explanation="crossover baseline"
+                    )
                 elif parent_codes:
-                    code = type(code)(diff="", full_code=parent_codes[0],
-                                      explanation="fallback to parent code")
+                    code = type(code)(
+                        diff="", full_code=parent_codes[0], explanation="fallback to parent code"
+                    )
 
         with self._prof_step("critic", generation):
             critic_stderr = ctx.last_eval_failure
@@ -292,9 +327,12 @@ class FastLoopStep:
         )
         e._enqueue_vector_index("candidate", candidate.id, artifact_hash)  # noqa: SLF001
         thought_record = e._candidate_repo.create_thought(  # noqa: SLF001
-            experiment_id=e._experiment_id, task_id=task_name,  # noqa: SLF001
-            content=thought.thought, rationale=thought.rationale,
-            risk_notes=thought.risk_notes, confidence=thought.confidence,
+            experiment_id=e._experiment_id,
+            task_id=task_name,  # noqa: SLF001
+            content=thought.thought,
+            rationale=thought.rationale,
+            risk_notes=thought.risk_notes,
+            confidence=thought.confidence,
             mechanism_tags=thought.mechanism_tags,
         )
         thought_hash = e._artifact_store.store_text(thought.thought, "log")  # noqa: SLF001
@@ -303,7 +341,9 @@ class FastLoopStep:
 
         # 步骤 9-10: sandbox 执行 + 结果解析（无状态变更）
         with self._prof_step("sandbox_eval", generation):
-            output, eval_run, job, sandbox_result = self._execute_sandbox(candidate.id, artifact_hash)
+            output, eval_run, job, sandbox_result = self._execute_sandbox(
+                candidate.id, artifact_hash
+            )
 
         return PreparedCandidate(
             candidate_id=candidate.id,
@@ -313,6 +353,7 @@ class FastLoopStep:
             model=model,
             island_id=island_id,
             thought_confidence=thought.confidence,
+            critic_passed=passed,
             eval_run_id=eval_run.id if eval_run else None,
             job_id=job.id if job else None,
             sandbox_result=sandbox_result,
@@ -336,11 +377,16 @@ class FastLoopStep:
 
         # MCTS 扩展（延迟到 commit）
         if prepared.parent_ids:
-            e._mcts.expand(prepared.parent_ids[0],  # noqa: SLF001
-                           [(prepared.candidate_id, prepared.thought_confidence)])
+            e._mcts.expand(
+                prepared.parent_ids[0],  # noqa: SLF001
+                [(prepared.candidate_id, prepared.thought_confidence)],
+            )
         else:
-            e._mcts.add_node(prepared.candidate_id, parent=None,  # noqa: SLF001
-                             prior=prepared.thought_confidence)
+            e._mcts.add_node(
+                prepared.candidate_id,
+                parent=None,  # noqa: SLF001
+                prior=prepared.thought_confidence,
+            )
 
         # 岛屿分配
         e._island_manager.assign_candidate(prepared.candidate_id, prepared.island_id)  # noqa: SLF001
@@ -365,7 +411,12 @@ class FastLoopStep:
 
         # Router 奖励更新
         if e._router is not None and prepared.model and prepared.output is not None:  # noqa: SLF001
-            self._update_router_reward(prepared.model, prepared.output, prepared.parent_ids)
+            self._update_router_reward(
+                prepared.model,
+                prepared.output,
+                prepared.parent_ids,
+                critic_passed=prepared.critic_passed,
+            )
 
         return prepared.candidate_id, prepared.artifact_hash
 
@@ -470,7 +521,9 @@ class FastLoopStep:
         if output is None:
             return None
         self._apply_eval_result(
-            candidate_id, artifact_hash, output,
+            candidate_id,
+            artifact_hash,
+            output,
             eval_run.id if eval_run else None,
             job,
             result,
@@ -628,7 +681,11 @@ class FastLoopStep:
         e._candidate_repo.update_status(candidate_id, "evaluated" if output.passed else "failed")  # noqa: SLF001
 
         # Phase 4: 数据泄漏检测（高分候选自动触发）
-        if output.passed and output.score > e._config.leakage_score_threshold and getattr(e, "_leakage_detector", None):  # noqa: SLF001
+        if (
+            output.passed
+            and output.score > e._config.leakage_score_threshold
+            and getattr(e, "_leakage_detector", None)
+        ):  # noqa: SLF001
             try:
                 code_text = e._artifact_store.load_text(artifact_hash)  # noqa: SLF001
                 baseline = e._get_baseline_score()  # noqa: SLF001

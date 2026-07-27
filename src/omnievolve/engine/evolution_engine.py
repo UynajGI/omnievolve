@@ -106,6 +106,7 @@ class EvolutionConfig:
     self_evolve_enabled: bool = True
     leakage_score_threshold: float = 0.9  # 触发泄漏检测的分数阈值
     leakage_penalty_factor: float = 0.5  # 泄漏嫌疑时的分数惩罚系数
+    git_auto_gc_interval: int = 10  # Git 后端周期性 GC 代数间隔
 
 
 @dataclass
@@ -893,13 +894,19 @@ class EvolutionEngine:
         return cand.island_id if cand else None
 
     def _rebuild_mcts(self, experiment_id: str) -> None:
-        """从血缘图重建 MCTS 节点."""
+        """从血缘图重建 MCTS 节点（保留父子关系）."""
         rows = self._db.fetchall(
             "SELECT id FROM candidate WHERE experiment_id = ? ORDER BY generation",
             (experiment_id,),
         )
         for row in rows:
-            self._mcts.add_node(row["id"], parent=None, prior=0.5)
+            child_id = row["id"]
+            parent_rows = self._db.fetchall(
+                "SELECT parent_id FROM candidate_lineage WHERE child_id = ? ORDER BY parent_order LIMIT 1",
+                (child_id,),
+            )
+            parent_id = parent_rows[0]["parent_id"] if parent_rows else None
+            self._mcts.add_node(child_id, parent=parent_id, prior=0.5)
 
     # P1: 检查点持久化 — 每代结束时保存易失状态
 
