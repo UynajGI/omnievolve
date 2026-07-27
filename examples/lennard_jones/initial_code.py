@@ -24,25 +24,32 @@
 from __future__ import annotations
 
 import json
+import time
 
 import numpy as np
 from scipy.optimize import minimize
 
 import lj_ref
 
+# ---- 时间预算（须在沙箱超时 160s 内完成，留 20s 余量）----
+TIME_BUDGET_SEC = 140.0
+_T0 = time.perf_counter()
+
 # ---- 目标团簇 ----
 N = 38
 
 # ---- 可进化的超参数（搜索策略）----
 HYPERPARAMETERS = {
-    "n_restarts": 3,       # 随机重启次数
-    "n_steps": 200,        # 每次重启的 basin-hopping 步数
-    "step_start": 0.6,     # 初始扰动步长（几何退火 -> step_end）
-    "step_end": 0.08,      # 终止扰动步长
-    "temp_start": 3.0,     # 初始 Metropolis 温度（几何退火 -> temp_end）
-    "temp_end": 0.2,       # 终止温度
+    "n_restarts": 6,       # 随机重启次数（含 1 次 fcc 晶格种子）
+    "n_steps": 250,        # 每次重启的 basin-hopping 步数
+    "step_start": 0.8,     # 初始扰动步长（更大 → 更易穿越漏斗）
+    "step_end": 0.05,      # 终止扰动步长
+    "temp_start": 5.0,     # 初始 Metropolis 温度（更高 → 更易逃离二十面体漏斗）
+    "temp_end": 0.1,       # 终止温度
+    "reheat_threshold": 50, # 连续 N 步无改善则 reheat
+    "reheat_temp": 3.0,    # reheat 温度
     "lbfgs_maxiter": 5000,
-    "seed": 100,
+    "seed": 42,
 }
 
 
@@ -53,6 +60,35 @@ def random_init(n: int, rng: np.random.Generator, scale: float = 1.5) -> np.ndar
     r[r < 1e-10] = 1.0
     target_r = scale * (n ** (1.0 / 3.0)) * (rng.random((n, 1)) ** (1.0 / 3.0))
     return coords / r * target_r
+
+
+def fcc_seed(n: int, rng: np.random.Generator) -> np.ndarray:
+    """从 fcc 晶格截取 n 个原子作为初始构型（针对 LJ38 的 fcc 截角八面体 GM）。
+
+    LJ38 的全局极小是 fcc 截角八面体（O_h 对称性），但它的漏斗很窄。
+    从 fcc 晶格出发做 basin-hopping 比纯随机更容易落入该漏斗。
+    """
+    # fcc 晶格基矢（立方单元，边长 a ≈ 2^(1/6) * 2 ≈ 1.122 为 LJ 最近邻距离）
+    a = 1.122 * 2 ** (1.0 / 6.0)  # 最近邻距离 ≈ 1.122
+    basis = np.array([[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]]) * a
+    # 生成足够多的 fcc 格点
+    extent = int(np.ceil((n / 4) ** (1.0 / 3.0))) + 2
+    sites = []
+    for ix in range(-extent, extent + 1):
+        for iy in range(-extent, extent + 1):
+            for iz in range(-extent, extent + 1):
+                for b in basis:
+                    sites.append(np.array([ix, iy, iz]) * a + b)
+    sites = np.array(sites)
+    # 选最接近球心的 n 个格点（形成截角八面体形状）
+    dists = np.linalg.norm(sites, axis=1)
+    idx = np.argsort(dists)[:n]
+    coords = sites[idx].copy()
+    # 加微小扰动打破完美对称（让 L-BFGS 有梯度可走）
+    coords += rng.normal(0, 0.02, coords.shape)
+    # 质心归零
+    coords -= coords.mean(axis=0)
+    return coords
 
 
 def local_minimize(coords: np.ndarray, maxiter: int) -> tuple[float, np.ndarray, int]:
@@ -74,32 +110,53 @@ def local_minimize(coords: np.ndarray, maxiter: int) -> tuple[float, np.ndarray,
     return float(result.fun), result.x.reshape(-1, 3), n_evals[0]
 
 
-def basin_hopping_anneal(n: int, hp: dict, seed: int) -> dict:
-    """退火 basin-hopping：步长与温度几何退火。返回本次轨迹的最优结果。"""
+def _time_left() -> float:
+    return TIME_BUDGET_SEC - (time.perf_counter() - _T0)
+
+
+def basin_hopping_anneal(n: int, hp: dict, seed: int, init_coords: np.ndarray | None = None) -> dict:
+    """退火 basin-hopping + reheat 漏斗逃逸。返回本次轨迹的最优结果。"""
     rng = np.random.default_rng(seed)
     n_steps = hp["n_steps"]
     q_step = (hp["step_end"] / hp["step_start"]) ** (1.0 / n_steps)
     q_temp = (hp["temp_end"] / hp["temp_start"]) ** (1.0 / n_steps)
 
     total_evals = 0
-    coords = random_init(n, rng)
+    if init_coords is not None:
+        coords = init_coords.copy()
+    else:
+        coords = random_init(n, rng)
     e_curr, coords, ev = local_minimize(coords, hp["lbfgs_maxiter"])
     total_evals += ev
     e_best, coords_best = e_curr, coords.copy()
 
     step_now = float(hp["step_start"])
     temp_now = float(hp["temp_start"])
+    stagnation = 0
 
     for _ in range(n_steps):
+        if _time_left() < 5.0:
+            break
         perturbed = coords + rng.normal(0, step_now, coords.shape)
         e_new, coords_new, ev = local_minimize(perturbed, hp["lbfgs_maxiter"])
         total_evals += ev
 
         delta_e = e_new - e_curr
-        if delta_e < 0 or rng.random() < np.exp(-delta_e / temp_now):
+        if delta_e < 0 or rng.random() < np.exp(-delta_e / max(temp_now, 1e-10)):
             e_curr, coords = e_new, coords_new
             if e_curr < e_best:
                 e_best, coords_best = e_curr, coords.copy()
+                stagnation = 0
+            else:
+                stagnation += 1
+        else:
+            stagnation += 1
+
+        # 漏斗逃逸：连续无改善 → reheat（跳回高温探索）
+        if stagnation >= hp.get("reheat_threshold", 50):
+            temp_now = hp.get("reheat_temp", 3.0)
+            step_now = hp["step_start"] * 0.5
+            stagnation = 0
 
         step_now *= q_step
         temp_now *= q_temp
@@ -109,18 +166,27 @@ def basin_hopping_anneal(n: int, hp: dict, seed: int) -> dict:
 
 def run() -> dict:
     hp = HYPERPARAMETERS
+    rng = np.random.default_rng(hp["seed"])
     g_best, g_coords, g_evals = None, None, 0
     for r in range(hp["n_restarts"]):
-        res = basin_hopping_anneal(N, hp, seed=hp["seed"] + r)
+        if _time_left() < 10.0:
+            break
+        # 第一次重启用 fcc 晶格种子（针对 LJ38 的 fcc GM）
+        if r == 0:
+            init = fcc_seed(N, rng)
+        else:
+            init = None
+        res = basin_hopping_anneal(N, hp, seed=hp["seed"] + r * 7, init_coords=init)
         g_evals += res["n_force_evals"]
         if g_best is None or res["best_energy"] < g_best:
             g_best = res["best_energy"]
             g_coords = res["best_coords"].copy()
     # 对全局最优结构做一次紧致 polish，确保输出为收敛极小（力范数远低于验证门）
-    e_polish, coords_polish, ev = local_minimize(g_coords, maxiter=20000)
-    g_evals += ev
-    if e_polish < g_best:
-        g_best, g_coords = e_polish, coords_polish
+    if g_best is not None and _time_left() > 5.0:
+        e_polish, coords_polish, ev = local_minimize(g_coords, maxiter=20000)
+        g_evals += ev
+        if e_polish < g_best:
+            g_best, g_coords = e_polish, coords_polish
     return {"best_energy": g_best, "best_coords": g_coords, "n_force_evals": g_evals}
 
 

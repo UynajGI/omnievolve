@@ -59,6 +59,26 @@ class CASCodeStore:
         """
         return self._store.store_text(code, "source")
 
+    def store_text(self, text: str, artifact_type: str = "source", **kwargs) -> str:
+        """ArtifactStore 兼容: 存储文本 → 返回 SHA-256 hash."""
+        return self._store.store_text(text, artifact_type)
+
+    def store(self, data: bytes, artifact_type: str = "report", **kwargs) -> str:
+        """ArtifactStore 兼容: 存储字节 → 返回 SHA-256 hash."""
+        return self._store.store(data, artifact_type, **kwargs)
+
+    def load(self, ref: str) -> bytes:
+        """ArtifactStore 兼容: 加载字节."""
+        return self._store.load(ref)
+
+    def load_text(self, ref: str) -> str:
+        """ArtifactStore 兼容: 加载文本."""
+        return self._store.load_text(ref)
+
+    def load_manifest(self, ref: str):
+        """ArtifactStore 兼容: 加载 Manifest."""
+        return self._store.load_manifest(ref)
+
     def load_snapshot(self, ref: str) -> str:
         """加载代码快照文本."""
         return self._store.load_text(ref)
@@ -76,7 +96,7 @@ class CASCodeStore:
         wt_path = self._work_root / f"exec_{uuid.uuid4().hex[:8]}"
         wt_path.mkdir(parents=True, exist_ok=True)
         code = self.load_snapshot(ref)
-        (wt_path / "main.py").write_text(code)
+        (wt_path / "main.py").write_text(code, encoding="utf-8")
         return WorktreeHandle(
             path=wt_path,
             backend_id="cas",

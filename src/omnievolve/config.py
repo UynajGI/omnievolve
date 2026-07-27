@@ -276,6 +276,7 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
         models=ModelsSettings(
             heavy=data.get("models", {}).get("heavy", ["reasoning-model-primary"]),
             light=data.get("models", {}).get("light", ["fast-model-primary"]),
+            max_tokens=data.get("models", {}).get("max_tokens", 16384),
             routing=ModelRoutingSettings(**data.get("models", {}).get("routing", {})),
         ),
         embedding=EmbeddingSettings(

@@ -55,7 +55,7 @@ class LennardJonesEvaluator:
                 # 步骤 1：候选搜索策略（被进化），写出 candidate_result.json
                 CommandSpec(
                     argv=[sys.executable, "main.py"],
-                    timeout_sec=110.0,
+                    timeout_sec=160.0,
                     env={
                         "OPENBLAS_NUM_THREADS": "1",
                         "OMP_NUM_THREADS": "1",
