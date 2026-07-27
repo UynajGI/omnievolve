@@ -24,6 +24,10 @@ class NumpyVectorBackend:
     def __init__(self) -> None:
         self._collections: dict[str, dict[str, tuple[np.ndarray, dict]]] = {}
 
+    def is_using_fallback(self) -> bool:
+        """NumPy 后端本身就是 fallback."""
+        return True
+
     def create_or_open(self, profile_id: str, dimension: int) -> None:
         """创建或打开集合."""
         if profile_id not in self._collections:

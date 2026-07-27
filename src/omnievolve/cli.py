@@ -253,6 +253,10 @@ def run(
     if task_path.exists():
         initial_code = task_path.read_text(encoding="utf-8")
         task_name = task_path.stem
+    elif task_path.suffix in (".py", ".toml", ".txt"):
+        # 看起来像文件路径但不存在 → 报错
+        typer.echo(f"Error: 任务文件不存在: {task}", err=True)
+        raise typer.Exit(code=1)
     else:
         initial_code = task
         task_name = task[:60]
