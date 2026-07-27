@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[docker]"
-          pip install pytest pytest-benchmark
+          pip install pytest pytest-benchmark hypothesis
 
       - name: Run benchmarks
         run: pytest tests/ --benchmark-only --benchmark-json=benchmark-output.json -q -m benchmark
