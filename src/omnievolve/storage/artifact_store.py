@@ -314,14 +314,19 @@ class ArtifactStore:
             os.fsync(fd)
             os.close(fd)
 
-            # 原子发布且不覆盖已存在的 CAS 对象。并发写入相同内容时，
-            # 只有一个硬链接创建成功，其余写入者安全地复用赢家的对象。
-            try:
-                os.link(tmp_path, target_path)
-            except FileExistsError:
-                pass
-            finally:
-                os.unlink(tmp_path)
+            if os.name == "nt":
+                # Windows 的 os.replace() 会与并发读写发生目标文件锁竞争。
+                # 硬链接原子抢占目标路径，输家安全地复用赢家的 CAS 对象。
+                try:
+                    os.link(tmp_path, target_path)
+                except FileExistsError:
+                    pass
+                finally:
+                    os.unlink(tmp_path)
+            else:
+                # Unix rename 可安全替换打开中的目标，且比 hard-link + unlink
+                # 在 CI 的 overlay 文件系统上更稳定、长尾延迟更低。
+                os.replace(tmp_path, target_path)
 
             # fsync 目录确保元数据持久化（Windows 不支持目录 fsync，跳过）
             if os.name != "nt":
