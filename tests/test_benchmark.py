@@ -1,11 +1,9 @@
 """性能回归测试.
 
-Gap P1: 性能回归测试 — EvoX 模式：单元测试含性能断言
+Gap P1: 性能回归测试 — EvoX 模式：使用 pytest-benchmark fixture
 """
 
 from __future__ import annotations
-
-import time
 
 import pytest
 
@@ -20,57 +18,45 @@ pytestmark = pytest.mark.benchmark
 class TestArtifactStorePerformance:
     """ArtifactStore 性能基准."""
 
-    def test_store_throughput(self, tmp_path):
-        """验证存储吞吐量不低于基线（1000 次/秒）."""
+    def test_store_throughput(self, tmp_path, benchmark):
+        """验证存储吞吐量不低于基线（100 次/秒）."""
         db = create_memory_database()
         initialize_database(db)
         store = ArtifactStore(tmp_path / "perf_artifacts", db)
         data = b"x" * 1024  # 1KB payload
-        count = 500
+        counter = {"i": 0}
 
-        start = time.perf_counter()
-        for i in range(count):
-            store.store(data + str(i).encode(), "source")
-        elapsed = time.perf_counter() - start
+        def do_store():
+            store.store(data + str(counter["i"]).encode(), "source")
+            counter["i"] += 1
 
-        rate = count / elapsed
-        assert rate > 100, f"Store throughput {rate:.0f}/s below 100/s baseline"
+        result = benchmark(do_store)
+        # pytest-benchmark 自动统计，这里做最低门槛断言
+        assert benchmark.stats.stats.mean < 0.01  # < 10ms/op → > 100 ops/s
 
-    def test_load_throughput(self, tmp_path):
-        """验证加载吞吐量不低于基线（5000 次/秒）."""
+    def test_load_throughput(self, tmp_path, benchmark):
+        """验证加载吞吐量不低于基线（500 次/秒）."""
         db = create_memory_database()
         initialize_database(db)
         store = ArtifactStore(tmp_path / "perf_artifacts", db)
         data = b"x" * 1024
         artifact_hash = store.store(data, "source")
-        count = 1000
 
-        start = time.perf_counter()
-        for _ in range(count):
-            store.load(artifact_hash)
-        elapsed = time.perf_counter() - start
+        result = benchmark(store.load, artifact_hash)
+        assert benchmark.stats.stats.mean < 0.002  # < 2ms/op → > 500 ops/s
 
-        rate = count / elapsed
-        assert rate > 500, f"Load throughput {rate:.0f}/s below 500/s baseline"
-
-    def test_sha256_throughput(self):
-        """验证 SHA-256 吞吐量不低于基线（100 MB/s）."""
+    def test_sha256_throughput(self, benchmark):
+        """验证 SHA-256 吞吐量不低于基线（20 MB/s）."""
         data = b"x" * (1024 * 1024)  # 1MB
-        iterations = 50
 
-        start = time.perf_counter()
-        for _ in range(iterations):
-            compute_sha256(data)
-        elapsed = time.perf_counter() - start
-
-        mb_per_sec = (iterations * 1) / elapsed  # 1MB each
-        assert mb_per_sec > 20, f"SHA-256 throughput {mb_per_sec:.1f} MB/s below 20 MB/s baseline"
+        result = benchmark(compute_sha256, data)
+        assert benchmark.stats.stats.mean < 0.05  # < 50ms/1MB → > 20 MB/s
 
 
 class TestMCTSPerformance:
     """MCTS 搜索性能基准."""
 
-    def test_select_throughput(self):
+    def test_select_throughput(self, benchmark):
         """验证 MCTS select 吞吐量不低于基线."""
         from omnievolve.engine.mcts import ProgressiveMCGS
 
@@ -83,17 +69,10 @@ class TestMCTSPerformance:
             for j in range(3):
                 mcts.add_node(f"grandchild_{i}_{j}", parent=child.candidate_id, prior=0.001)
 
-        count = 1000
-        start = time.perf_counter()
-        for _ in range(count):
-            mcts.select("root")
-        elapsed = time.perf_counter() - start
+        result = benchmark(mcts.select, "root")
+        assert benchmark.stats.stats.mean < 0.001  # < 1ms/op → > 1000 ops/s
 
-        rate = count / elapsed
-        # 100 节点 UCB 搜索，预期 >5000 次/秒
-        assert rate > 1000, f"MCTS select {rate:.0f}/s below 1000/s baseline"
-
-    def test_backpropagate_throughput(self):
+    def test_backpropagate_throughput(self, benchmark):
         """验证 MCTS backpropagate 吞吐量不低于基线."""
         from omnievolve.engine.mcts import ProgressiveMCGS
 
@@ -104,42 +83,38 @@ class TestMCTSPerformance:
             child = mcts.add_node(f"node_{i}", parent=current.candidate_id)
             current = child
 
-        count = 5000
-        start = time.perf_counter()
-        for _ in range(count):
+        def do_backprop():
             mcts.backpropagate("node_19", 0.75)
             # 重置 visit_count 防止 UCB 退化
             for nid in mcts._nodes:
                 mcts._nodes[nid].visit_count = 0
-        elapsed = time.perf_counter() - start
 
-        rate = count / elapsed
-        assert rate > 2000, f"MCTS backprop {rate:.0f}/s below 2000/s baseline"
+        result = benchmark(do_backprop)
+        assert benchmark.stats.stats.mean < 0.0005  # < 0.5ms/op → > 2000 ops/s
 
 
 class TestNoveltyGatePerformance:
     """新颖性门性能基准."""
 
-    def test_ast_signature_throughput(self):
+    def test_ast_signature_throughput(self, benchmark):
         """验证 AST 签名计算吞吐量."""
         from omnievolve.engine.novelty import compute_code_signature
 
         code_samples = [f"def func_{i}(x):\n    return x + {i}\n" for i in range(50)]
+        counter = {"i": 0}
 
-        count = 500
-        start = time.perf_counter()
-        for i in range(count):
-            compute_code_signature(code_samples[i % len(code_samples)])
-        elapsed = time.perf_counter() - start
+        def do_signature():
+            compute_code_signature(code_samples[counter["i"] % len(code_samples)])
+            counter["i"] += 1
 
-        rate = count / elapsed
-        assert rate > 500, f"AST signature {rate:.0f}/s below 500/s baseline"
+        result = benchmark(do_signature)
+        assert benchmark.stats.stats.mean < 0.002  # < 2ms/op → > 500 ops/s
 
 
 class TestVectorPerformance:
     """向量后端性能基准."""
 
-    def test_numpy_query_throughput(self):
+    def test_numpy_query_throughput(self, benchmark):
         """验证 NumPy 精确检索吞吐量."""
         import numpy as np
 
@@ -156,19 +131,12 @@ class TestVectorPerformance:
         ]
         backend.upsert("bench", records)
 
-        # 查询 100 次
         query = np.random.randn(128).tolist()
-        count = 100
-        start = time.perf_counter()
-        for _ in range(count):
-            backend.query("bench", query, top_k=10)
-        elapsed = time.perf_counter() - start
+        result = benchmark(backend.query, "bench", query, top_k=10)
+        assert benchmark.stats.stats.mean < 0.02  # < 20ms/op → > 50 ops/s
 
-        rate = count / elapsed
-        assert rate > 50, f"NumPy query {rate:.0f}/s below 50/s baseline"
-
-    def test_zvec_upsert_throughput(self):
-        """验证 zvec HNSW upsert 吞吐量."""
+    def test_zvec_upsert_throughput(self, benchmark):
+        """验证 zvec/NumPy upsert 吞吐量."""
         import numpy as np
 
         from omnievolve.storage.vector_backend import VectorRecord
@@ -182,27 +150,20 @@ class TestVectorPerformance:
             for i in range(100)
         ]
 
-        start = time.perf_counter()
-        backend.upsert("bench_upsert", records)
-        elapsed = time.perf_counter() - start
-
-        rate = 100 / elapsed
-        assert rate > 50, f"zvec upsert {rate:.0f} records/s below 50/s baseline"
+        result = benchmark(backend.upsert, "bench_upsert", records)
+        assert benchmark.stats.stats.mean < 2.0  # < 2s for 100 records → > 50 records/s
 
 
 class TestProfilerOverhead:
     """验证 PipelineProfiler 零开销."""
 
-    def test_profiler_disabled_overhead(self):
-        """当 profiler=None 时，_prof_step 开销应 < 1ms/次."""
+    def test_profiler_disabled_overhead(self, benchmark):
+        """当 profiler=None 时，nullcontext 开销应 < 100us/次."""
         from contextlib import nullcontext
 
-        count = 10000
-        start = time.perf_counter()
-        for _ in range(count):
+        def do_nothing():
             with nullcontext():
                 pass
-        elapsed = time.perf_counter() - start
 
-        per_call_us = (elapsed / count) * 1_000_000
-        assert per_call_us < 100, f"nullcontext overhead {per_call_us:.1f}us > 100us"
+        result = benchmark(do_nothing)
+        assert benchmark.stats.stats.mean < 0.0001  # < 100us/op
