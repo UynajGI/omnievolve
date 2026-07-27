@@ -270,7 +270,9 @@ class TestDockerIntegration:
         plan = EvaluationPlan(
             commands=[CommandSpec(argv=["python", "-c", "print('hello from docker')"])],
         )
-        candidate = CandidateArtifact(candidate_id="test", source_hash="", manifest_hash=None, language="python")
+        candidate = CandidateArtifact(
+            candidate_id="test", source_hash="", manifest_hash=None, language="python"
+        )
         policy = SandboxPolicy(
             timeout_sec=30,
             mem_limit_mb=256,
@@ -296,7 +298,9 @@ class TestDockerIntegration:
         plan = EvaluationPlan(
             commands=[CommandSpec(argv=["python", "-c", "import time; time.sleep(100)"])],
         )
-        candidate = CandidateArtifact(candidate_id="test", source_hash="", manifest_hash=None, language="python")
+        candidate = CandidateArtifact(
+            candidate_id="test", source_hash="", manifest_hash=None, language="python"
+        )
         policy = SandboxPolicy(
             timeout_sec=2,
             mem_limit_mb=256,
