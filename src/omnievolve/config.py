@@ -60,6 +60,7 @@ class ModelsSettings(BaseSettings):
 
     heavy: list[str] = Field(default_factory=lambda: ["reasoning-model-primary"])
     light: list[str] = Field(default_factory=lambda: ["fast-model-primary"])
+    max_tokens: int = Field(default=16384, gt=0)
     routing: ModelRoutingSettings = Field(default_factory=ModelRoutingSettings)
 
 

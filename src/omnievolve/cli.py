@@ -244,6 +244,7 @@ def run(
     llm = LLMGateway(
         db,
         default_model=(settings.models.light[0] if settings.models.light else "gpt-4o-mini"),
+        default_max_tokens=settings.models.max_tokens,
     )
 
     components = _build_engine_components(db, settings, sandbox, llm)
@@ -588,9 +589,9 @@ def doctor() -> None:
     for pkg in ["litellm", "networkx", "pydantic", "numpy", "typer", "rich"]:
         try:
             __import__(pkg)
-            table.add_row(pkg, "✓ installed")
+            table.add_row(pkg, "[green]OK[/green]")
         except ImportError:
-            table.add_row(pkg, "✗ missing")
+            table.add_row(pkg, "[red]MISSING[/red]")
     console.print(table)
 
     # Sandbox backends
@@ -602,7 +603,7 @@ def doctor() -> None:
     bt.add_column("Backend", style="cyan")
     bt.add_column("Available", style="white")
     for name, info in diag.items():
-        bt.add_row(name, "✓" if info.get("available") else "✗")
+        bt.add_row(name, "[green]OK[/green]" if info.get("available") else "[red]--[/red]")
     console.print(bt)
 
     # SQLite features
@@ -611,7 +612,7 @@ def doctor() -> None:
     conn = sqlite3.connect(":memory:")
     try:
         fts = conn.execute("SELECT sqlite_compileoption_used('ENABLE_FTS5')").fetchone()
-        console.print(f"\nFTS5: {'✓' if fts and fts[0] else '✗'}")
+        console.print(f"\nFTS5: {'[green]OK[/green]' if fts and fts[0] else '[red]MISSING[/red]'}")
     except Exception:
         console.print("\nFTS5: ?")
     finally:

@@ -74,6 +74,7 @@ class LLMGateway:
         rate_limiter: Any | None = None,
         budget_guard: Any | None = None,
         request_timeout: float = 120.0,
+        default_max_tokens: int = 16384,
     ) -> None:
         self._db = db
         self._default_model = default_model
@@ -91,6 +92,8 @@ class LLMGateway:
         self._budget_guard = budget_guard
         # 网络超时保护（秒），防止 API 无响应时线程永久挂起
         self._request_timeout = request_timeout
+        # 默认最大输出 token 数（可被 chat() 调用方覆盖）
+        self._default_max_tokens = default_max_tokens
 
     def chat(
         self,
@@ -149,7 +152,7 @@ class LLMGateway:
                         model=try_model,
                         messages=messages,
                         temperature=temperature,
-                        max_tokens=max_tokens,
+                        max_tokens=max_tokens or self._default_max_tokens,
                         api_key=self._api_key,
                         api_base=self._api_base,
                         timeout=self._request_timeout,
