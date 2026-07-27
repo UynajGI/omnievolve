@@ -249,10 +249,18 @@ class TestIsDockerAvailable:
 
 @pytest.fixture
 def docker_backend_or_skip():
-    """Skip tests if Docker is not available."""
+    """Skip tests if Docker is not available or image cannot be pulled."""
     if not is_docker_available():
         pytest.skip("Docker daemon not available")
-    return DockerBackend(image="python:3.12-slim")
+    backend = DockerBackend(image="python:3.12-slim")
+    try:
+        import docker as docker_lib
+
+        client = docker_lib.from_env()
+        client.images.pull("python:3.12-slim")
+    except Exception as e:
+        pytest.skip(f"Docker image pull failed: {e}")
+    return backend
 
 
 @pytest.mark.slow
