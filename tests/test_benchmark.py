@@ -30,7 +30,7 @@ class TestArtifactStorePerformance:
             store.store(data + str(counter["i"]).encode(), "source")
             counter["i"] += 1
 
-        result = benchmark(do_store)
+        benchmark(do_store)
         # pytest-benchmark 自动统计，这里做最低门槛断言
         assert benchmark.stats.stats.mean < 0.01  # < 10ms/op → > 100 ops/s
 
@@ -42,14 +42,14 @@ class TestArtifactStorePerformance:
         data = b"x" * 1024
         artifact_hash = store.store(data, "source")
 
-        result = benchmark(store.load, artifact_hash)
+        benchmark(store.load, artifact_hash)
         assert benchmark.stats.stats.mean < 0.002  # < 2ms/op → > 500 ops/s
 
     def test_sha256_throughput(self, benchmark):
         """验证 SHA-256 吞吐量不低于基线（20 MB/s）."""
         data = b"x" * (1024 * 1024)  # 1MB
 
-        result = benchmark(compute_sha256, data)
+        benchmark(compute_sha256, data)
         assert benchmark.stats.stats.mean < 0.05  # < 50ms/1MB → > 20 MB/s
 
 
@@ -69,7 +69,7 @@ class TestMCTSPerformance:
             for j in range(3):
                 mcts.add_node(f"grandchild_{i}_{j}", parent=child.candidate_id, prior=0.001)
 
-        result = benchmark(mcts.select, "root")
+        benchmark(mcts.select, "root")
         assert benchmark.stats.stats.mean < 0.001  # < 1ms/op → > 1000 ops/s
 
     def test_backpropagate_throughput(self, benchmark):
@@ -89,7 +89,7 @@ class TestMCTSPerformance:
             for nid in mcts._nodes:
                 mcts._nodes[nid].visit_count = 0
 
-        result = benchmark(do_backprop)
+        benchmark(do_backprop)
         assert benchmark.stats.stats.mean < 0.0005  # < 0.5ms/op → > 2000 ops/s
 
 
@@ -107,7 +107,7 @@ class TestNoveltyGatePerformance:
             compute_code_signature(code_samples[counter["i"] % len(code_samples)])
             counter["i"] += 1
 
-        result = benchmark(do_signature)
+        benchmark(do_signature)
         assert benchmark.stats.stats.mean < 0.002  # < 2ms/op → > 500 ops/s
 
 
@@ -132,7 +132,7 @@ class TestVectorPerformance:
         backend.upsert("bench", records)
 
         query = np.random.randn(128).tolist()
-        result = benchmark(backend.query, "bench", query, top_k=10)
+        benchmark(backend.query, "bench", query, top_k=10)
         assert benchmark.stats.stats.mean < 0.02  # < 20ms/op → > 50 ops/s
 
     def test_zvec_upsert_throughput(self, benchmark):
@@ -150,7 +150,7 @@ class TestVectorPerformance:
             for i in range(100)
         ]
 
-        result = benchmark(backend.upsert, "bench_upsert", records)
+        benchmark(backend.upsert, "bench_upsert", records)
         assert benchmark.stats.stats.mean < 2.0  # < 2s for 100 records → > 50 records/s
 
 
@@ -165,5 +165,5 @@ class TestProfilerOverhead:
             with nullcontext():
                 pass
 
-        result = benchmark(do_nothing)
+        benchmark(do_nothing)
         assert benchmark.stats.stats.mean < 0.0001  # < 100us/op
