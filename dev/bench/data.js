@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785139034226,
+  "lastUpdate": 1785149708289,
   "repoUrl": "https://github.com/UynajGI/omnievolve",
   "entries": {
     "Benchmark": [
@@ -783,6 +783,93 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 2.4145065621535265e-7",
             "extra": "mean: 621.8071469157046 nsec\nrounds: 169751"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "yuunagi.cn@outlook.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "committer": {
+            "email": "yuunagi.cn@outlook.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "distinct": true,
+          "id": "269975b84aa72248b79e379b4921ce1c43bc8aab",
+          "message": "fix: CAS backend Windows encoding + missing ArtifactStore methods\n\n- cas_code_store.py: write_text(encoding='utf-8') fixes SyntaxError on\n  Chinese Windows (GBK locale wrote non-UTF-8 main.py)\n- cas_code_store.py: add store/load/load_text/load_manifest delegates\n  so subprocess_backend._collect_outputs and engine fast_loop work\n- initial_code.py (LJ38): add 140s time budget with graceful early-exit\n  (was exceeding 160s sandbox timeout → score=0)\n- configs: code_backend='cas' (git plumbing fails silently on Windows)\n- llm_gateway/cli/config: mimo-v2.5-pro integration from prev session",
+          "timestamp": "2026-07-27T18:54:07+08:00",
+          "tree_id": "0de659adbeeec508053aaa61b10e84831d340646",
+          "url": "https://github.com/UynajGI/omnievolve/commit/269975b84aa72248b79e379b4921ce1c43bc8aab"
+        },
+        "date": 1785149707064,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_store_throughput",
+            "value": 1020.0080464252898,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00027022888456254877",
+            "extra": "mean: 980.384422950966 usec\nrounds: 305"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_load_throughput",
+            "value": 28636.28681039302,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004772761640718468",
+            "extra": "mean: 34.92072860637323 usec\nrounds: 2863"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_sha256_throughput",
+            "value": 1503.4289845901721,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000069732054614753555",
+            "extra": "mean: 665.1461494023248 usec\nrounds: 1506"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_select_throughput",
+            "value": 24391.214331781146,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002782401652270668",
+            "extra": "mean: 40.9983687731785 usec\nrounds: 16742"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_backpropagate_throughput",
+            "value": 42997.52667417908,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001780438614705297",
+            "extra": "mean: 23.257151686367138 usec\nrounds: 29383"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestNoveltyGatePerformance::test_ast_signature_throughput",
+            "value": 32664.827562168302,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003916191919322144",
+            "extra": "mean: 30.613968437359162 usec\nrounds: 8998"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_numpy_query_throughput",
+            "value": 1373.9637668496173,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000023170801571657896",
+            "extra": "mean: 727.8212308996441 usec\nrounds: 589"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_zvec_upsert_throughput",
+            "value": 2301.3079471589695,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014979106503235918",
+            "extra": "mean: 434.5355002291322 usec\nrounds: 2183"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestProfilerOverhead::test_profiler_disabled_overhead",
+            "value": 1571561.422380784,
+            "unit": "iter/sec",
+            "range": "stddev: 2.574812319052098e-7",
+            "extra": "mean: 636.3098417655758 nsec\nrounds: 192679"
           }
         ]
       }
