@@ -729,9 +729,7 @@ def research_benchmark(
         report = summarize_results(records)
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         console.print(f"[green]Aggregated {len(records)} records → {output_path}[/green]")
         return
 

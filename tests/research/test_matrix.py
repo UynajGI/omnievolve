@@ -28,8 +28,8 @@ def test_matrix_requires_five_to_ten_unique_seeds():
 
 def test_result_summary_includes_confidence_interval():
     records = [
-            {"task": "sort", "variant": "full", "status": "completed", "score": value}
-            for value in (0.5, 0.6, 0.7, 0.8, 0.9)
+        {"task": "sort", "variant": "full", "status": "completed", "score": value}
+        for value in (0.5, 0.6, 0.7, 0.8, 0.9)
     ]
     records.extend(
         {"task": "sort", "variant": "no_novelty", "status": "completed", "score": value}
