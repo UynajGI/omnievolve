@@ -41,7 +41,6 @@ jobs:
           auto-push: ${{ github.event_name == 'push' }}
           alert-threshold: "150%"
           fail-on-alert: true
-          skip-fetch-gh-pages: true
 
       - uses: actions/upload-artifact@v4
         with:
