@@ -113,9 +113,11 @@ class AuditReportGenerator:
         self,
         db: Database,
         artifact_dir: str | None = None,
+        artifact_store: Any | None = None,
     ) -> None:
         self._db = db
         self._artifact_dir = artifact_dir
+        self._artifact_store = artifact_store
 
     def generate(
         self,
@@ -368,6 +370,15 @@ class AuditReportGenerator:
         integrity: dict[str, bool] = {}
         missing: list[str] = []
         for h in artifact_hashes:
+            if self._artifact_store is not None:
+                try:
+                    integrity[h] = bool(self._artifact_store.exists(h))
+                except Exception:
+                    integrity[h] = False
+                if not integrity[h]:
+                    missing.append(h)
+                continue
+
             # 检查 DB 中是否有记录
             row = self._db.fetchone("SELECT hash FROM artifact WHERE hash=?", (h,))
             if row is None:

@@ -1,7 +1,7 @@
-"""#34 种子候选：N-queens TN 精确收缩（numpy einsum）。
+"""#34 种子候选：N-queens 精确计数。
 
-读取环境变量 NQUEENS_N，构造 N×N 张量网络并精确收缩，
-输出 Q(N) 到 candidate_result.json。
+读取环境变量 NQUEENS_N，通过位掩码回溯精确计算 Q(N)，
+并输出到 candidate_result.json。
 
 这是被 OmniEvolve 进化的对象——进化目标是改进收缩策略
 （路径优化、分治、边界 MPS 等），使更大 N 可行。
@@ -13,35 +13,35 @@ import json
 import os
 import time
 
-import numpy as np
-
-
-def build_site_tensor() -> np.ndarray:
-    """秩-8 格点张量 C（D=2）。"""
-    import itertools
-    C = np.zeros((2,) * 8, dtype=np.float64)
-    for q, ru, rd, cl, cr, d1, d2, d3 in itertools.product([0, 1], repeat=8):
-        if q == 0:
-            if ru == rd and cl == cr and d1 == d2:
-                C[q, ru, rd, cl, cr, d1, d2, d3] = 1.0
-        else:
-            if ru == 0 and rd == 0 and cl == 0 and cr == 0 and d1 == 0 and d2 == 0:
-                C[q, ru, rd, cl, cr, d1, d2, d3] = 1.0
-    return C
-
 
 def contract_nqueens(n: int) -> int:
-    """精确收缩 N×N N-queens TN。"""
-    from tn_construct import build_nqueens_tn
-    expr, operands = build_nqueens_tn(n)
+    """用位掩码回溯精确计算 Q(N).
 
-    try:
-        import opt_einsum
-        result = opt_einsum.contract(expr, *operands, optimize="optimal")
-    except ImportError:
-        result = np.einsum(expr, *operands, optimize=True)
+    这是无需可选依赖且始终正确的种子基线。后续进化可以用 TN、
+    MPS、对称性分解或更强的位运算策略替换它。
+    """
+    if n < 0:
+        raise ValueError("n must be non-negative")
 
-    return int(round(float(result)))
+    full = (1 << n) - 1
+
+    def search(columns: int, diag_left: int, diag_right: int) -> int:
+        if columns == full:
+            return 1
+
+        available = full & ~(columns | diag_left | diag_right)
+        total = 0
+        while available:
+            bit = available & -available
+            available ^= bit
+            total += search(
+                columns | bit,
+                ((diag_left | bit) << 1) & full,
+                (diag_right | bit) >> 1,
+            )
+        return total
+
+    return search(0, 0, 0)
 
 
 def main():
@@ -54,7 +54,7 @@ def main():
         "n": n,
         "q_n": q_n,
         "wall_time_sec": wall,
-        "method": "numpy_einsum_optimal",
+        "method": "exact_bitmask_backtracking",
     }
     with open("candidate_result.json", "w", encoding="utf-8") as f:
         json.dump(result, f)

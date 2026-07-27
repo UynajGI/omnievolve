@@ -21,9 +21,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import uuid
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,36 @@ _GIT_ENV = {
     "GIT_COMMITTER_NAME": "OmniEvolve",
     "GIT_COMMITTER_EMAIL": "bot@omnievolve.local",
 }
+
+
+def _safe_task_dir(task_name: str, experiment_id: str) -> str:
+    """Return a stable, filesystem-safe task directory name.
+
+    Normal task identifiers such as ``sort`` are preserved for backwards
+    compatibility. Raw-code tasks and path-like names are reduced to a short
+    slug plus a hash so they cannot escape the configured repository root.
+    """
+    name = task_name.strip() or experiment_id[:8]
+    windows_stem = name.split(".", 1)[0].upper()
+    reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+    if (
+        name not in {".", ".."}
+        and len(name) <= 80
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)
+        and windows_stem not in reserved
+    ):
+        return name
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-_")[:48] or "task"
+    digest = sha256(name.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}-{digest}"
 
 
 class GitCodeStore:
@@ -113,7 +145,7 @@ class GitCodeStore:
             task_name: 进化任务名称（如 "sort", "matmul"）
         """
         # 用 task_name 做目录名，experiment_id 仅做去重后缀
-        dir_name = task_name or experiment_id[:8]
+        dir_name = _safe_task_dir(task_name, experiment_id)
         if self._task_name == dir_name and self._repo_path:
             return  # 已绑定同一任务
         self._experiment_id = experiment_id
@@ -169,25 +201,29 @@ class GitCodeStore:
 
     def store(self, data: bytes, artifact_type: str = "source", **kwargs) -> str:
         """ArtifactStore 兼容: 存储二进制."""
-        import subprocess as sp
-
-        result = sp.run(
-            ["git", "--git-dir", str(self._repo_path), "hash-object", "-w", "--stdin"],
-            input=data,
-            capture_output=True,
-            env={**os.environ, **_GIT_ENV},
-        )
-        return result.stdout.decode().strip()
+        ref = self._git(["hash-object", "-w", "--stdin"], input_data=data)
+        self._ensure_artifact_fk(ref, artifact_type)
+        return ref
 
     def load(self, ref: str) -> bytes:
         """ArtifactStore 兼容: 加载二进制."""
         if self._repo_path is None:
             raise RuntimeError("Not bound")
+
+        object_type = self._git(["cat-file", "-t", ref])
+        if object_type == "commit":
+            return self.load_snapshot(ref).encode("utf-8")
+        if object_type != "blob":
+            raise ValueError(f"Unsupported Git object type for artifact {ref}: {object_type}")
+
         result = subprocess.run(
             ["git", "--git-dir", str(self._repo_path), "cat-file", "blob", ref],
             capture_output=True,
             env={**os.environ, **_GIT_ENV},
         )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Cannot load Git artifact {ref}: {stderr}")
         return result.stdout
 
     # ─── 内部工具 ──────────────────────────────────────────
@@ -403,8 +439,23 @@ class GitCodeStore:
                     )
                     return None
 
+                # --no-commit deliberately stops before creating the merge
+                # commit. Commit the staged merge so the returned ref contains
+                # both parents and the actual merged tree.
+                merge_head = self._git_in_worktree(
+                    wt.path,
+                    ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                    check=False,
+                )
+                if merge_head.returncode == 0:
+                    self._git_in_worktree(
+                        wt.path,
+                        ["commit", "-m", "OmniEvolve crossover"],
+                    )
+
             # 获取 merge 后的 HEAD SHA
             merged_sha = self._git_in_worktree(wt.path, ["rev-parse", "HEAD"]).stdout.strip()
+            self._ensure_artifact_fk(merged_sha, "source")
             return merged_sha
         finally:
             self.release(wt)

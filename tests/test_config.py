@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 
@@ -309,3 +310,20 @@ class TestLoadEvaluator:
     def test_invalid_spec_raises(self):
         with pytest.raises(ValueError, match="Invalid evaluator spec"):
             load_evaluator("no_dots_or_colons")
+
+    def test_loads_module_from_console_working_directory(self, tmp_path, monkeypatch):
+        module_path = tmp_path / "workspace_evaluator.py"
+        module_path.write_text(
+            "class WorkspaceEvaluator:\n    version_id = 'workspace-evaluator@1.0.0'\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            sys,
+            "path",
+            [entry for entry in sys.path if entry not in {"", str(tmp_path)}],
+        )
+
+        cls = load_evaluator("workspace_evaluator:WorkspaceEvaluator")
+
+        assert cls.version_id == "workspace-evaluator@1.0.0"

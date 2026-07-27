@@ -5,11 +5,35 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from omnievolve.cli import app
+from omnievolve.cli import _apply_llm_env_overrides, app
+from omnievolve.config import OmniEvolveSettings
 
 pytestmark = pytest.mark.unit
 
 runner = CliRunner()
+
+
+def test_llm_env_overrides(monkeypatch):
+    settings = OmniEvolveSettings()
+    monkeypatch.setenv("OMNIEVOLVE_LLM_MODEL", "openai/test-model")
+    monkeypatch.setenv("OMNIEVOLVE_LLM_API_BASE", "https://example.test/v1")
+    monkeypatch.setenv("OMNIEVOLVE_LLM_MAX_TOKENS", "2048")
+
+    kwargs = _apply_llm_env_overrides(settings)
+
+    assert settings.models.heavy == ["openai/test-model"]
+    assert settings.models.light == ["openai/test-model"]
+    assert settings.models.max_tokens == 2048
+    assert kwargs["api_base"] == "https://example.test/v1"
+    assert kwargs["default_max_tokens"] == 2048
+
+
+def test_invalid_llm_max_tokens(monkeypatch):
+    settings = OmniEvolveSettings()
+    monkeypatch.setenv("OMNIEVOLVE_LLM_MAX_TOKENS", "many")
+
+    with pytest.raises(ValueError, match="must be an integer"):
+        _apply_llm_env_overrides(settings)
 
 
 # --------------------------------------------------------------------------- #
@@ -106,8 +130,7 @@ class TestExport:
             app,
             ["export", "nonexistent-id", "-c", str(fake_toml), "-o", str(out)],
         )
-        # 空实验导出空图，不应崩溃
-        assert result.exit_code == 0
+        assert result.exit_code != 0
 
     def test_invalid_format(self, tmp_path):
         fake_toml = tmp_path / "dummy.toml"
@@ -131,8 +154,7 @@ class TestPolicy:
             '[evolution]\nmax_generations = 1\n[sandbox]\nbackend = "trusted_subprocess"\n'
         )
         result = runner.invoke(app, ["policy", "nonexistent-id", "-c", str(fake_toml)])
-        # 空实验没有策略表，不应崩溃
-        assert result.exit_code == 0
+        assert result.exit_code != 0
 
 
 # --------------------------------------------------------------------------- #
@@ -160,5 +182,4 @@ class TestRecover:
         result = runner.invoke(
             app, ["recover", "nonexistent-id", "--dry-run", "-c", str(fake_toml)]
         )
-        # dry-run 扫描空 DB 应该成功
-        assert result.exit_code == 0
+        assert result.exit_code != 0

@@ -397,6 +397,7 @@ def load_evaluator(spec: str):
         评估器类（未实例化）
     """
     import importlib
+    import sys
 
     if ":" in spec:
         module_path, class_name = spec.split(":", 1)
@@ -406,6 +407,13 @@ def load_evaluator(spec: str):
         raise ValueError(
             f"Invalid evaluator spec {spec!r}; expected 'module:Class' or 'module.path.Class'"
         )
+
+    # Console-script entry points set sys.path[0] to the scripts directory,
+    # not necessarily the user's current project. Evaluators are intentionally
+    # loaded from that project (for example examples.foo.evaluator:Evaluator).
+    project_dir = str(Path.cwd())
+    if project_dir not in sys.path:
+        sys.path.insert(0, project_dir)
 
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)

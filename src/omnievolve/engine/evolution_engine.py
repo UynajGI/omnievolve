@@ -455,6 +455,10 @@ class EvolutionEngine:
         if exp is None:
             raise ValueError(f"Experiment not found: {experiment_id}")
 
+        store = self._artifact_store
+        if hasattr(store, "bind_experiment"):
+            store.bind_experiment(experiment_id, task_name=exp.task_name)
+
         # 找到当前最大 generation
         row = self._db.fetchone(
             "SELECT MAX(generation) as max_gen FROM candidate WHERE experiment_id = ?",

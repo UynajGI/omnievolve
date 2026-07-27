@@ -40,6 +40,7 @@ class TestGitCodeStoreBasic:
         assert len(ref) == 40  # Git SHA-1
         loaded = git_store.load_snapshot(ref)
         assert loaded == code
+        assert git_store.load(ref) == code.encode("utf-8")
 
     def test_store_with_parents(self, git_store: GitCodeStore):
         """带 parents 的 store 建立 ancestry."""
@@ -69,6 +70,16 @@ class TestGitCodeStoreBasic:
         # 通过 rev-list 验证 commit 存在
         output = git_store._git(["log", "--format=%s", "-n", "1", ref])
         assert "test message here" in output
+
+    def test_unsafe_task_name_stays_inside_repo_root(self, tmp_path: Path):
+        repo_root = tmp_path / "repos"
+        store = GitCodeStore(repo_root, tmp_path / "worktrees")
+        store.bind_experiment("experiment-1", task_name="../../raw code\nprint(1)")
+        ref = store.store_snapshot("print(1)\n")
+
+        assert store.exists(ref)
+        assert store._repo_path is not None  # noqa: SLF001
+        assert store._repo_path.resolve().is_relative_to(repo_root.resolve())  # noqa: SLF001
 
 
 class TestWorktree:
@@ -136,14 +147,14 @@ class TestMerge:
 
     def test_merge_no_conflict(self, git_store: GitCodeStore):
         """无冲突 merge 成功."""
-        base = git_store.store_snapshot("def f():\n    return 1\n")
-        # 两个分支修改不同部分
-        c1 = git_store.store_snapshot("def f():\n    return 2\n", parents=[base])
-        c2 = git_store.store_snapshot("def f():\n    return 3\n", parents=[base])
+        base = git_store.store_snapshot("first = 1\nmiddle = 1\nlast = 1\n")
+        c1 = git_store.store_snapshot("first = 2\nmiddle = 1\nlast = 1\n", parents=[base])
+        c2 = git_store.store_snapshot("first = 1\nmiddle = 1\nlast = 2\n", parents=[base])
         merged = git_store.merge([c1, c2])
-        # merge 可能成功也可能冲突（取决于 git 策略）
-        if merged is not None:
-            assert len(merged) == 40
+        assert merged is not None
+        assert merged != c1
+        assert git_store.load_snapshot(merged) == "first = 2\nmiddle = 1\nlast = 2\n"
+        assert git_store.get_parents(merged) == [c1, c2]
 
     def test_merge_single_parent(self, git_store: GitCodeStore):
         """单个 parent 直接返回."""

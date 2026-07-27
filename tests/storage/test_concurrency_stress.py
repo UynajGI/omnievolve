@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Event, Lock
 
 import pytest
 
@@ -98,12 +99,20 @@ class TestConcurrentWrites:
 
         errors = []
         read_results = []
+        writes_visible = Event()
+        write_count = 0
+        write_count_lock = Lock()
 
         def writer(db_path, n):
+            nonlocal write_count
             db = Database(db_path)
             try:
                 for i in range(n):
                     db.execute("INSERT INTO shared (val) VALUES (?)", (f"w-{i}",))
+                    with write_count_lock:
+                        write_count += 1
+                        if write_count >= 2:
+                            writes_visible.set()
             except Exception as e:
                 errors.append(f"writer: {e}")
             finally:
@@ -112,6 +121,9 @@ class TestConcurrentWrites:
         def reader(db_path, n, results):
             db = Database(db_path)
             try:
+                if not writes_visible.wait(timeout=5):
+                    errors.append("reader: writers did not publish rows in time")
+                    return
                 for _ in range(n):
                     cursor = db.execute("SELECT COUNT(*) FROM shared")
                     count = cursor.fetchone()[0]
@@ -132,10 +144,8 @@ class TestConcurrentWrites:
                 f.result()
 
         assert not errors, f"Unexpected errors: {errors}"
-        # All reads should see at least the initial row
-        assert all(c >= 1 for c in read_results)
-        # Final reads should see all written rows
-        assert any(c >= 3 for c in read_results)
+        # Readers start after two autocommit writes are visible.
+        assert all(c >= 3 for c in read_results)
 
     def test_wal_isolation(self, tmp_db_path):
         """WAL mode: writers don't block readers, readers see committed state."""

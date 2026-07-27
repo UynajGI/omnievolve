@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,43 @@ def _bootstrap(
     )
 
     return settings, db, artifact_store, sandbox
+
+
+def _bind_store_for_experiment(db, artifact_store, experiment_id: str):  # noqa: ANN001
+    """Bind task-scoped stores (Git) and return the experiment record."""
+    from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
+
+    exp = ExperimentRepository(db).get(experiment_id)
+    if exp is not None and hasattr(artifact_store, "bind_experiment"):
+        artifact_store.bind_experiment(experiment_id, task_name=exp.task_name)
+    return exp
+
+
+def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
+    """Apply documented local test-provider overrides to settings and gateway kwargs."""
+    model = os.environ.get("OMNIEVOLVE_LLM_MODEL")
+    if model:
+        settings.models.heavy = [model]
+        settings.models.light = [model]
+
+    max_tokens = settings.models.max_tokens
+    raw_max_tokens = os.environ.get("OMNIEVOLVE_LLM_MAX_TOKENS")
+    if raw_max_tokens:
+        try:
+            max_tokens = int(raw_max_tokens)
+        except ValueError as exc:
+            raise ValueError("OMNIEVOLVE_LLM_MAX_TOKENS must be an integer") from exc
+        if max_tokens <= 0:
+            raise ValueError("OMNIEVOLVE_LLM_MAX_TOKENS must be positive")
+        settings.models.max_tokens = max_tokens
+
+    return {
+        "api_key": os.environ.get("OMNIEVOLVE_LLM_API_KEY"),
+        "api_base": (
+            os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
+        ),
+        "default_max_tokens": max_tokens,
+    }
 
 
 def _build_engine_components(
@@ -197,7 +235,7 @@ def _build_engine_components(
 
 @app.command()
 def run(
-    task: str = typer.Argument(..., help="任务描述或初始代码文件路径"),
+    task: str | None = typer.Argument(None, help="任务描述或初始代码文件路径；--resume 时可省略"),
     config: str = typer.Option("omnievolve.toml", "--config", "-c", help="配置文件路径"),
     evaluator: str = typer.Option(..., "--evaluator", "-e", help="评估器路径 (module:Class)"),
     resume: str | None = typer.Option(None, "--resume", help="恢复实验 ID"),
@@ -220,6 +258,7 @@ def run(
         console.print("[yellow]WARNING: trusted subprocess 模式（非隔离）[/yellow]")
 
     settings, db, artifact_store, sandbox = _bootstrap(config, trusted=trusted)
+    llm_kwargs = _apply_llm_env_overrides(settings)
     eval_config = build_evolution_config(settings)
     if generations is not None:
         eval_config.max_generations = generations
@@ -244,31 +283,39 @@ def run(
     llm = LLMGateway(
         db,
         default_model=(settings.models.light[0] if settings.models.light else "gpt-4o-mini"),
-        default_max_tokens=settings.models.max_tokens,
+        **llm_kwargs,
     )
 
     components = _build_engine_components(db, settings, sandbox, llm)
-
-    # 读取初始代码
-    task_path = Path(task)
-    if task_path.exists():
-        initial_code = task_path.read_text(encoding="utf-8")
-        task_name = task_path.stem
-    elif task_path.suffix in (".py", ".toml", ".txt"):
-        # 看起来像文件路径但不存在 → 报错
-        typer.echo(f"Error: 任务文件不存在: {task}", err=True)
-        raise typer.Exit(code=1)
-    else:
-        initial_code = task
-        task_name = task[:60]
 
     # 创建或恢复实验
     from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
 
     exp_repo = ExperimentRepository(db)
     if resume:
+        exp = exp_repo.get(resume)
+        if exp is None:
+            console.print(f"[red]Experiment not found: {resume}[/red]")
+            raise typer.Exit(1)
         experiment_id = resume
+        task_name = exp.task_name
+        initial_code = ""
     else:
+        if task is None:
+            console.print("[red]TASK is required unless --resume is used[/red]")
+            raise typer.Exit(2)
+        task_path = Path(task)
+        if task_path.exists():
+            initial_code = task_path.read_text(encoding="utf-8")
+            task_name = task_path.stem
+        elif task_path.suffix in (".py", ".toml", ".txt"):
+            # 看起来像文件路径但不存在 → 报错
+            typer.echo(f"Error: 任务文件不存在: {task}", err=True)
+            raise typer.Exit(code=1)
+        else:
+            initial_code = task
+            task_name = task[:60]
+
         exp = exp_repo.create(
             task_id=task_name,
             task_name=task_name,
@@ -381,6 +428,10 @@ def best(
 ) -> None:
     """输出最优 Candidate Artifact."""
     settings, db, artifact_store, *_ = _bootstrap(config, trusted=True)
+    exp = _bind_store_for_experiment(db, artifact_store, experiment_id)
+    if exp is None:
+        console.print(f"[red]Experiment not found: {experiment_id}[/red]")
+        raise typer.Exit(1)
 
     row = db.fetchone(
         """
@@ -422,10 +473,16 @@ def export(
     import networkx as nx
 
     settings, db, *_ = _bootstrap(config, trusted=True)
+    exp = _bind_store_for_experiment(db, None, experiment_id)
+    if exp is None:
+        console.print(f"[red]Experiment not found: {experiment_id}[/red]")
+        raise typer.Exit(1)
     from omnievolve.storage.graph_store import GraphStore
 
     gs = GraphStore(db)
     graph = gs.load_subgraph(experiment_id, include_reference_edges=True)
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # GraphML 不支持 None 值，转换为空字符串
     for _, attrs in graph.nodes(data=True):
@@ -438,14 +495,17 @@ def export(
                 attrs[k] = ""
 
     if format == "graphml":
-        nx.write_graphml(graph, output)
+        nx.write_graphml(graph, output_path)
         console.print(
             f"[green]Exported {graph.number_of_nodes()} nodes / "
             f"{graph.number_of_edges()} edges → {output}[/green]"
         )
     elif format == "json":
         data = nx.node_link_data(graph)
-        Path(output).write_text(json.dumps(data, indent=2, default=str))
+        output_path.write_text(
+            json.dumps(data, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
         console.print(f"[green]Exported graph JSON → {output}[/green]")
     else:
         console.print(f"[red]Unknown format: {format}[/red]")
@@ -460,6 +520,10 @@ def policy(
 ) -> None:
     """查看 Champion / Challenger 策略谱系."""
     settings, db, *_ = _bootstrap(config, trusted=True)
+    exp = _bind_store_for_experiment(db, None, experiment_id)
+    if exp is None:
+        console.print(f"[red]Experiment not found: {experiment_id}[/red]")
+        raise typer.Exit(1)
     _print_policies(db, experiment_id)
     db.close()
 
@@ -472,10 +536,18 @@ def audit(
     output: str = typer.Option("", "--output", "-o", help="输出 JSON 报告路径"),
 ) -> None:
     """检查 Artifact 哈希、评估器版本、缺失向量索引，生成端到端审计报告."""
-    settings, db, *_ = _bootstrap(config, trusted=True)
+    settings, db, artifact_store, *_ = _bootstrap(config, trusted=True)
+    exp = _bind_store_for_experiment(db, artifact_store, experiment_id)
+    if exp is None:
+        console.print(f"[red]Experiment not found: {experiment_id}[/red]")
+        raise typer.Exit(1)
     from omnievolve.meta.audit import AuditReportGenerator
 
-    generator = AuditReportGenerator(db, artifact_dir=settings.storage.artifact_dir)
+    generator = AuditReportGenerator(
+        db,
+        artifact_dir=settings.storage.artifact_dir,
+        artifact_store=artifact_store,
+    )
     report = generator.generate(experiment_id, include_all_candidates=full)
 
     # 摘要表
@@ -499,10 +571,12 @@ def audit(
     if report.expired_leases > 0:
         console.print(f"\n[yellow]{report.expired_leases} expired job leases[/yellow]")
     if not report.missing_artifacts and report.expired_leases == 0:
-        console.print("[green]✓ No issues found[/green]")
+        console.print("[green]OK - No issues found[/green]")
 
     if output:
-        Path(output).write_text(report.to_json(), encoding="utf-8")
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(report.to_json(), encoding="utf-8")
         console.print(f"\n[green]Full report → {output}[/green]")
     db.close()
 
@@ -515,6 +589,10 @@ def recover(
 ) -> None:
     """扫描租约过期任务、未完成 Outbox 和孤立 Artifact."""
     settings, db, *_ = _bootstrap(config, trusted=True)
+    exp = _bind_store_for_experiment(db, None, experiment_id)
+    if exp is None:
+        console.print(f"[red]Experiment not found: {experiment_id}[/red]")
+        raise typer.Exit(1)
 
     expired = db.fetchall(
         "SELECT id, job_type FROM job WHERE experiment_id = ? "
@@ -522,7 +600,30 @@ def recover(
         (experiment_id,),
     )
     pending = db.fetchall(
-        "SELECT id, entity_id FROM vector_index_job WHERE status='pending' LIMIT 100"
+        """
+        SELECT vij.id, vij.entity_id
+        FROM vector_index_job vij
+        WHERE vij.status='pending'
+          AND (
+            (
+              vij.entity_type='candidate'
+              AND EXISTS (
+                SELECT 1 FROM candidate c
+                WHERE c.id=vij.entity_id AND c.experiment_id=?
+              )
+            )
+            OR
+            (
+              vij.entity_type='thought'
+              AND EXISTS (
+                SELECT 1 FROM thought_record t
+                WHERE t.id=vij.entity_id AND t.experiment_id=?
+              )
+            )
+          )
+        LIMIT 100
+        """,
+        (experiment_id, experiment_id),
     )
 
     console.print(f"Expired leases: [yellow]{len(expired)}[/yellow]")
