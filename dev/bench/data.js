@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785161656290,
+  "lastUpdate": 1785161764957,
   "repoUrl": "https://github.com/UynajGI/omnievolve",
   "entries": {
     "Benchmark": [
@@ -1218,6 +1218,93 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 2.813298428465964e-7",
             "extra": "mean: 648.6288952585762 nsec\nrounds: 37480"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "yuunagi.cn@outlook.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "committer": {
+            "email": "yuunagi.cn@outlook.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "distinct": true,
+          "id": "78cbba5bb57db340f1e6e0e0145f53cb85fb0ea5",
+          "message": "fix:ci-format",
+          "timestamp": "2026-07-27T22:15:08+08:00",
+          "tree_id": "375861f2a05afdf0345ab253e656718b70fdfd81",
+          "url": "https://github.com/UynajGI/omnievolve/commit/78cbba5bb57db340f1e6e0e0145f53cb85fb0ea5"
+        },
+        "date": 1785161764487,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_store_throughput",
+            "value": 1178.1643188742444,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002105363612743983",
+            "extra": "mean: 848.7780388354628 usec\nrounds: 206"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_load_throughput",
+            "value": 28317.1805272568,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005100558968993464",
+            "extra": "mean: 35.31425026716366 usec\nrounds: 14037"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_sha256_throughput",
+            "value": 1504.2958960873796,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005909322512431632",
+            "extra": "mean: 664.7628319674106 usec\nrounds: 1464"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_select_throughput",
+            "value": 25211.925173838317,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023348823527288",
+            "extra": "mean: 39.66376994636137 usec\nrounds: 16770"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_backpropagate_throughput",
+            "value": 43766.093420818324,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017492430336691025",
+            "extra": "mean: 22.848737957597272 usec\nrounds: 29583"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestNoveltyGatePerformance::test_ast_signature_throughput",
+            "value": 32412.221824971533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000035171562596207246",
+            "extra": "mean: 30.85255942650511 usec\nrounds: 8927"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_numpy_query_throughput",
+            "value": 1414.6755016443713,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000022948672489663427",
+            "extra": "mean: 706.8758869702865 usec\nrounds: 637"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_zvec_upsert_throughput",
+            "value": 2315.47168068765,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000019063462122811914",
+            "extra": "mean: 431.8774478394914 usec\nrounds: 2291"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestProfilerOverhead::test_profiler_disabled_overhead",
+            "value": 2009410.0473636226,
+            "unit": "iter/sec",
+            "range": "stddev: 5.630307426644392e-8",
+            "extra": "mean: 497.65850494876133 nsec\nrounds: 91241"
           }
         ]
       }
