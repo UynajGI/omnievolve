@@ -214,6 +214,7 @@ class GitCodeStore:
             input=input_data,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=full_env,
         )
         if check and result.returncode != 0:
@@ -234,6 +235,7 @@ class GitCodeStore:
             input=input_data,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env={**os.environ, **_GIT_ENV},
         )
         if check and result.returncode != 0:

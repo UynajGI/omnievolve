@@ -201,26 +201,30 @@ class TrustedSubprocessBackend:
         policy: SandboxPolicy,
     ) -> subprocess.CompletedProcess:
         """运行单个命令."""
-        # 合并环境变量（仅必要变量，避免 Argument list too long）
-        run_env = {}
-        for key in (
-            "PATH",
-            "HOME",
-            "USER",
-            "LANG",
-            "TMPDIR",
-            "TMP",
-            "TEMP",
-            "VIRTUAL_ENV",
-            "PYTHONPATH",
-            "LD_LIBRARY_PATH",
-        ):
-            if key in os.environ:
-                run_env[key] = os.environ[key]
-        # 传递数值计算/OpenBLAS 控制变量
-        for key in os.environ:
-            if key.startswith(("OPENBLAS_", "OMP_", "MKL_", "XLA_", "JAX_", "TF_")):
-                run_env[key] = os.environ[key]
+        # Windows: 继承完整环境（trusted 后端无安全隔离，系统变量不可缺）
+        # Unix: 仅传递必要变量（配合 resource.setrlimit 做有限资源控制）
+        if os.name == "nt":
+            run_env = dict(os.environ)
+        else:
+            run_env = {}
+            for key in (
+                "PATH",
+                "HOME",
+                "USER",
+                "LANG",
+                "TMPDIR",
+                "TMP",
+                "TEMP",
+                "VIRTUAL_ENV",
+                "PYTHONPATH",
+                "LD_LIBRARY_PATH",
+            ):
+                if key in os.environ:
+                    run_env[key] = os.environ[key]
+            # 传递数值计算/OpenBLAS 控制变量
+            for key in os.environ:
+                if key.startswith(("OPENBLAS_", "OMP_", "MKL_", "XLA_", "JAX_", "TF_")):
+                    run_env[key] = os.environ[key]
         run_env.update(env)
 
         # 设置资源限制的 preexec_fn（仅 Unix）

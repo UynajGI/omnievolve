@@ -44,7 +44,10 @@ class SortEvaluator:
         return EvaluationPlan(
             commands=[
                 CommandSpec(
-                    argv=[sys.executable, "-m", "pytest", "test_sort.py", "-v", "--tb=short"],
+                    argv=[
+                        sys.executable, "-m", "pytest", "test_sort.py",
+                        "-v", "--tb=short", "-p", "no:anyio", "-p", "no:asyncio",
+                    ],
                     timeout_sec=10.0,
                 ),
                 CommandSpec(
