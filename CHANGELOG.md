@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased] — 2026-07-27
+
+### Windows 平台兼容
+- **subprocess_backend**: `import resource` try/except 延迟导入（Windows 无此模块）
+- **subprocess_backend**: Windows 继承完整 `os.environ`（SYSTEMROOT 等系统变量不可缺）
+- **artifact_store**: `os.rename` → `os.replace`（Windows 目标存在时 rename 失败）+ 跳过 nt 目录 fsync
+- **git_code_store**: `_git()` / `_git_in_worktree()` 添加 `encoding="utf-8"`（Windows 默认 GBK 破坏 UTF-8 blob）
+- **cli doctor**: Unicode ✓/✗ → rich markup（GBK 终端 UnicodeEncodeError）
+
+### 管线全流程 debug
+- **prompt_repo.create**: FK 约束兼容 GitCodeStore — 使用 `store_text()` 返回的 git blob SHA 作为 content_hash
+- **docker_backend**: `_build_command` 使用 `shlex.quote` 转义参数（修复括号解析错误）
+- **docker_backend**: 超时检测简化 — `wait()` 抛异常即视为 timed_out
+- **NumpyVectorBackend**: 添加 `is_using_fallback()` 方法
+- **CLI run**: 对不存在的 `.py` 任务文件报错（exit code 1）
+
+### 新功能
+- **`max_tokens` 可配置一等项**: `[models] max_tokens = 16384`（默认），接入 LLMGateway `default_max_tokens`
+- **Embedding 模型**: Qwen3-Embedding-0.6B 本地安装验证通过（dim=1024）
+
+### CI 修复
+- benchmark workflow: 添加 `hypothesis` 依赖 + 测试改用 pytest-benchmark fixture
+- ci workflow: test job 排除 benchmark 标记 + 添加 hypothesis
+- gh-pages 分支创建（benchmark-action 依赖）
+- docker job 设为 `continue-on-error`（Docker Hub 网络波动不阻塞）
+- litellm 平台标记: `sys_platform == 'win32'` 约束 <1.92
+
+### 验证
+- 5 代 × 4 个体完整进化实验 `status=completed`，评估通过率 95%+
+- Slow Loop gen 3 正常触发，Policy Archive champion promoted
+- 双岛均衡分配，Checkpoint 持久化正常
+- 仓库公开: github.com/UynajGI/omnievolve
+
 ## [Unreleased] — 2026-07-22
 
 ### 14 项不成熟点修复

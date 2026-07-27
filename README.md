@@ -393,6 +393,7 @@ island_migration_interval = 5
 [models]
 heavy = ["gpt-4o"]            # 重型模型（Director/Coder）
 light = ["gpt-4o-mini"]       # 轻型模型（Critic）
+max_tokens = 16384            # 默认最大输出 token（可被 agent 覆盖）
 
 [models.routing]
 algorithm = "sliding_window_ucb"  # sliding_window_ucb / discounted_ucb / thompson_sampling

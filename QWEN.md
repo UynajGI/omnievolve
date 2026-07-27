@@ -12,8 +12,8 @@ make test-llm              # Tier 2: LLM 烟雾测试（2-3代真实进化，需
 make test-slow             # 慢速/集成测试（Docker, soak）
 make test-all              # 全量（不含 LLM）
 
-# 等效 pytest 命令
-.venv/bin/python -m pytest -q -m "not slow and not llm"   # 849 tests
+# 等效 pytest 命令（Windows: .venv/Scripts/python）
+.venv/bin/python -m pytest -q -m "not slow and not llm and not benchmark"   # ~838 tests
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
@@ -32,7 +32,7 @@ docker build -t omnievolve/sandbox:latest .      # build sandbox image
 .venv/bin/python -m omnievolve.cli run <task.py> -e <eval> -c omnievolve.toml --gens 30  # with Docker
 ```
 
-Python 3.12+. Virtualenv at `.venv/`. Config example at `configs/omnievolve.toml.example`.
+Python 3.12+ (dev env: 3.13). Virtualenv at `.venv/` (Windows: `.venv/Scripts/`, Unix: `.venv/bin/`). Config example at `configs/omnievolve.toml.example`.
 
 ## Directory layout
 
@@ -47,12 +47,12 @@ src/omnievolve/
   plugins/    BasePlugin, QuantPlugin, GeoPlugin, PluginDiscovery (namespace autoload)
   utils/      Embedding (SentenceTransformerEmbedder + LiteLLMEmbedder + FakeEmbedder, create_embedder factory, HF→hf-mirror→ModelScope auto-fallback), TokenCounter, SeedManager, ConfigSnapshot, Hashing, Profiling (PipelineProfiler + StepTimer + @profile_step)
   cli.py      Typer CLI (run/status/best/export/policy/audit/recover/migrate/doctor)
-  config.py   OmniEvolveSettings (pydantic-settings)
+  config.py   OmniEvolveSettings (pydantic-settings). Key: [models] max_tokens=16384 (default, wired to LLMGateway)
   exceptions.py  类型化异常层次 (OmniEvolveError → Sandbox/LLM/Evolution/…)
 docs/         User-facing docs (health_metrics, evaluator_guide, prompt_agent_guide, storage_adr, etc.)
 docs/architecture/  Interactive HTML architecture diagrams (system-overview, fast-loop, slow-loop, storage)
 examples/     python_optimization + circle_packing + heilbronn + matmul demo projects
-tests/        849 tests (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
+tests/        ~838 tests (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
 uv.lock       Deterministic dependency lock (163 packages)
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
