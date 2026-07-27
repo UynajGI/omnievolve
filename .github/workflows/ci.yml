@@ -77,7 +77,7 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           pip install -e ".[docker]"
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov hypothesis
 
       - name: Pytest + Coverage
         run: pytest -q --cov=omnievolve --cov-report=term-missing --cov-report=xml -m "not llm and not slow"
@@ -107,7 +107,7 @@ jobs:
       - run: |
           python -m pip install --upgrade pip
           pip install -e ".[docker]"
-          pip install pytest
+          pip install pytest hypothesis
 
       - name: Slow & E2E tests
         run: pytest -q -m "slow or e2e"
