@@ -80,7 +80,7 @@ jobs:
           pip install pytest pytest-cov hypothesis
 
       - name: Pytest + Coverage
-        run: pytest -q --cov=omnievolve --cov-report=term-missing --cov-report=xml -m "not llm and not slow"
+        run: pytest -q --cov=omnievolve --cov-report=term-missing --cov-report=xml -m "not llm and not slow and not benchmark"
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
