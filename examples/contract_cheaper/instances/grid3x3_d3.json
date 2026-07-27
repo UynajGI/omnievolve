@@ -1,0 +1,21 @@
+{
+  "name": "grid3x3_d3",
+  "description": "3x3 2D grid tensor network, bond dimension 3. 9 tensors, 12 internal indices. Non-trivial contraction ordering.",
+  "tensors": [
+    ["a", "b"],
+    ["b", "c", "d"],
+    ["c", "e"],
+    ["a", "d", "f"],
+    ["d", "e", "f", "g"],
+    ["e", "g", "h"],
+    ["f", "i"],
+    ["f", "g", "i", "j"],
+    ["g", "h", "j"]
+  ],
+  "dimensions": {
+    "a": 3, "b": 3, "c": 3, "d": 3, "e": 3,
+    "f": 3, "g": 3, "h": 3, "i": 3, "j": 3
+  },
+  "greedy_baseline_flops": 59049,
+  "note": "greedy_baseline_flops from cotengra greedy optimizer; cost_checker must reproduce this for the greedy tree"
+}
