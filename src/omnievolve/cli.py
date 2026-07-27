@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 from dotenv import load_dotenv
@@ -160,7 +161,7 @@ def _build_engine_components(
         from omnievolve.utils.embedding import FakeEmbedder
 
         # 尝试加载真实 embedding 模型，失败则用 FakeEmbedder
-        embedder = None
+        embedder: Any = None
         try:
             from omnievolve.utils.embedding import SentenceTransformerEmbedder
 
@@ -374,10 +375,7 @@ def best(
     show_code: bool = typer.Option(False, "--code", help="打印完整源码"),
 ) -> None:
     """输出最优 Candidate Artifact."""
-    settings, db, *_ = _bootstrap(config, trusted=True)
-    from omnievolve.storage.artifact_store import ArtifactStore
-
-    artifact_store = ArtifactStore(settings.storage.artifact_dir, db)
+    settings, db, artifact_store, *_ = _bootstrap(config, trusted=True)
 
     row = db.fetchone(
         """
@@ -400,7 +398,7 @@ def best(
 
     if show_code:
         try:
-            code = artifact_store.load_text(row["artifact_hash"])
+            code = artifact_store.load_snapshot(row["artifact_hash"])
             console.print("\n[bold]Source:[/bold]")
             console.print(code)
         except Exception as e:
@@ -554,7 +552,8 @@ def migrate(
     from omnievolve.storage.db import Database
     from omnievolve.storage.migrations import CURRENT_VERSION, get_schema_version, migrate
 
-    settings, _, _ = _bootstrap(config, trusted=True)[:3]
+    settings = load_settings(config)
+    Path(settings.storage.db_path).parent.mkdir(parents=True, exist_ok=True)
     db = Database(settings.storage.db_path)
 
     current = get_schema_version(db)

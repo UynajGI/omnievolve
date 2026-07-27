@@ -218,6 +218,7 @@ class MetricsCalculator:
         # 4. 行为签名多样性（归一化熵）
         if behavior_signatures:
             from collections import Counter
+
             sig_counts = list(Counter(behavior_signatures).values())
             result["behavior_signature_entropy"] = self._normalized_entropy(sig_counts)
         else:

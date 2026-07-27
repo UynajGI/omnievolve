@@ -5,10 +5,12 @@ description = "OmniEvolve - 受控元进化框架 (Controlled Meta-Evolution Fra
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "litellm>=1.40",
+    "litellm>=1.40; sys_platform != 'win32'",
+    "litellm>=1.40,<1.92; sys_platform == 'win32'",
     "networkx>=3.2",
     "pydantic>=2.5",
     "pydantic-settings>=2.1",
+    "python-dotenv>=1.0",
     "typer>=0.9",
     "rich>=13.0",
     "numpy>=1.26",

@@ -119,12 +119,12 @@ Respond with JSON: {{"has_leakage": bool, "reason": str, "confidence": "high"/"m
             response = self._llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 model="light",
-                role="critic",
+                agent_role="critic",
             )
 
             from omnievolve.utils.response import extract_jsons
 
-            jsons = extract_jsons(response)
+            jsons = extract_jsons(response.content)
             if jsons:
                 d = jsons[0]
                 return DataLeakageResult(

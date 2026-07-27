@@ -92,9 +92,7 @@ class CASCodeStore:
         """返回 unified diff（用 difflib 计算）."""
         parent = self.load_snapshot(parent_ref).splitlines(keepends=True)
         child = self.load_snapshot(child_ref).splitlines(keepends=True)
-        return "".join(
-            difflib.unified_diff(parent, child, "parent", "child")
-        )
+        return "".join(difflib.unified_diff(parent, child, "parent", "child"))
 
     def get_parents(self, ref: str) -> list[str]:
         """CAS 无 ancestry — 返回空列表."""

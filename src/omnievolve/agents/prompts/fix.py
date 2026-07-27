@@ -64,14 +64,10 @@ def format_error_output_section(
     sections: list[str] = []
 
     if stdout_log and stdout_log.strip():
-        sections.append(
-            f"### Standard Output (stdout):\n\n```\n{stdout_log.strip()}\n```"
-        )
+        sections.append(f"### Standard Output (stdout):\n\n```\n{stdout_log.strip()}\n```")
 
     if stderr_log and stderr_log.strip():
-        sections.append(
-            f"### Standard Error (stderr):\n\n```\n{stderr_log.strip()}\n```"
-        )
+        sections.append(f"### Standard Error (stderr):\n\n```\n{stderr_log.strip()}\n```")
 
     if not sections:
         return "\n### Error Output:\n\nNo error output captured.\n"

@@ -160,7 +160,8 @@ class GitCodeStore:
             # 可能是 blob hash（log/report 类型），直接读
             result = subprocess.run(
                 ["git", "--git-dir", str(self._repo_path), "cat-file", "blob", ref],
-                capture_output=True, env={**os.environ, **_GIT_ENV},
+                capture_output=True,
+                env={**os.environ, **_GIT_ENV},
             )
             if result.returncode == 0:
                 return result.stdout.decode("utf-8")
@@ -169,9 +170,12 @@ class GitCodeStore:
     def store(self, data: bytes, artifact_type: str = "source", **kwargs) -> str:
         """ArtifactStore 兼容: 存储二进制."""
         import subprocess as sp
+
         result = sp.run(
             ["git", "--git-dir", str(self._repo_path), "hash-object", "-w", "--stdin"],
-            input=data, capture_output=True, env={**os.environ, **_GIT_ENV},
+            input=data,
+            capture_output=True,
+            env={**os.environ, **_GIT_ENV},
         )
         return result.stdout.decode().strip()
 
@@ -181,7 +185,8 @@ class GitCodeStore:
             raise RuntimeError("Not bound")
         result = subprocess.run(
             ["git", "--git-dir", str(self._repo_path), "cat-file", "blob", ref],
-            capture_output=True, env={**os.environ, **_GIT_ENV},
+            capture_output=True,
+            env={**os.environ, **_GIT_ENV},
         )
         return result.stdout
 
@@ -200,7 +205,9 @@ class GitCodeStore:
         所有 git 调用集中在此方法，便于审计和 mock。
         """
         if self._repo_path is None:
-            raise RuntimeError("GitCodeStore not bound to experiment. Call bind_experiment() first.")
+            raise RuntimeError(
+                "GitCodeStore not bound to experiment. Call bind_experiment() first."
+            )
         full_env = {**os.environ, **_GIT_ENV, **(env or {})}
         result = subprocess.run(
             ["git", "--git-dir", str(self._repo_path)] + args,
@@ -210,9 +217,7 @@ class GitCodeStore:
             env=full_env,
         )
         if check and result.returncode != 0:
-            raise RuntimeError(
-                f"git {' '.join(args)} failed: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout.strip()
 
     def _git_in_worktree(
@@ -232,13 +237,12 @@ class GitCodeStore:
             env={**os.environ, **_GIT_ENV},
         )
         if check and result.returncode != 0:
-            raise RuntimeError(
-                f"git {' '.join(args)} failed in {wt_path}: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"git {' '.join(args)} failed in {wt_path}: {result.stderr.strip()}")
         return result
 
     def _init_repo(self) -> None:
         """初始化 bare git repo（如果不存在）."""
+        assert self._repo_path is not None  # bind_experiment 必须先调用
         if not (self._repo_path / "HEAD").exists():
             self._repo_path.mkdir(parents=True, exist_ok=True)
             subprocess.run(
@@ -326,6 +330,7 @@ class GitCodeStore:
         每个 worktree 路径含随机后缀，天然避免冲突。
         """
         wt_name = f"wt_{ref[:8]}_{uuid.uuid4().hex[:6]}"
+        assert self._wt_root is not None  # bind_experiment 必须先调用
         wt_path = self._wt_root / wt_name
 
         self._git(
@@ -388,9 +393,7 @@ class GitCodeStore:
                 )
                 if result.returncode != 0:
                     # 冲突 → abort + 返回 None
-                    self._git_in_worktree(
-                        wt.path, ["merge", "--abort"], check=False
-                    )
+                    self._git_in_worktree(wt.path, ["merge", "--abort"], check=False)
                     logger.debug(
                         "Git merge conflict between %s and %s",
                         first[:8],
@@ -399,9 +402,7 @@ class GitCodeStore:
                     return None
 
             # 获取 merge 后的 HEAD SHA
-            merged_sha = self._git_in_worktree(
-                wt.path, ["rev-parse", "HEAD"]
-            ).stdout.strip()
+            merged_sha = self._git_in_worktree(wt.path, ["rev-parse", "HEAD"]).stdout.strip()
             return merged_sha
         finally:
             self.release(wt)
@@ -416,8 +417,7 @@ class GitCodeStore:
         """列出所有检查点."""
         try:
             output = self._git(
-                ["for-each-ref", "--format=%(refname:short) %(objectname)",
-                 "refs/checkpoints/"],
+                ["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/checkpoints/"],
             )
             results = []
             for line in output.strip().split("\n"):

@@ -8,7 +8,7 @@ import pytest
 
 from omnievolve.storage.db import create_memory_database
 from omnievolve.storage.migrations import initialize_database
-from omnievolve.storage.vector_backend import VectorHit, VectorRecord
+from omnievolve.storage.vector_backend import VectorHit
 from omnievolve.storage.vector_store import VectorStore
 
 

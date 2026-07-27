@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from omnievolve.storage.vector_backend import VectorHit, VectorRecord
-from omnievolve.storage.zvec_backend import ZvecBackend, create_vector_backend
+from omnievolve.storage.zvec_backend import create_vector_backend
 
 
 class TestZvecBackendFallback:
@@ -41,8 +40,7 @@ class TestZvecBackendCRUD:
         b.create_or_open("test_uq", dimension=8)
         vecs = [np.random.randn(8).tolist() for _ in range(5)]
         records = [
-            VectorRecord(id=f"v{i}", vector=v, metadata={"idx": i})
-            for i, v in enumerate(vecs)
+            VectorRecord(id=f"v{i}", vector=v, metadata={"idx": i}) for i, v in enumerate(vecs)
         ]
         b.upsert("test_uq", records)
         hits = b.query("test_uq", vecs[0], top_k=3)

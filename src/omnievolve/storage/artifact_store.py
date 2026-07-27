@@ -314,15 +314,16 @@ class ArtifactStore:
             os.fsync(fd)
             os.close(fd)
 
-            # 原子重命名
-            os.rename(tmp_path, str(target_path))
+            # 原子重命名（os.replace 在 Windows 上也能覆盖已存在的目标）
+            os.replace(tmp_path, str(target_path))
 
-            # fsync 目录确保元数据持久化
-            dir_fd = os.open(str(target_path.parent), os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
+            # fsync 目录确保元数据持久化（Windows 不支持目录 fsync，跳过）
+            if os.name != "nt":
+                dir_fd = os.open(str(target_path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
 
         except Exception:
             # 清理临时文件（fd 可能已在 L314 关闭）

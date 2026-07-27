@@ -134,7 +134,9 @@ class ZvecBackend:
             self._collections[collection] = coll
             self._dimensions[collection] = dimension
             self._metadata.setdefault(collection, {})
-            logger.info("Created zvec collection: %s (dim=%d, HNSW m=%d)", collection, dimension, self._m)
+            logger.info(
+                "Created zvec collection: %s (dim=%d, HNSW m=%d)", collection, dimension, self._m
+            )
         except Exception as e:
             logger.warning("Failed to create zvec collection: %s, using NumPy fallback", e)
             self._fallback.create_or_open(collection, dimension)

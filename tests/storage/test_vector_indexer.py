@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -124,7 +124,15 @@ class TestVectorIndexer:
         db.execute(
             "INSERT INTO vector_index_job (entity_type, entity_id, embedding_profile_id, "
             "content_hash, operation, status, lease_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("candidate", "c4", "profile-code-default", "hash4", "upsert", "indexing", "2020-01-01T00:00:00"),
+            (
+                "candidate",
+                "c4",
+                "profile-code-default",
+                "hash4",
+                "upsert",
+                "indexing",
+                "2020-01-01T00:00:00",
+            ),
         )
         recovered = indexer.recover_stale_jobs()
         assert recovered >= 1

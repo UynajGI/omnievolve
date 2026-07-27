@@ -251,6 +251,7 @@ class AsyncPipelineEngine:
 
         # 复用引擎的 FastLoopStep
         from omnievolve.engine.fast_loop import FastLoopStep
+
         self._fast_loop = FastLoopStep(engine)
 
     async def run(self, initial_code: str, task_name: str) -> EvolutionResult:
@@ -329,9 +330,7 @@ class AsyncPipelineEngine:
             if self._shutdown_event.is_set() or engine._budget_guard.state.is_exhausted:  # noqa: SLF001
                 break
             island_id = f"island_{i % engine._config.island_count}"  # noqa: SLF001
-            tasks.append(asyncio.create_task(
-                self._prepare_async(gen, task_name, island_id)
-            ))
+            tasks.append(asyncio.create_task(self._prepare_async(gen, task_name, island_id)))
 
         prepared_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -344,7 +343,7 @@ class AsyncPipelineEngine:
                 try:
                     self._commit_candidate(result)
                 except Exception:
-                    logger.error("Commit failed for %s", result.candidate_id, exc_info=True)
+                    logger.error("Commit failed for %s", result.candidate_id, exc_info=True)  # type: ignore[union-attr]
 
         # Phase C: 后代同步
         if engine._island_manager.should_migrate(gen):  # noqa: SLF001
@@ -365,23 +364,21 @@ class AsyncPipelineEngine:
         if (
             hasattr(code_store, "gc")
             and hasattr(code_store, "backend_name")
-            and code_store.backend_name == "git"
+            and code_store.backend_name == "git"  # type: ignore[union-attr]
             and gen % self._config.git_auto_gc_interval == 0  # noqa: SLF001
         ):
-            await asyncio.to_thread(code_store.gc)
+            await asyncio.to_thread(code_store.gc)  # type: ignore[union-attr]
 
     def _safe_process_batch(self) -> None:
         try:
-            self._engine._vector_indexer.process_batch()  # noqa: SLF001
+            self._engine._vector_indexer.process_batch()  # type: ignore[union-attr]  # noqa: SLF001
         except Exception:
             logger.debug("Vector batch processing failed", exc_info=True)
 
     async def _prepare_async(self, gen: int, task_name: str, island_id: str):
         """Phase A: 并行执行 prepare — 无共享状态变更."""
         start = time.perf_counter()
-        result = await asyncio.to_thread(
-            self._fast_loop.prepare, gen, task_name, island_id
-        )
+        result = await asyncio.to_thread(self._fast_loop.prepare, gen, task_name, island_id)
         elapsed = time.perf_counter() - start
         self._update_ewma("sampling", elapsed)
         return result

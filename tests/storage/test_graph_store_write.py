@@ -61,8 +61,13 @@ class TestGraphStoreWrite:
         """add_candidate 写入 candidate + search_state + lineage + outbox."""
         _ensure_artifact(db, "abc123")
         cid = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 1,
-             "artifact_hash": "abc123", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 1,
+                "artifact_hash": "abc123",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         assert cid
@@ -84,21 +89,38 @@ class TestGraphStoreWrite:
         _ensure_artifact(db, "child")
         # 先创建两个父代
         p1 = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 0,
-             "artifact_hash": "p1", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 0,
+                "artifact_hash": "p1",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         p2 = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 0,
-             "artifact_hash": "p2", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 0,
+                "artifact_hash": "p2",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         # 创建子代
         child = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 1,
-             "artifact_hash": "child", "search_policy_id": "default"},
-            parents=[{"id": p1, "relation_type": "crossover"},
-                     {"id": p2, "relation_type": "crossover"}],
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 1,
+                "artifact_hash": "child",
+                "search_policy_id": "default",
+            },
+            parents=[
+                {"id": p1, "relation_type": "crossover"},
+                {"id": p2, "relation_type": "crossover"},
+            ],
         )
         lineages = db.fetchall(
             "SELECT * FROM candidate_lineage WHERE child_id = ? ORDER BY parent_order",
@@ -114,13 +136,19 @@ class TestGraphStoreWrite:
         """meta JSON 序列化."""
         _ensure_artifact(db, "abc")
         cid = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 1,
-             "artifact_hash": "abc", "search_policy_id": "default",
-             "meta": {"thought": "test thought", "model": "fake"}},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 1,
+                "artifact_hash": "abc",
+                "search_policy_id": "default",
+                "meta": {"thought": "test thought", "model": "fake"},
+            },
             parents=[],
         )
         row = db.fetchone("SELECT meta FROM candidate WHERE id = ?", (cid,))
         import json
+
         meta = json.loads(row["meta"])
         assert meta["thought"] == "test thought"
 
@@ -129,13 +157,23 @@ class TestGraphStoreWrite:
         _ensure_artifact(db, "a1")
         _ensure_artifact(db, "a2")
         c1 = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 0,
-             "artifact_hash": "a1", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 0,
+                "artifact_hash": "a1",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         c2 = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 1,
-             "artifact_hash": "a2", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 1,
+                "artifact_hash": "a2",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         gs.add_reference_edge(c1, c2, "memory", {"reason": "similar approach"})
@@ -150,8 +188,13 @@ class TestGraphStoreWrite:
         """visit_count/value_sum 增量更新."""
         _ensure_artifact(db, "a")
         cid = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 0,
-             "artifact_hash": "a", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 0,
+                "artifact_hash": "a",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         gs.update_search_state(cid, {"visit_count": 3, "value_sum": 1.5})
@@ -169,8 +212,13 @@ class TestGraphStoreWrite:
         """frontier_status 绝对更新."""
         _ensure_artifact(db, "a")
         cid = gs.add_candidate(
-            {"experiment_id": experiment, "task_id": "t", "generation": 0,
-             "artifact_hash": "a", "search_policy_id": "default"},
+            {
+                "experiment_id": experiment,
+                "task_id": "t",
+                "generation": 0,
+                "artifact_hash": "a",
+                "search_policy_id": "default",
+            },
             parents=[],
         )
         gs.update_search_state(cid, {"frontier_status": "elite"})
@@ -183,8 +231,13 @@ class TestGraphStoreWrite:
         for gen in range(5):
             _ensure_artifact(db, f"a{gen}")
             cid = gs.add_candidate(
-                {"experiment_id": experiment, "task_id": "t", "generation": gen,
-                 "artifact_hash": f"a{gen}", "search_policy_id": "default"},
+                {
+                    "experiment_id": experiment,
+                    "task_id": "t",
+                    "generation": gen,
+                    "artifact_hash": f"a{gen}",
+                    "search_policy_id": "default",
+                },
                 parents=[],
             )
             # 插入评估记录
@@ -201,9 +254,14 @@ class TestGraphStoreWrite:
         for i in range(5):
             _ensure_artifact(db, f"a{i}")
             cid = gs.add_candidate(
-                {"experiment_id": experiment, "task_id": "t", "generation": 0,
-                 "artifact_hash": f"a{i}", "search_policy_id": "default",
-                 "island_id": f"island_{i % 2}"},
+                {
+                    "experiment_id": experiment,
+                    "task_id": "t",
+                    "generation": 0,
+                    "artifact_hash": f"a{i}",
+                    "search_policy_id": "default",
+                    "island_id": f"island_{i % 2}",
+                },
                 parents=[],
             )
             db.execute(

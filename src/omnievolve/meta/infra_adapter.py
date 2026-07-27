@@ -100,14 +100,16 @@ class InfraAdapter:
             是否成功应用
         """
         # 记录变更历史（审计）
-        self._change_history.append({
-            "env_version_id": env_version_id,
-            "change_type": change.change_type,
-            "old_value": change.current_value,
-            "new_value": change.proposed_value,
-            "rationale": change.rationale,
-            "risk_level": change.risk_level,
-        })
+        self._change_history.append(
+            {
+                "env_version_id": env_version_id,
+                "change_type": change.change_type,
+                "old_value": change.current_value,
+                "new_value": change.proposed_value,
+                "rationale": change.rationale,
+                "risk_level": change.risk_level,
+            }
+        )
 
         logger.info(
             "InfraAdapter: applied %s change (%s → %s) on env %s",

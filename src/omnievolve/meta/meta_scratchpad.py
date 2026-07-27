@@ -57,9 +57,7 @@ class MetaScratchpad:
                     f"Score: {cand.get('score', 'N/A')}\n"
                     f"Code preview: {cand.get('code_preview', '')[:500]}"
                 )
-                user_msg = META_STEP1_USER_MSG.format(
-                    individual_program_msg=program_msg
-                )
+                user_msg = META_STEP1_USER_MSG.format(individual_program_msg=program_msg)
                 response = self._llm.chat(
                     messages=[
                         {"role": "system", "content": META_STEP1_SYSTEM_MSG},
@@ -154,9 +152,7 @@ class MetaScratchpad:
         summaries = self.summarize_individuals(candidates)
 
         # Step 2
-        insights = self.extract_insights(
-            summaries, previous_insights, best_program_info
-        )
+        insights = self.extract_insights(summaries, previous_insights, best_program_info)
 
         # Step 3
         recommendations = self.generate_recommendations(

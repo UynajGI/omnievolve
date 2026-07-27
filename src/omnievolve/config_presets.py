@@ -52,9 +52,7 @@ def get_preset_config(preset_name: str) -> dict:
         KeyError: 如果预设不存在
     """
     if preset_name not in BUDGET_PRESETS:
-        raise KeyError(
-            f"Unknown preset '{preset_name}'. Available: {list_presets()}"
-        )
+        raise KeyError(f"Unknown preset '{preset_name}'. Available: {list_presets()}")
     return BUDGET_PRESETS[preset_name]
 
 

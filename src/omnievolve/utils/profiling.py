@@ -294,7 +294,7 @@ class PipelineProfiler:
 
     def export_json(self, path: str | Path) -> None:
         """导出 JSON 报告."""
-        data = {
+        data: dict[str, Any] = {
             "hotspots": self.hotspots(10),
             "steps": {},
             "records_count": len(self._records),

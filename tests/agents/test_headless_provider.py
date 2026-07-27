@@ -98,9 +98,7 @@ class TestQueryHeadless:
     @patch("omnievolve.agents.headless_provider.check_headless_available")
     def test_success(self, mock_check, mock_run):
         mock_check.return_value = True
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="generated code", stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="generated code", stderr="")
         result = query_headless("test prompt", "headless/claude-code")
         assert result == "generated code"
 

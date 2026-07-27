@@ -120,10 +120,7 @@ def query_headless(
     hm = parse_headless_model(model_str)
 
     if not check_headless_available(hm.agent):
-        raise RuntimeError(
-            f"Headless agent '{hm.agent}' not found. "
-            f"Install it or check PATH."
-        )
+        raise RuntimeError(f"Headless agent '{hm.agent}' not found. Install it or check PATH.")
 
     env = os.environ.copy()
     # 安全：不传入敏感环境变量
@@ -151,9 +148,7 @@ def query_headless(
         return result.stdout.strip()
 
     except subprocess.TimeoutExpired:
-        raise RuntimeError(
-            f"Headless agent '{hm.agent}' timed out after {timeout}s"
-        )
+        raise RuntimeError(f"Headless agent '{hm.agent}' timed out after {timeout}s")
 
 
 async def query_headless_async(

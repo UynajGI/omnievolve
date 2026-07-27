@@ -44,9 +44,7 @@ class TestGitCodeStoreBasic:
     def test_store_with_parents(self, git_store: GitCodeStore):
         """带 parents 的 store 建立 ancestry."""
         parent_ref = git_store.store_snapshot("code_v1", message="v1")
-        child_ref = git_store.store_snapshot(
-            "code_v2", parents=[parent_ref], message="v2"
-        )
+        child_ref = git_store.store_snapshot("code_v2", parents=[parent_ref], message="v2")
         parents = git_store.get_parents(child_ref)
         assert parents == [parent_ref]
         assert git_store.get_parents(parent_ref) == []
@@ -55,9 +53,7 @@ class TestGitCodeStoreBasic:
         """多父代 (crossover 场景)."""
         p1 = git_store.store_snapshot("code_a")
         p2 = git_store.store_snapshot("code_b")
-        child = git_store.store_snapshot(
-            "code_merged", parents=[p1, p2], message="crossover"
-        )
+        child = git_store.store_snapshot("code_merged", parents=[p1, p2], message="crossover")
         parents = sorted(git_store.get_parents(child))
         assert parents == sorted([p1, p2])
 
@@ -197,9 +193,7 @@ class TestConcurrency:
 
         def worker(i: int) -> None:
             try:
-                ref = git_store.store_snapshot(
-                    f"code_{i}", message=f"thread_{i}"
-                )
+                ref = git_store.store_snapshot(f"code_{i}", message=f"thread_{i}")
                 refs.append(ref)
             except Exception as e:
                 errors.append(e)
@@ -217,10 +211,7 @@ class TestConcurrency:
 
     def test_concurrent_materialize(self, git_store: GitCodeStore):
         """并行 materialize 不同候选."""
-        refs = [
-            git_store.store_snapshot(f"code_{i}", message=f"v{i}")
-            for i in range(5)
-        ]
+        refs = [git_store.store_snapshot(f"code_{i}", message=f"v{i}") for i in range(5)]
         handles: list[WorktreeHandle] = []
         errors: list[Exception] = []
 

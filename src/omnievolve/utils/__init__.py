@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def safe_json_loads(data: str | None, default: object = None) -> object:
+def safe_json_loads(data: str | None, default: Any = None) -> Any:
     """安全 JSON 解析 — 数据库字段损坏时返回 default 而非崩溃.
 
     Args:

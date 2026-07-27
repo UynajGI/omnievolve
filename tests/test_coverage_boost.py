@@ -11,10 +11,7 @@
 
 from __future__ import annotations
 
-import sys
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -34,12 +31,18 @@ class TestFusionAgent:
     def test_fuse_basic(self):
         from omnievolve.agents.fusion import FusionAgent
 
-        llm = self._make_llm('```python\ndef sort(arr):\n    return sorted(arr)\n```')
+        llm = self._make_llm("```python\ndef sort(arr):\n    return sorted(arr)\n```")
         agent = FusionAgent(llm)
 
         result = agent.fuse(
             "def sort(arr):\n    return arr",
-            [{"code": "def sort(arr):\n    return sorted(arr)", "score": 0.8, "thought": "use builtin"}],
+            [
+                {
+                    "code": "def sort(arr):\n    return sorted(arr)",
+                    "score": 0.8,
+                    "thought": "use builtin",
+                }
+            ],
         )
 
         assert "sorted" in result.full_code
@@ -110,16 +113,7 @@ class TestPrompts:
             FIX_ITER_MSG,
             FIX_SYS_FORMAT,
             META_STEP1_SYSTEM_MSG,
-            META_STEP1_USER_MSG,
-            META_STEP2_SYSTEM_MSG,
-            META_STEP2_USER_MSG,
-            META_STEP3_SYSTEM_MSG,
-            META_STEP3_USER_MSG,
             ROBUSTNESS_GENERALIZATION_STRATEGY,
-            format_error_output_section,
-            format_prompt_section,
-            prompt_leakage_prevention,
-            prompt_resp_fmt,
         )
 
         assert isinstance(ROBUSTNESS_GENERALIZATION_STRATEGY, dict)
@@ -287,7 +281,7 @@ class TestProfiling:
         from omnievolve.utils.profiling import StepTimer
 
         with StepTimer("test_step", track_memory=False) as t:
-            x = sum(range(1000))
+            _ = sum(range(1000))  # noqa: F841 — 制造 CPU 负载供 timer 测量
 
         assert t.record is not None
         assert t.record.name == "test_step"
@@ -450,9 +444,7 @@ class TestInfraAdapter:
         from omnievolve.meta.infra_adapter import EnvChangeProposal, InfraAdapter
 
         adapter = InfraAdapter()
-        change = EnvChangeProposal(
-            change_type="timeout", current_value=30, proposed_value=60
-        )
+        change = EnvChangeProposal(change_type="timeout", current_value=30, proposed_value=60)
 
         assert adapter.apply_env_change("env-1", change) is True
         assert len(adapter.get_change_history("env-1")) == 1
@@ -489,17 +481,33 @@ class TestModelRouter:
         from omnievolve.agents.router import ModelSlot
 
         return [
-            ModelSlot(name="heavy", tier="heavy", cost_per_1k_input=0.01, cost_per_1k_output=0.03, avg_latency_ms=500),
-            ModelSlot(name="light", tier="light", cost_per_1k_input=0.001, cost_per_1k_output=0.003, avg_latency_ms=100),
+            ModelSlot(
+                name="heavy",
+                tier="heavy",
+                cost_per_1k_input=0.01,
+                cost_per_1k_output=0.03,
+                avg_latency_ms=500,
+            ),
+            ModelSlot(
+                name="light",
+                tier="light",
+                cost_per_1k_input=0.001,
+                cost_per_1k_output=0.003,
+                avg_latency_ms=100,
+            ),
         ]
 
     def _make_ctx(self, role="coder", remaining=1.0):
         from omnievolve.agents.router import RouteContext
 
         return RouteContext(
-            role=role, generation=1, stagnation_level=0.0,
-            novelty_deficit=0.0, implementation_difficulty=0.0,
-            remaining_token_ratio=remaining, remaining_compute_ratio=remaining,
+            role=role,
+            generation=1,
+            stagnation_level=0.0,
+            novelty_deficit=0.0,
+            implementation_difficulty=0.0,
+            remaining_token_ratio=remaining,
+            remaining_compute_ratio=remaining,
         )
 
     def test_sliding_window_ucb_select(self):
@@ -646,7 +654,8 @@ class TestCritic:
         llm.chat.return_value = MagicMock(content='{"passed": true, "feedback": "fixed"}')
         critic = self._make_critic(llm=llm)
         passed, feedback = critic.review(
-            self._make_code(), self._make_thought(),
+            self._make_code(),
+            self._make_thought(),
             last_eval_stderr="TypeError: unsupported operand",
         )
         assert passed is True

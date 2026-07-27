@@ -196,12 +196,12 @@ Respond with JSON: {{"category": "<category>"}}"""
             response = llm.chat(
                 messages=[{"role": "user", "content": prompt}],
                 model="light",
-                role="critic",
+                agent_role="critic",
             )
 
             from omnievolve.utils.response import extract_jsons
 
-            jsons = extract_jsons(response)
+            jsons = extract_jsons(response.content)
             if jsons:
                 cat = jsons[0].get("category", "other")
                 if cat in categories:

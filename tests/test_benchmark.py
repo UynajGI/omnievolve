@@ -124,9 +124,7 @@ class TestNoveltyGatePerformance:
         """验证 AST 签名计算吞吐量."""
         from omnievolve.engine.novelty import compute_code_signature
 
-        code_samples = [
-            f"def func_{i}(x):\n    return x + {i}\n" for i in range(50)
-        ]
+        code_samples = [f"def func_{i}(x):\n    return x + {i}\n" for i in range(50)]
 
         count = 500
         start = time.perf_counter()

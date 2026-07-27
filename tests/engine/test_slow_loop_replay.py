@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -136,7 +136,9 @@ class TestSlowLoopPromotion:
         assert new_id == "challenger-1"
         assert new_genome is not None
         slow_loop._policy_archive.promote_to_champion.assert_called_once_with("challenger-1")
-        slow_loop._experiment_repo.set_champion_policy.assert_called_once_with("exp1", "challenger-1")
+        slow_loop._experiment_repo.set_champion_policy.assert_called_once_with(
+            "exp1", "challenger-1"
+        )
 
     def test_rejection(self, slow_loop):
         """Replay 决策 reject → 返回 (None, None)."""

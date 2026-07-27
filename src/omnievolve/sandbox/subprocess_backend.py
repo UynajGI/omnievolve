@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import os
-import resource
 import subprocess
 import tempfile
 import time
@@ -22,6 +21,12 @@ import uuid
 import warnings
 from pathlib import Path
 from typing import Any
+
+# resource 模块仅 Unix 可用，Windows 上延迟降级
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 
 from omnievolve.sandbox.base import (
     CandidateArtifact,
@@ -218,8 +223,10 @@ class TrustedSubprocessBackend:
                 run_env[key] = os.environ[key]
         run_env.update(env)
 
-        # 设置资源限制的 preexec_fn
+        # 设置资源限制的 preexec_fn（仅 Unix）
         def set_limits():
+            if resource is None:
+                return
             if hasattr(resource, "RLIMIT_AS") and policy.mem_limit_mb > 0:
                 mem_bytes = policy.mem_limit_mb * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
@@ -260,5 +267,5 @@ class TrustedSubprocessBackend:
             "backend": "trusted_subprocess",
             "warning": "This backend does NOT provide security isolation",
             "platform": os.name,
-            "rlimit_available": hasattr(resource, "RLIMIT_AS"),
+            "rlimit_available": resource is not None and hasattr(resource, "RLIMIT_AS"),
         }

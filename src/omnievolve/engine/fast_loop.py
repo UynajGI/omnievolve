@@ -689,7 +689,7 @@ class FastLoopStep:
             try:
                 code_text = e._artifact_store.load_text(artifact_hash)  # noqa: SLF001
                 baseline = e._get_baseline_score()  # noqa: SLF001
-                leak_result = e._leakage_detector.check(  # noqa: SLF001
+                leak_result = e._leakage_detector.check(  # type: ignore[attr-defined]  # noqa: SLF001
                     code_text or "", "", output.score, baseline
                 )
                 if leak_result.has_leakage and leak_result.confidence == "high":
@@ -808,7 +808,7 @@ class FastLoopStep:
                 # 合并插件指标到 output.metrics，不改写 score/passed
                 output = type(output)(
                     score=output.score,
-                    metrics={**output.metrics, "plugin_enrichment": enriched_metrics},
+                    metrics={**output.metrics, "plugin_enrichment": enriched_metrics},  # type: ignore[dict-item]
                     passed=output.passed,
                     failure_reason=output.failure_reason,
                     confidence=output.confidence,

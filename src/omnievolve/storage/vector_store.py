@@ -101,7 +101,7 @@ class VectorStore:
 
         # 向量距离贪心多样化
         try:
-            vectors = self._embedder.embed(candidates[:top_k * 3])
+            vectors = self._embedder.embed(candidates[: top_k * 3])
             selected_indices = [0]  # 从最高分开始
 
             while len(selected_indices) < top_k and len(selected_indices) < len(vectors):
@@ -113,8 +113,7 @@ class VectorStore:
                         continue
                     # 计算与已选集合的最小距离
                     min_dist = min(
-                        1.0 - self._cosine_sim(vectors[i], vectors[j])
-                        for j in selected_indices
+                        1.0 - self._cosine_sim(vectors[i], vectors[j]) for j in selected_indices
                     )
                     if min_dist > best_min_dist:
                         best_min_dist = min_dist
@@ -157,13 +156,15 @@ class VectorStore:
                     weight = 1.0
                     if scope_weights and hit.metadata.get("scope"):
                         weight = scope_weights.get(hit.metadata["scope"], 0.5)
-                    results.append({
-                        "id": hit.id,
-                        "score": hit.similarity * weight,
-                        "source": "vector",
-                        "collection": collection,
-                        "metadata": hit.metadata,
-                    })
+                    results.append(
+                        {
+                            "id": hit.id,
+                            "score": hit.similarity * weight,
+                            "source": "vector",
+                            "collection": collection,
+                            "metadata": hit.metadata,
+                        }
+                    )
         except Exception as e:
             logger.debug("rag_retrieve vector search failed: %s", e)
 
@@ -180,12 +181,14 @@ class VectorStore:
                     (query, top_k * 2),
                 )
                 for row in fts_rows:
-                    results.append({
-                        "id": row["entity_id"],
-                        "score": 1.0 / (abs(row["rank"]) + 1),
-                        "source": "fts",
-                        "collection": "thought_default",
-                    })
+                    results.append(
+                        {
+                            "id": row["entity_id"],
+                            "score": 1.0 / (abs(row["rank"]) + 1),
+                            "source": "fts",
+                            "collection": "thought_default",
+                        }
+                    )
             except Exception as e:
                 logger.debug("rag_retrieve FTS failed: %s", e)
 
@@ -257,7 +260,12 @@ class VectorStore:
         def _query_one(collection: str) -> list[dict[str, Any]]:
             hits = self._backend.query(collection, query_vec, top_k=top_k)
             return [
-                {"id": h.id, "score": h.similarity, "collection": collection, "metadata": h.metadata}
+                {
+                    "id": h.id,
+                    "score": h.similarity,
+                    "collection": collection,
+                    "metadata": h.metadata,
+                }
                 for h in hits
             ]
 

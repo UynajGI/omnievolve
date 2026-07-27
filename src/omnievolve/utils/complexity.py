@@ -51,9 +51,7 @@ def _analyze_python(code: str) -> dict:
         # Cyclomatic Complexity
         cc_results = cc_visit(code)
         if cc_results:
-            metrics["cyclomatic_complexity"] = max(
-                (c.complexity for c in cc_results), default=0
-            )
+            metrics["cyclomatic_complexity"] = max((c.complexity for c in cc_results), default=0)
 
         # Halstead
         h_results = h_visit(code)
@@ -62,9 +60,7 @@ def _analyze_python(code: str) -> dict:
 
         # Maintainability Index
         raw = analyze(code)
-        metrics["maintainability_index"] = mi_visit(
-            code, multi=True
-        )
+        metrics["maintainability_index"] = mi_visit(code, multi=True)
         metrics["lines_of_code"] = raw.lloc
 
     except ImportError:
@@ -90,13 +86,8 @@ def _analyze_generic(code: str) -> dict:
     loc = len([line for line in lines if line.strip() and not line.strip().startswith("#")])
 
     # 估算 cyclomatic complexity
-    control_keywords = (
-        "if ", "elif ", "else:", "for ", "while ", "except ", "and ", "or "
-    )
-    cc = sum(
-        sum(1 for kw in control_keywords if kw in line)
-        for line in lines
-    )
+    control_keywords = ("if ", "elif ", "else:", "for ", "while ", "except ", "and ", "or ")
+    cc = sum(sum(1 for kw in control_keywords if kw in line) for line in lines)
 
     # 估算嵌套深度
     max_indent = 0
@@ -119,8 +110,15 @@ def _max_nesting_depth(node: ast.AST, current_depth: int = 0) -> int:
     """递归计算 AST 最大嵌套深度."""
     max_depth = current_depth
     nesting_types = (
-        ast.If, ast.For, ast.While, ast.With, ast.Try, ast.ExceptHandler,
-        ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+        ast.If,
+        ast.For,
+        ast.While,
+        ast.With,
+        ast.Try,
+        ast.ExceptHandler,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
     )
     for child in ast.iter_child_nodes(node):
         child_depth = current_depth + 1 if isinstance(child, nesting_types) else current_depth

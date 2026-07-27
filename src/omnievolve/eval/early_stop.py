@@ -11,7 +11,7 @@ import logging
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,7 @@ class EarlyStopMethod(ABC):
     """早停方法基类."""
 
     @abstractmethod
-    def check(
-        self, scores: list[float], threshold: float
-    ) -> EarlyStopDecision:
+    def check(self, scores: list[float], threshold: float) -> EarlyStopDecision:
         """检查是否应提前停止.
 
         Args:
@@ -188,9 +186,7 @@ class HybridEarlyStop(EarlyStopMethod):
         min_trials: int = 3,
     ) -> None:
         self._bayesian = BayesianEarlyStop(prob_cutoff=prob_cutoff, min_trials=min_trials)
-        self._ci = ConfidenceIntervalEarlyStop(
-            ci_confidence=ci_confidence, min_trials=min_trials
-        )
+        self._ci = ConfidenceIntervalEarlyStop(ci_confidence=ci_confidence, min_trials=min_trials)
 
     def check(self, scores: list[float], threshold: float) -> EarlyStopDecision:
         bayes = self._bayesian.check(scores, threshold)
@@ -202,7 +198,7 @@ class HybridEarlyStop(EarlyStopMethod):
 
 def create_early_stop_method(
     method: str = "none",
-    **kwargs: float,
+    **kwargs: Any,
 ) -> EarlyStopMethod | None:
     """工厂函数 — 创建早停方法.
 

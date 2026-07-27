@@ -112,7 +112,9 @@ class CrossoverOperator:
                 try:
                     return code_store.load_snapshot(merged)
                 except Exception:
-                    logger.debug("Git merge load failed, falling back to text crossover", exc_info=True)
+                    logger.debug(
+                        "Git merge load failed, falling back to text crossover", exc_info=True
+                    )
 
         # Fallback: 文本/AST 策略
         if strategy == "segment":

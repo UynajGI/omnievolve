@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import random
 
-import pytest
-
 from omnievolve.meta.prompt_evolver import PromptEvolver
 
 
@@ -96,7 +94,9 @@ class TestPromptEvolver:
 
     def test_apply_mutation_change_tone(self):
         evolver = PromptEvolver()
-        result = evolver._apply_mutation("You are a helper. Your role is to assist.", "change_tone", None)
+        result = evolver._apply_mutation(
+            "You are a helper. Your role is to assist.", "change_tone", None
+        )
         assert "Act as" in result
         assert "Your mission" in result
 
