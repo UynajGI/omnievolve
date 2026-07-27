@@ -133,6 +133,7 @@ class TestStorageSettings:
         s = StorageSettings()
         assert ".omnievolve" in s.db_path
         assert isinstance(s.jobs, StorageJobsSettings)
+        assert s.code_backend == "cas"
 
 
 class TestStorageJobsSettings:

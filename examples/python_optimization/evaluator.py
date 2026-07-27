@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
-import re
 import sys
 
 from omnievolve.eval.task_evaluator import (
@@ -23,6 +24,12 @@ from omnievolve.eval.task_evaluator import (
 _WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _digest(filename: str) -> str:
+    path = os.path.join(_WORKSPACE, filename)
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
 class SortEvaluator:
     """排序优化评估器.
 
@@ -33,7 +40,7 @@ class SortEvaluator:
     score = 0.5 * correctness + 0.5 * speedup_ratio
     """
 
-    version_id = "sort-evaluator@1.0.0"
+    version_id = "sort-evaluator@1.1.0"
 
     def build_plan(
         self,
@@ -59,10 +66,14 @@ class SortEvaluator:
                 MountSpec(
                     source=os.path.join(_WORKSPACE, "test_sort.py"),
                     target="/workspace/test_sort.py",
+                    visibility="hidden",
+                    integrity_sha256=_digest("test_sort.py"),
                 ),
                 MountSpec(
                     source=os.path.join(_WORKSPACE, "benchmark.py"),
                     target="/workspace/benchmark.py",
+                    visibility="hidden",
+                    integrity_sha256=_digest("benchmark.py"),
                 ),
             ],
             expected_outputs=["benchmark_result.json"],
@@ -92,23 +103,49 @@ class SortEvaluator:
                 failure_reason=result.stderr[-500:] if result.stderr else "Tests failed",
             )
 
-        # 从 benchmark 输出解析性能
+        benchmark = {}
+        for line in reversed(result.stdout.splitlines()):
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and "speedup" in parsed:
+                benchmark = parsed
+                break
+        if not benchmark:
+            return EvalOutput(
+                score=0.0,
+                metrics={},
+                passed=False,
+                failure_reason="Benchmark produced no valid JSON result",
+            )
 
-        speedup = 1.0
-        try:
-            match = re.search(r'\{"speedup":\s*([\d.]+)', result.stdout)
-            if match:
-                speedup = float(match.group(1))
-        except (ValueError, IndexError):
-            pass
+        speedup = float(benchmark["speedup"])
+        speedup_ci_low = float(benchmark.get("speedup_ci_low", speedup))
+        speedup_ci_high = float(benchmark.get("speedup_ci_high", speedup))
+        time_ms = float(benchmark.get("time_ms", result.execution_time_ms))
+        repetitions = float(benchmark.get("repetitions", 1))
 
-        score = 0.5 + 0.5 * min(speedup / 10.0, 1.0)  # 10x speedup = full score
+        # Score the conservative lower confidence bound so noisy one-off wins
+        # cannot displace a reproducibly faster candidate.
+        score = 0.5 + 0.5 * min(max(speedup_ci_low, 0.0) / 10.0, 1.0)
+        interval_width = max(speedup_ci_high - speedup_ci_low, 0.0)
+        relative_margin = interval_width / (2.0 * max(abs(speedup), 1e-12))
+        confidence = 0.95 if repetitions >= 10 and relative_margin <= 0.25 else 0.8
 
         return EvalOutput(
             score=score,
-            metrics={"speedup": speedup, "execution_time_ms": result.execution_time_ms},
+            metrics={
+                "speedup": speedup,
+                "speedup_ci_low": speedup_ci_low,
+                "speedup_ci_high": speedup_ci_high,
+                "benchmark_time_ms": time_ms,
+                "benchmark_repetitions": repetitions,
+                "benchmark_relative_margin": relative_margin,
+                "execution_time_ms": result.execution_time_ms,
+            },
             passed=True,
-            confidence=0.9,
+            confidence=confidence,
         )
 
     def get_baseline(self) -> float:

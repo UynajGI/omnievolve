@@ -33,6 +33,9 @@ class EvolutionSettings(BaseSettings):
     health_window_gens: int = Field(default=3, gt=0)
     self_evolve_enabled: bool = True
     async_pipeline_enabled: bool = False  # Phase 4: 原生异步流水线
+    seed: int = Field(default=42, ge=0)
+    novelty_enabled: bool = True
+    single_agent_mode: bool = False
 
 
 class SelectionSettings(BaseSettings):
@@ -149,7 +152,7 @@ class StorageSettings(BaseSettings):
     export_dir: str = ".omnievolve/exports"
     jobs: StorageJobsSettings = Field(default_factory=StorageJobsSettings)
     # ── Git 代码存储后端 ──
-    code_backend: str = "git"  # "cas" | "git"
+    code_backend: str = "cas"  # "cas" (default) | "git" (optional lineage backend)
     git_repo_path: str = ".omnievolve/code.git"  # bare repo
     git_worktree_dir: str = ".omnievolve/worktrees"  # worktree 根
     git_auto_gc_interval: int = 50  # 每 N 代 GC
@@ -331,6 +334,9 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         island_migration_interval=settings.selection.island_migration_interval,
         ucb_c=settings.models.routing.ucb_c,
         self_evolve_enabled=e.self_evolve_enabled,
+        seed=e.seed,
+        novelty_enabled=e.novelty_enabled,
+        single_agent_mode=e.single_agent_mode,
     )
 
 

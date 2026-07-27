@@ -67,6 +67,9 @@ class AsyncEvolutionEngine:
         """
         import warnings
 
+        from omnievolve.utils.seed import set_global_seed
+
+        set_global_seed(self._config.seed)
         warnings.warn(
             "AsyncEvolutionEngine.run() is deprecated. Use AsyncPipelineEngine.run() instead.",
             DeprecationWarning,
@@ -256,6 +259,9 @@ class AsyncPipelineEngine:
 
     async def run(self, initial_code: str, task_name: str) -> EvolutionResult:
         """异步流水线主循环."""
+        from omnievolve.utils.seed import set_global_seed
+
+        set_global_seed(self._config.seed)
         self._shutdown_event.clear()
 
         # 注册信号处理

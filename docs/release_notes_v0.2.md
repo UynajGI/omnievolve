@@ -29,7 +29,7 @@ OmniEvolve v0.2 是受控元进化框架 (Controlled Meta-Evolution Framework) �
 - DockerBackend 默认安全（禁网/只读根/降权/no_new_privileges）
 - 评估语义不可变（L2 永久禁止修改任务语义）
 - 内容寻址 Artifact Store（SHA-256 去重/校验/复现）
-- 可插拔代码存储后端（CAS / Git，Git 为默认，原生 ancestry DAG）
+- 可插拔代码存储后端（CAS / Git；当前默认 CAS，Git 提供原生 ancestry DAG）
 - kill-9 恢复（租约过期任务自动重新入队）
 - 配置快照与秘密遮蔽
 

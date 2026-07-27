@@ -7,7 +7,7 @@ S2-01: 冻结 SandboxBackend 协议与数据结构
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,8 @@ class MountSpec:
     source: str
     target: str
     read_only: bool = True
+    visibility: Literal["public", "hidden"] = "public"
+    integrity_sha256: str | None = None
 
 
 @dataclass(frozen=True)

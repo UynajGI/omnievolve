@@ -137,6 +137,8 @@ class EvaluationPlanValidator:
             for sensitive in sensitive_paths:
                 if mount.source.startswith(sensitive):
                     raise PlanValidationError(f"Mount {i} source is sensitive: {mount.source}")
+            if mount.visibility == "hidden" and not mount.read_only:
+                raise PlanValidationError(f"Hidden mount {i} must be read-only")
 
     def _validate_resources(self, plan: EvaluationPlan) -> None:
         """校验资源配置."""

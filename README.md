@@ -362,6 +362,18 @@ omnievolve migrate [--dry-run]
 omnievolve doctor
 ```
 
+### `research` — 多任务、多种子消融基准
+
+```bash
+# 生成 9 tasks × 5 variants × 5 seeds = 225 runs 的可恢复清单
+omnievolve research plan --seeds 0,1,2,3,4
+
+# 聚合 JSONL 结果，输出 bootstrap 置信区间和相对 full 的回归判断
+omnievolve research analyze --results .omnievolve/research/results.jsonl
+```
+
+完整协议见 [docs/research_benchmark.md](docs/research_benchmark.md)。
+
 检查 Python 版本、依赖包、沙箱后端可用性、SQLite FTS5 支持。
 
 ## 配置参考
@@ -419,7 +431,7 @@ mem_limit_mb = 512
 [storage]
 db_path = ".omnievolve/omnievolve.db"
 artifact_dir = ".omnievolve/artifacts"
-code_backend = "git"          # git / cas（代码存储后端）
+code_backend = "cas"          # cas（默认）/ git（可选文本血缘后端）
 
 [meta_evolution]
 enabled = true

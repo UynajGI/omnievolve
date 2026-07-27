@@ -229,6 +229,8 @@ class ReplayEvaluator:
         """
         import numpy as np
 
+        from omnievolve.eval.benchmark_stats import summarize_samples
+
         if not champion_scores or not challenger_scores:
             return {
                 "decision": "inconclusive",
@@ -238,6 +240,10 @@ class ReplayEvaluator:
         champ_mean = float(np.mean(champion_scores))
         chall_mean = float(np.mean(challenger_scores))
         gain = chall_mean - champ_mean
+        champ_summary = summarize_samples(champion_scores, seed=0)
+        chall_summary = summarize_samples(challenger_scores, seed=1)
+        conservative_gain = chall_summary.ci_low - champ_summary.ci_high
+        conservative_regression = champ_summary.ci_low - chall_summary.ci_high
 
         # 统计显著性（简化）
         if len(champion_scores) > 1 and len(challenger_scores) > 1:
@@ -251,13 +257,16 @@ class ReplayEvaluator:
         decision = "reject"
         reason = ""
 
-        if gain >= self._min_gain and effect_size > 0.5:
+        if conservative_gain >= self._min_gain and effect_size > 0.5:
             decision = "promote"
-            reason = f"Challenger shows significant improvement (gain={gain:.4f})"
+            reason = (
+                "Challenger confidence interval shows improvement "
+                f"(conservative_gain={conservative_gain:.4f})"
+            )
         elif gain >= 0 and abs(gain) < self._min_gain:
             decision = "hold"
             reason = f"Challenger shows marginal change (gain={gain:.4f})"
-        elif gain < -self._max_regression:
+        elif conservative_regression > self._max_regression:
             decision = "reject"
             reason = f"Challenger shows significant regression (gain={gain:.4f})"
         else:
@@ -271,6 +280,9 @@ class ReplayEvaluator:
             "challenger_mean": chall_mean,
             "gain": gain,
             "effect_size": effect_size,
+            "conservative_gain": conservative_gain,
+            "champion_ci": [champ_summary.ci_low, champ_summary.ci_high],
+            "challenger_ci": [chall_summary.ci_low, chall_summary.ci_high],
         }
 
     def compare_equal_budget(

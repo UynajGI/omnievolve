@@ -107,6 +107,9 @@ class EvolutionConfig:
     leakage_score_threshold: float = 0.9  # 触发泄漏检测的分数阈值
     leakage_penalty_factor: float = 0.5  # 泄漏嫌疑时的分数惩罚系数
     git_auto_gc_interval: int = 10  # Git 后端周期性 GC 代数间隔
+    seed: int = 42
+    novelty_enabled: bool = True
+    single_agent_mode: bool = False
 
 
 @dataclass
@@ -354,6 +357,9 @@ class EvolutionEngine:
 
         支持 SIGINT/SIGTERM 优雅关闭（参考 OpenEvolve）。
         """
+        from omnievolve.utils.seed import set_global_seed
+
+        set_global_seed(self._config.seed)
         self._start_time = time.time()
         self._shutdown_requested = False
 

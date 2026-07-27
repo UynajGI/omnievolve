@@ -155,9 +155,12 @@ def _build_engine_components(
         num_islands=settings.evolution.island_count,
         migration_interval=settings.selection.island_migration_interval,
     )
+    selection_strategy = settings.selection.parent_selector
+    if selection_strategy == "progressive_mcgs":
+        selection_strategy = "tournament"
     parent_selector = ParentSelector(
         db,
-        strategy="tournament",
+        strategy=selection_strategy,
         tournament_size=settings.selection.tournament_size,
     )
     crossover = CrossoverOperator()
@@ -244,6 +247,7 @@ def run(
     no_self_evolve: bool = typer.Option(
         False, "--no-self-evolve", help="关闭 Slow Loop 受控策略进化，仅运行 Fast Loop"
     ),
+    seed: int | None = typer.Option(None, "--seed", help="确定性实验随机种子"),
 ) -> None:
     """启动候选进化；按健康窗口自动运行受控策略进化."""
     from omnievolve.utils.logging import setup_logging
@@ -265,6 +269,10 @@ def run(
     if no_self_evolve:
         eval_config.self_evolve_enabled = False
         console.print("[yellow]Self-evolve (Slow Loop) disabled — fast loop only[/yellow]")
+    if seed is not None:
+        if seed < 0:
+            raise typer.BadParameter("seed must be non-negative", param_hint="--seed")
+        eval_config.seed = seed
 
     # 加载评估器
     evaluator_cls = load_evaluator(evaluator)
@@ -676,6 +684,58 @@ def migrate(
             console.print(f"[green]Migration complete: {current} → {target}[/green]")
 
     db.close()
+
+
+@app.command("research")
+def research_benchmark(
+    action: str = typer.Argument("plan", help="plan 或 analyze"),
+    output: str = typer.Option(
+        ".omnievolve/research/matrix.json", "--output", "-o", help="输出 JSON 路径"
+    ),
+    seeds: str = typer.Option("0,1,2,3,4", "--seeds", help="5–10 个逗号分隔随机种子"),
+    results: str = typer.Option(
+        ".omnievolve/research/results.jsonl", "--results", help="analyze 输入 JSONL"
+    ),
+) -> None:
+    """建立研究矩阵，或聚合已完成运行并计算置信区间."""
+    from omnievolve.research.matrix import (
+        build_default_matrix,
+        summarize_results,
+        write_manifest,
+    )
+
+    if action == "plan":
+        try:
+            seed_values = tuple(int(value.strip()) for value in seeds.split(",") if value.strip())
+            jobs = build_default_matrix(seeds=seed_values)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--seeds") from exc
+        path = write_manifest(jobs, output)
+        console.print(
+            f"[green]Research matrix: 9 tasks × 5 variants × "
+            f"{len(seed_values)} seeds = {len(jobs)} runs → {path}[/green]"
+        )
+        return
+
+    if action == "analyze":
+        result_path = Path(results)
+        if not result_path.exists():
+            raise typer.BadParameter(f"results file not found: {results}", param_hint="--results")
+        records = [
+            json.loads(line)
+            for line in result_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        report = summarize_results(records)
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        console.print(f"[green]Aggregated {len(records)} records → {output_path}[/green]")
+        return
+
+    raise typer.BadParameter("action must be 'plan' or 'analyze'", param_hint="ACTION")
 
 
 @app.command()

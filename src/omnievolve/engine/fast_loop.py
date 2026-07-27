@@ -15,7 +15,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from omnievolve.agents.base import AgentContext
+from omnievolve.agents.base import AgentContext, ThoughtOutput
 from omnievolve.engine.novelty import NoveltyDecision
 from omnievolve.eval.task_evaluator import (
     CandidateArtifact,
@@ -249,29 +249,42 @@ class FastLoopStep:
         )
 
         # 步骤 4: Director
-        with self._prof_step("director", generation):
-            thought = e._director.evolve_thought(ctx)  # noqa: SLF001
-
-        # 步骤 5: NoveltyGate
-        with self._prof_step("novelty_gate", generation):
-            existing_sims = []
-            if e._hybrid_retriever:  # noqa: SLF001
-                try:
-                    _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
-                        thought.thought,
-                        collection="thought_default",
-                        threshold=e._config.novelty_threshold,  # noqa: SLF001
-                    )
-                    if max_sim > 0:
-                        existing_sims = [max_sim]
-                except Exception:
-                    logger.debug("Novelty vector check failed", exc_info=True)
-            novelty_result = e._novelty_gate.check(  # noqa: SLF001
-                thought=thought.thought,
-                code=base_code,
-                existing_similarities=existing_sims or None,
+        if e._config.single_agent_mode:  # noqa: SLF001
+            thought = ThoughtOutput(
+                thought=(
+                    "Act as the sole optimization agent. Improve the parent program "
+                    "directly using the task context and evaluation feedback."
+                ),
+                rationale="single-agent ablation",
+                confidence=0.5,
+                mechanism_tags=["single_agent"],
             )
-        if novelty_result.decision == NoveltyDecision.REJECT:
+        else:
+            with self._prof_step("director", generation):
+                thought = e._director.evolve_thought(ctx)  # noqa: SLF001
+
+        # 步骤 5: NoveltyGate（消融实验可显式关闭）
+        novelty_result = None
+        if e._config.novelty_enabled:  # noqa: SLF001
+            with self._prof_step("novelty_gate", generation):
+                existing_sims = []
+                if e._hybrid_retriever:  # noqa: SLF001
+                    try:
+                        _, max_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
+                            thought.thought,
+                            collection="thought_default",
+                            threshold=e._config.novelty_threshold,  # noqa: SLF001
+                        )
+                        if max_sim > 0:
+                            existing_sims = [max_sim]
+                    except Exception:
+                        logger.debug("Novelty vector check failed", exc_info=True)
+                novelty_result = e._novelty_gate.check(  # noqa: SLF001
+                    thought=thought.thought,
+                    code=base_code,
+                    existing_similarities=existing_sims or None,
+                )
+        if novelty_result is not None and novelty_result.decision == NoveltyDecision.REJECT:
             e._mcts.rollback_last_select()  # noqa: SLF001
             return None
 
@@ -459,6 +472,7 @@ class FastLoopStep:
             experiment_id=e._experiment_id,  # noqa: SLF001
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
+            seed=e._config.seed,  # noqa: SLF001
         )
         policy = SandboxPolicy(
             timeout_sec=e._config.sandbox_timeout,  # noqa: SLF001
@@ -551,6 +565,7 @@ class FastLoopStep:
             experiment_id=e._experiment_id,  # noqa: SLF001
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
+            seed=e._config.seed,  # noqa: SLF001
         )
 
         # 创建评估运行记录
@@ -560,6 +575,7 @@ class FastLoopStep:
                 candidate_id=candidate_id,
                 evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
                 environment_version_id=e._environment_version_id,  # noqa: SLF001
+                seed=e._config.seed,  # noqa: SLF001
             )
             e._eval_repo.start(run.id)  # noqa: SLF001
         except StorageError:
@@ -590,6 +606,47 @@ class FastLoopStep:
             if run:
                 e._eval_repo.fail(run.id, "build_plan error")  # noqa: SLF001
             return None, run, job, None
+
+        # Validate the declarative plan and fail closed on explicit evaluator peeking.
+        try:
+            from omnievolve.eval.anti_cheat import (
+                AntiCheatFinding,
+                scan_candidate_source,
+                verify_hidden_mounts,
+            )
+            from omnievolve.eval.plan_validator import EvaluationPlanValidator
+
+            # Empty plans are supported by in-process/no-op evaluators used for
+            # deterministic framework tests. Executable plans are always validated.
+            if plan.commands:
+                EvaluationPlanValidator().validate(plan)
+            source = e._artifact_store.load_text(artifact_hash) or ""  # noqa: SLF001
+            findings = verify_hidden_mounts(plan) + scan_candidate_source(source)
+        except Exception as exc:
+            findings = [AntiCheatFinding("invalid_evaluation_plan", str(exc))]
+        if findings:
+            reason = "; ".join(f"{item.rule}: {item.detail}" for item in findings[:5])
+            output = EvalOutput(
+                score=0.0,
+                metrics={"anti_cheat_findings": float(len(findings))},
+                passed=False,
+                failure_reason=f"Evaluation integrity check failed: {reason}",
+                confidence=1.0,
+            )
+            if run:
+                try:
+                    e._eval_repo.complete(  # noqa: SLF001
+                        run.id,
+                        passed=False,
+                        primary_score=0.0,
+                        metrics=output.metrics,
+                        execution_time_ms=0.0,
+                        memory_peak_kb=0,
+                        cpu_time_ms=0.0,
+                    )
+                except StorageError:
+                    logger.debug("Could not record integrity failure", exc_info=True)
+            return output, run, job, None
 
         # 步骤 10: sandbox 执行
         policy = SandboxPolicy(

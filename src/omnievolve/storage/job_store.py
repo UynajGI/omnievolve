@@ -72,10 +72,11 @@ class JobStore:
         payload: dict[str, Any],
         *,
         max_attempts: int = 3,
+        job_id: str | None = None,
     ) -> Job:
-        """创建任务."""
+        """创建任务；提供 ``job_id`` 时可安全地重复入队."""
         job = Job(
-            id=generate_id(),
+            id=job_id or generate_id(),
             experiment_id=experiment_id,
             job_type=job_type,
             payload=payload,
@@ -86,7 +87,7 @@ class JobStore:
 
         self._db.execute(
             """
-            INSERT INTO job
+            INSERT OR IGNORE INTO job
                 (id, experiment_id, job_type, payload, status, attempt, max_attempts,
                  created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -103,8 +104,16 @@ class JobStore:
                 job.updated_at,
             ),
         )
-
-        return job
+        persisted = self.get_job(job.id)
+        if persisted is None:
+            raise RuntimeError(f"job was not persisted: {job.id}")
+        if (
+            persisted.experiment_id != experiment_id
+            or persisted.job_type != job_type
+            or persisted.payload != payload
+        ):
+            raise ValueError(f"job id collision with different payload: {job.id}")
+        return persisted
 
     def claim_job(self, job_type: str | None = None) -> Job | None:
         """认领任务（获取租约）.

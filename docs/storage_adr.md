@@ -96,14 +96,14 @@ v0.2 初期所有候选代码通过 `ArtifactStore`（SHA-256 CAS）存储。随
 | 后端 | `code_backend` | 存储 ref | 血缘 | 适用场景 |
 |------|----------------|----------|------|----------|
 | **CASCodeStore** | `"cas"` | SHA-256 哈希 | DB 外键关联 | 简单场景、最小依赖 |
-| **GitCodeStore** | `"git"`（默认） | Git commit SHA | 原生 ancestry + worktree | 生产推荐、深血缘、crossover |
+| **GitCodeStore** | `"git"`（可选） | Git commit SHA | 原生 ancestry + worktree | 需要可读文本血缘的实验 |
 
 工厂函数 `create_code_store(settings, db)` 根据配置选择后端：
 
 ```python
 from omnievolve.storage.code_store import create_code_store
 
-# 配置 [storage] code_backend = "git"（默认）
+# 配置 [storage] code_backend = "git"（可选；默认使用 cas）
 store = create_code_store(settings, db)
 ```
 
