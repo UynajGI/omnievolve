@@ -54,9 +54,12 @@ class PromptVersionRepository:
 
         content_hash = compute_sha256_str(content)
 
-        # 如果有 ArtifactStore，存储 prompt 内容
+        # 如果有 ArtifactStore，存储 prompt 内容，并用返回的 ref 作为 content_hash
+        # （GitCodeStore 的 FK 注册使用 git blob SHA，而非 SHA-256）
         if artifact_store:
-            artifact_store.store_text(content, "log", meta={"type": "prompt"})
+            stored_ref = artifact_store.store_text(content, "log", meta={"type": "prompt"})
+            if stored_ref:
+                content_hash = stored_ref
 
         # 获取下一个版本号
         row = self._db.fetchone(
