@@ -209,17 +209,17 @@ class GitCodeStore:
                 "GitCodeStore not bound to experiment. Call bind_experiment() first."
             )
         full_env = {**os.environ, **_GIT_ENV, **(env or {})}
+        encoded_input = input_data.encode("utf-8") if isinstance(input_data, str) else input_data
         result = subprocess.run(
             ["git", "--git-dir", str(self._repo_path)] + args,
-            input=input_data,
+            input=encoded_input,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
             env=full_env,
         )
         if check and result.returncode != 0:
-            raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-        return result.stdout.strip()
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"git {' '.join(args)} failed: {stderr}")
+        return result.stdout.decode("utf-8").strip()
 
     def _git_in_worktree(
         self,

@@ -4,6 +4,7 @@ S2-15: 编写网络/秘密/路径穿越安全测试
 S2-16: 编写 fork bomb/内存/磁盘/超时压力测试
 """
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -68,7 +69,7 @@ class TestTrustedSubprocess:
     ):
         """执行简单命令."""
         plan = EvaluationPlan(
-            commands=[CommandSpec(argv=["echo", "hello world"])],
+            commands=[CommandSpec(argv=[sys.executable, "-c", "print('hello world')"])],
         )
 
         result = trusted_backend.execute(plan, simple_candidate, default_policy)
@@ -83,8 +84,8 @@ class TestTrustedSubprocess:
         """执行多个命令."""
         plan = EvaluationPlan(
             commands=[
-                CommandSpec(argv=["echo", "first"]),
-                CommandSpec(argv=["echo", "second"]),
+                CommandSpec(argv=[sys.executable, "-c", "print('first')"]),
+                CommandSpec(argv=[sys.executable, "-c", "print('second')"]),
             ],
         )
 
@@ -99,8 +100,8 @@ class TestTrustedSubprocess:
         """命令失败应停止执行."""
         plan = EvaluationPlan(
             commands=[
-                CommandSpec(argv=["false"]),  # 返回非零
-                CommandSpec(argv=["echo", "should not run"]),
+                CommandSpec(argv=[sys.executable, "-c", "raise SystemExit(1)"]),
+                CommandSpec(argv=[sys.executable, "-c", "print('should not run')"]),
             ],
         )
 
@@ -118,7 +119,12 @@ class TestTrustedSubprocess:
             cpu_limit=2.0,  # 足够的 CPU
         )
         plan = EvaluationPlan(
-            commands=[CommandSpec(argv=["sleep", "10"], timeout_sec=0.5)],
+            commands=[
+                CommandSpec(
+                    argv=[sys.executable, "-c", "import time; time.sleep(10)"],
+                    timeout_sec=0.5,
+                )
+            ],
         )
 
         result = trusted_backend.execute(plan, simple_candidate, policy)

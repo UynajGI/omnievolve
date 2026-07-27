@@ -122,7 +122,7 @@ class LLMGateway:
         """
         model = model or self._default_model
         # 未显式指定时用网关默认上限（推理模型需充足预算）
-        max_tokens = max_tokens if max_tokens is not None else self._max_tokens
+        max_tokens = max_tokens if max_tokens is not None else self._default_max_tokens
         start_time = time.time()
 
         # P1: 熔断器检查 — OPEN 时快速失败（HALF_OPEN 允许试探）
@@ -154,7 +154,7 @@ class LLMGateway:
                         model=try_model,
                         messages=messages,
                         temperature=temperature,
-                        max_tokens=max_tokens or self._default_max_tokens,
+                        max_tokens=max_tokens,
                         api_key=self._api_key,
                         api_base=self._api_base,
                         timeout=self._request_timeout,

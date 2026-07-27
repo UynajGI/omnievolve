@@ -314,8 +314,14 @@ class ArtifactStore:
             os.fsync(fd)
             os.close(fd)
 
-            # 原子重命名（os.replace 在 Windows 上也能覆盖已存在的目标）
-            os.replace(tmp_path, str(target_path))
+            # 原子发布且不覆盖已存在的 CAS 对象。并发写入相同内容时，
+            # 只有一个硬链接创建成功，其余写入者安全地复用赢家的对象。
+            try:
+                os.link(tmp_path, target_path)
+            except FileExistsError:
+                pass
+            finally:
+                os.unlink(tmp_path)
 
             # fsync 目录确保元数据持久化（Windows 不支持目录 fsync，跳过）
             if os.name != "nt":

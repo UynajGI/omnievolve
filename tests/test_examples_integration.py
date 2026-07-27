@@ -178,7 +178,7 @@ class TestCirclePackingIntegration:
 
         initial_code = (
             Path(__file__).parent.parent / "examples" / "circle_packing" / "initial_code.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
 
         result = engine.run(initial_code, "circle-packing")
 
