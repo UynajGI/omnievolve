@@ -133,14 +133,9 @@ class DockerBackend:
                 result = container.wait(timeout=policy.timeout_sec)
                 exit_code = result.get("StatusCode", -1)
             except Exception as e:
-                # 区分超时和其他 Docker API 错误
-                err_name = type(e).__name__
-                if "timeout" in err_name.lower() or "timeout" in str(e).lower():
-                    timed_out = True
-                    logger.warning("Container timed out after %ds", policy.timeout_sec)
-                else:
-                    logger.warning("Container wait failed: %s: %s", err_name, e)
-                    timed_out = False
+                # wait() 抛异常 = 容器未在时限内完成（ReadTimeout 等）
+                timed_out = True
+                logger.warning("Container timed out after %ds: %s", policy.timeout_sec, e)
                 try:
                     container.kill()
                 except Exception:
