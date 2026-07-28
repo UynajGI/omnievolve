@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -342,6 +343,60 @@ class TestEvolutionEngineE2E:
         )
         result2 = engine2.resume(experiment)
         assert result2.total_generations >= 2
+
+    def test_exhausted_resume_does_not_advance_checkpoint(
+        self, db, tmp_artifact_store, sandbox, experiment
+    ):
+        config = EvolutionConfig(
+            max_generations=1,
+            population_size=1,
+            island_count=1,
+            crossover_rate=0.0,
+            health_window_gens=5,
+            sandbox_timeout=5.0,
+        )
+        engine = EvolutionEngine(
+            db,
+            tmp_artifact_store,
+            StubEvaluator(),
+            sandbox,
+            RoleAwareFakeLLM(),
+            experiment_id=experiment,
+            evaluator_version_id=StubEvaluator.version_id,
+            environment_version_id=sandbox.environment_version_id,
+            config=config,
+            policy_archive=PolicyArchive(db),
+        )
+        assert engine.run("x = 0\n", "e2e-task").total_generations == 1
+
+        resumed = EvolutionEngine(
+            db,
+            tmp_artifact_store,
+            StubEvaluator(),
+            sandbox,
+            RoleAwareFakeLLM(),
+            experiment_id=experiment,
+            evaluator_version_id=StubEvaluator.version_id,
+            environment_version_id=sandbox.environment_version_id,
+            config=EvolutionConfig(
+                max_generations=3,
+                population_size=1,
+                island_count=1,
+                compute_budget_sec=0,
+                health_window_gens=5,
+                sandbox_timeout=5.0,
+            ),
+            policy_archive=PolicyArchive(db),
+        )
+        # Simulate any genuinely exhausted hard budget before entering resume.
+        resumed._budget_guard.state.used_tokens = resumed._budget_guard.state.token_budget
+
+        result = resumed.resume(experiment)
+        row = db.fetchone("SELECT checkpoint_data FROM experiment WHERE id = ?", (experiment,))
+        checkpoint = json.loads(row["checkpoint_data"])
+
+        assert result.total_generations == 1
+        assert checkpoint["generation"] == 1
 
     def test_evolution_result_has_all_fields(self, db, tmp_artifact_store, sandbox, experiment):
         """EvolutionResult 包含设计要求的全部字段."""

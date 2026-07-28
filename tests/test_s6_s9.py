@@ -50,6 +50,18 @@ class TestTokenCounter:
         guard.consume("gpt-4o", 500, 200)
         assert state.used_tokens == 700
 
+    def test_zero_compute_budget_means_unlimited(self):
+        state = BudgetState(compute_budget_sec=0)
+        state.used_compute_sec = 10_000
+
+        assert state.compute_budget_sec is None
+        assert state.remaining_compute is None
+        assert not state.is_exhausted
+
+    def test_negative_compute_budget_is_invalid(self):
+        with pytest.raises(ValueError, match="compute_budget_sec"):
+            BudgetState(compute_budget_sec=-1)
+
 
 class TestMetricsCalculator:
     def test_roi(self):

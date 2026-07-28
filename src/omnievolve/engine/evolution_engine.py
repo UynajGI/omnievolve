@@ -413,14 +413,15 @@ class EvolutionEngine:
             if self._shutdown_requested:
                 logger.warning("Shutdown requested, stopping evolution at gen %d", gen - 1)
                 break
-            self._current_generation = gen
-
-            # P1: 更新 MCTS 探索进度（渐进衰减）
-            self._mcts.set_progress(gen, self._config.max_generations)
 
             if self._budget_guard.state.is_exhausted:
                 logger.warning("Budget exhausted, stopping evolution")
                 break
+
+            self._current_generation = gen
+
+            # P1: 更新 MCTS 探索进度（渐进衰减）
+            self._mcts.set_progress(gen, self._config.max_generations)
 
             self._step_generation(gen, task_name)
 
@@ -507,15 +508,17 @@ class EvolutionEngine:
         task_name = exp.task_name
         # 从下一代继续
         for gen in range(self._current_generation + 1, self._config.max_generations + 1):
+            if self._budget_guard.state.is_exhausted:
+                logger.warning("Budget exhausted, stopping resume before gen %d", gen)
+                break
             self._current_generation = gen
             self._mcts.set_progress(gen, self._config.max_generations)
-            if self._budget_guard.state.is_exhausted:
-                break
             self._step_generation(gen, task_name)
             if self._island_manager.should_migrate(gen):
                 self._island_manager.migrate(gen)
             if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:
                 self._run_slow_loop(gen)
+            self._save_checkpoint()
 
         return self._finalize(task_name)
 

@@ -44,6 +44,13 @@ class BudgetState:
     used_cost_usd: float = 0.0
     used_compute_sec: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Normalize the public ``0 = unlimited`` compute-budget convention."""
+        if self.compute_budget_sec == 0:
+            self.compute_budget_sec = None
+        elif self.compute_budget_sec is not None and self.compute_budget_sec < 0:
+            raise ValueError("compute_budget_sec must be non-negative or None")
+
     @property
     def remaining_tokens(self) -> int:
         return max(0, self.token_budget - self.used_tokens)
