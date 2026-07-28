@@ -12,6 +12,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from omnievolve.exceptions import (
+    LLMAuthenticationError,
+    LLMError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+)
 from omnievolve.storage.db import Database
 from omnievolve.storage.repositories.base import generate_id
 from omnievolve.utils.hashing import compute_sha256_str
@@ -206,30 +212,84 @@ class LLMGateway:
 
                     return llm_response
 
-                except ImportError:
-                    logger.warning("litellm not installed, using mock response")
+                except ImportError as exc:
+                    logger.error("litellm is required for real LLM execution")
                     if self._circuit_breaker:
                         self._circuit_breaker.on_failure("litellm not installed")
-                    return self._mock_response(messages, try_model)
+                    raise LLMError(
+                        "litellm is not installed; use FakeLLM explicitly for tests"
+                    ) from exc
                 except Exception as e:
                     last_error = e
+                    safe_error = self._redact_error(e)
                     logger.warning(
                         "LLM call attempt %d/%d failed (model=%s): %s",
                         attempt + 1,
                         self._max_retries,
                         try_model,
-                        e,
+                        safe_error,
                     )
                     # P1: 熔断器 — 单次失败
                     if self._circuit_breaker:
-                        self._circuit_breaker.on_failure(str(e))
+                        self._circuit_breaker.on_failure(safe_error)
+                    if self._is_authentication_error(e):
+                        raise LLMAuthenticationError(safe_error) from e
                     if attempt < self._max_retries - 1:
                         backoff = self._retry_backoff_base * (2**attempt)
                         time.sleep(backoff)
 
         # All retries exhausted
-        logger.error("All LLM retries exhausted: %s", last_error)
-        return self._mock_response(messages, model)
+        if last_error is None:
+            raise LLMError("LLM gateway did not execute any request")
+        safe_error = self._redact_error(last_error)
+        logger.error("All LLM retries exhausted: %s", safe_error)
+        raise self._typed_error(last_error, safe_error) from last_error
+
+    def _redact_error(self, error: Exception) -> str:
+        """Return an error message safe for logs and persisted job diagnostics."""
+        message = str(error)
+        if self._api_key:
+            message = message.replace(self._api_key, "[REDACTED]")
+        return message
+
+    @staticmethod
+    def _status_code(error: Exception) -> int | None:
+        """Extract an HTTP status code from common SDK exception shapes."""
+        status = getattr(error, "status_code", None)
+        if status is None:
+            status = getattr(getattr(error, "response", None), "status_code", None)
+        try:
+            return int(status) if status is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _is_authentication_error(cls, error: Exception) -> bool:
+        """Authentication failures are permanent for a run and must not be retried."""
+        text = f"{type(error).__name__}: {error}".lower()
+        return cls._status_code(error) == 401 or any(
+            marker in text
+            for marker in (
+                "authentication",
+                "invalid api key",
+                "invalid_key",
+                "unauthorized",
+            )
+        )
+
+    @classmethod
+    def _typed_error(cls, error: Exception, message: str) -> LLMError:
+        """Map provider errors to the public typed exception hierarchy."""
+        status = cls._status_code(error)
+        name = type(error).__name__.lower()
+        text = message.lower()
+        if cls._is_authentication_error(error):
+            return LLMAuthenticationError(message)
+        if status == 429 or "ratelimit" in name or "rate limit" in text:
+            return LLMRateLimitError(message)
+        if isinstance(error, TimeoutError) or "timeout" in name or "timed out" in text:
+            return LLMTimeoutError(message)
+        return LLMError(message)
 
     @staticmethod
     def _extract_cost(response: Any, model: str, usage: Any) -> float | None:
@@ -246,18 +306,6 @@ class LLMGateway:
             return litellm.completion_cost(completion_response=response, model=model)
         except Exception:
             return None
-
-    def _mock_response(self, messages: list[dict[str, str]], model: str) -> LLMResponse:
-        """模拟响应（用于测试或 litellm 未安装时）."""
-        last_message = messages[-1]["content"] if messages else ""
-        return LLMResponse(
-            content=f"Mock response to: {last_message[:100]}...",
-            model=model,
-            input_tokens=len(last_message) // 4,
-            output_tokens=50,
-            total_tokens=len(last_message) // 4 + 50,
-            latency_ms=10.0,
-        )
 
     def _record_call(
         self,

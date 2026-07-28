@@ -110,6 +110,7 @@ class EvolutionConfig:
     seed: int = 42
     novelty_enabled: bool = True
     single_agent_mode: bool = False
+    random_search_mode: bool = False
     reference_credit_enabled: bool = True
     reference_credit_weight: float = 0.25
 
@@ -620,7 +621,7 @@ class EvolutionEngine:
                 break
             try:
                 island_id = f"island_{i % self._config.island_count}"
-                self._evolve_one(generation, task_name, island_id)
+                self._evolve_one(generation, task_name, island_id, slot=i)
             except (EvolutionError, LLMError, SandboxError, StorageError):
                 logger.exception("Evolution failed for candidate slot %d", i)
 
@@ -705,10 +706,12 @@ class EvolutionEngine:
         generation: int,
         task_name: str,
         island_id: str,
+        *,
+        slot: int = 0,
     ) -> tuple[str | None, str]:
         """执行单个候选的完整进化链（T1: 委托给 FastLoopStep）."""
         assert self._fast_loop is not None
-        return self._fast_loop.evolve_one(generation, task_name, island_id)
+        return self._fast_loop.evolve_one(generation, task_name, island_id, slot=slot)
 
     def _evaluate_candidate(
         self,

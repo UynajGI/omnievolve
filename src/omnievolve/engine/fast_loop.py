@@ -15,14 +15,19 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from omnievolve.agents.base import AgentContext, ThoughtOutput
+from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
 from omnievolve.engine.novelty import NoveltyDecision
 from omnievolve.eval.task_evaluator import (
     CandidateArtifact,
     EvalOutput,
     EvaluationContext,
 )
-from omnievolve.exceptions import EvaluatorError, SandboxError, StorageError
+from omnievolve.exceptions import (
+    EvaluatorError,
+    EvolutionError,
+    SandboxError,
+    StorageError,
+)
 from omnievolve.sandbox.base import SandboxPolicy
 
 if TYPE_CHECKING:
@@ -89,13 +94,15 @@ class FastLoopStep:
         generation: int,
         task_name: str,
         island_id: str,
+        *,
+        slot: int = 0,
     ) -> tuple[str | None, str]:
         """执行单个候选的完整进化链（步骤 1-11）.
 
         纯委托: prepare() 执行步骤 1-10（LLM + sandbox），
         commit_result() 执行步骤 11（串行状态更新）。
         """
-        prepared = self.prepare(generation, task_name, island_id)
+        prepared = self.prepare(generation, task_name, island_id, slot=slot)
         if prepared is None:
             return None, ""
         return self.commit_result(prepared)
@@ -105,6 +112,8 @@ class FastLoopStep:
         generation: int,
         task_name: str,
         island_id: str,
+        *,
+        slot: int = 0,
     ) -> PreparedCandidate | None:
         """Phase 3: 步骤 1-10 — 可并行执行，无共享状态变更.
 
@@ -115,16 +124,33 @@ class FastLoopStep:
 
         # 步骤 2: 选择父代
         with self._prof_step("select_parents", generation):
-            parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
+            if e._config.random_search_mode:  # noqa: SLF001
+                baseline = e._db.fetchone(  # noqa: SLF001
+                    "SELECT baseline_candidate_id FROM experiment WHERE id = ?",
+                    (e._experiment_id,),  # noqa: SLF001
+                )
+                baseline_id = baseline["baseline_candidate_id"] if baseline else None
+                parent_ids = [str(baseline_id)] if baseline_id else []
+                relation = "mutate"
+            else:
+                parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
 
         # P1-3: 强制反向传播
-        if parent_ids and e._mcts.should_force_backprop():  # noqa: SLF001
+        if (
+            not e._config.random_search_mode  # noqa: SLF001
+            and parent_ids
+            and e._mcts.should_force_backprop()  # noqa: SLF001
+        ):
             e._mcts.force_backprop(parent_ids[0])  # noqa: SLF001
             e._candidate_repo.update_search_state(parent_ids[0], visit_delta=1)  # noqa: SLF001
             return None
 
         parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
-        model = e._select_model(generation)  # noqa: SLF001
+        model = (
+            "random-search"
+            if e._config.random_search_mode  # noqa: SLF001
+            else e._select_model(generation)  # noqa: SLF001
+        )
         stagnation_level = self._compute_stagnation_level(island_id)
 
         # 步骤 3/可选 crossover + fusion
@@ -224,6 +250,12 @@ class FastLoopStep:
                 and program["candidate_id"] not in parent_ids
             )
         )
+        if e._config.random_search_mode:  # noqa: SLF001
+            inspiration = [
+                program for program in inspiration if program.get("is_parent")
+            ]
+            memory_hits = []
+            reference_ids = []
 
         # Director RAG
         rag_context = []
@@ -260,7 +292,14 @@ class FastLoopStep:
         )
 
         # 步骤 4: Director
-        if e._config.single_agent_mode:  # noqa: SLF001
+        if e._config.random_search_mode:  # noqa: SLF001
+            thought = ThoughtOutput(
+                thought="Apply one task-agnostic random AST mutation.",
+                rationale="LLM-free random-search baseline",
+                confidence=0.0,
+                mechanism_tags=["random_search"],
+            )
+        elif e._config.single_agent_mode:  # noqa: SLF001
             thought = ThoughtOutput(
                 thought=(
                     "Act as the sole optimization agent. Improve the parent program "
@@ -300,26 +339,58 @@ class FastLoopStep:
             return None
 
         # 步骤 6: Coder + Critic
-        with self._prof_step("coder", generation):
-            code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-            if not code.full_code.strip():
-                if base_code:
-                    code = type(code)(
-                        diff="", full_code=base_code, explanation="crossover baseline"
-                    )
-                elif parent_codes:
-                    code = type(code)(
-                        diff="", full_code=parent_codes[0], explanation="fallback to parent code"
-                    )
+        if e._config.random_search_mode:  # noqa: SLF001
+            from omnievolve.engine.random_search import (
+                derive_random_search_seed,
+                mutate_randomly,
+            )
 
-        with self._prof_step("critic", generation):
-            critic_stderr = ctx.last_eval_failure
-            passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
-            retries = 0
-            while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
-                retries += 1
+            source = base_code or (parent_codes[0] if parent_codes else "")
+            if not source.strip():
+                raise EvolutionError("random search requires an initial parent program")
+            mutation_seed = derive_random_search_seed(
+                experiment_seed=e._config.seed,  # noqa: SLF001
+                generation=generation,
+                slot=slot,
+                island_id=island_id,
+                parent_code=source,
+            )
+            mutation = mutate_randomly(source, seed=mutation_seed)
+            code = CodeOutput(
+                diff=mutation.description,
+                full_code=mutation.code,
+                explanation=(
+                    f"LLM-free random-search mutation (seed={mutation.seed})"
+                ),
+            )
+            passed = True
+        else:
+            with self._prof_step("coder", generation):
                 code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-                passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
+                if not code.full_code.strip():
+                    if base_code:
+                        code = type(code)(
+                            diff="", full_code=base_code, explanation="crossover baseline"
+                        )
+                    elif parent_codes:
+                        code = type(code)(
+                            diff="",
+                            full_code=parent_codes[0],
+                            explanation="fallback to parent code",
+                        )
+
+            with self._prof_step("critic", generation):
+                critic_stderr = ctx.last_eval_failure
+                passed, _ = e._critic.review(  # noqa: SLF001
+                    code, thought, last_eval_stderr=critic_stderr
+                )
+                retries = 0
+                while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
+                    retries += 1
+                    code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
+                    passed, _ = e._critic.review(  # noqa: SLF001
+                        code, thought, last_eval_stderr=critic_stderr
+                    )
 
         # 步骤 8: 存储代码 + 创建候选
         # CodeStore: 优先使用 store_snapshot（支持 Git ancestry）
@@ -411,18 +482,20 @@ class FastLoopStep:
         # Fix 5: 计数器递增移到串行区域（避免并行 prepare 竞态）
         e._total_candidates += 1  # noqa: SLF001
 
-        # MCTS 扩展（延迟到 commit）
-        if prepared.parent_ids:
-            e._mcts.expand(
-                prepared.parent_ids[0],  # noqa: SLF001
-                [(prepared.candidate_id, prepared.thought_confidence)],
-            )
-        else:
-            e._mcts.add_node(
-                prepared.candidate_id,
-                parent=None,  # noqa: SLF001
-                prior=prepared.thought_confidence,
-            )
+        # Random-search baseline does not participate in graph search.
+        search_credit_enabled = prepared.model != "random-search"
+        if search_credit_enabled:
+            if prepared.parent_ids:
+                e._mcts.expand(
+                    prepared.parent_ids[0],  # noqa: SLF001
+                    [(prepared.candidate_id, prepared.thought_confidence)],
+                )
+            else:
+                e._mcts.add_node(
+                    prepared.candidate_id,
+                    parent=None,  # noqa: SLF001
+                    prior=prepared.thought_confidence,
+                )
 
         # 岛屿分配
         e._island_manager.assign_candidate(prepared.candidate_id, prepared.island_id)  # noqa: SLF001
@@ -437,6 +510,7 @@ class FastLoopStep:
                 prepared.job_id,
                 prepared.sandbox_result,
                 prepared.reference_ids,
+                search_credit_enabled=search_credit_enabled,
             )
 
         # Step 5b: 记录 adoption
@@ -447,7 +521,12 @@ class FastLoopStep:
                 logger.warning("Memory adoption recording failed", exc_info=True)
 
         # Router 奖励更新
-        if e._router is not None and prepared.model and prepared.output is not None:  # noqa: SLF001
+        if (
+            search_credit_enabled
+            and e._router is not None  # noqa: SLF001
+            and prepared.model
+            and prepared.output is not None
+        ):
             self._update_router_reward(
                 prepared.model,
                 prepared.output,
@@ -755,6 +834,8 @@ class FastLoopStep:
         job: Any = None,
         result: Any = None,
         reference_ids: list[str] | None = None,
+        *,
+        search_credit_enabled: bool = True,
     ) -> None:
         """Phase 3: 步骤 11 — 所有共享状态变更（串行执行）.
 
@@ -807,15 +888,16 @@ class FastLoopStep:
             thought_text = cand_meta.meta.get("thought", "")
         e._update_meta_scratchpad(thought_text, output.score)  # noqa: SLF001
 
-        # MCTS 回传
-        e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
-        if e._config.reference_credit_enabled and reference_ids:  # noqa: SLF001
-            e._mcts.credit_references(  # noqa: SLF001
-                reference_ids,
-                output.score,
-                weight=e._config.reference_credit_weight,  # noqa: SLF001
-                exclude_ids={candidate_id},
-            )
+        # MCTS/reference 回传（random-search 消融明确关闭）
+        if search_credit_enabled:
+            e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
+            if e._config.reference_credit_enabled and reference_ids:  # noqa: SLF001
+                e._mcts.credit_references(  # noqa: SLF001
+                    reference_ids,
+                    output.score,
+                    weight=e._config.reference_credit_weight,  # noqa: SLF001
+                    exclude_ids={candidate_id},
+                )
 
         # 岛屿精英更新
         island_id = e._lookup_island(candidate_id)  # noqa: SLF001

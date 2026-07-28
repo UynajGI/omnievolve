@@ -22,6 +22,12 @@ Each job has a stable ID and explicit configuration overrides. It can therefore
 be idempotently inserted into `JobStore`, drained by `LocalTaskExecutor` with a
 bounded worker count, and retried after transient failure.
 
+`random_search` is a genuine LLM-free baseline: every slot independently applies
+one deterministic, task-agnostic AST mutation to the frozen initial program.
+Its mutation seed is derived from the experiment seed, generation, slot, island,
+and parent source, so replay does not depend on thread scheduling. It does not
+run Director, Coder, Critic, novelty, crossover, or the Slow Loop.
+
 Validate the complete execution chain on `sort` before spending the full matrix
 budget:
 
@@ -51,8 +57,14 @@ command, Git commit, token/cost totals, wall time, and raw repetition scores:
 ```json
 {"run_id":"…","task":"sort","variant":"full","seed":0,
  "status":"completed","score":0.73,"scores":[0.73],
- "cost_usd":0.02,"total_tokens":1432,"wall_sec":41.2}
+ "cost_usd":0.02,"total_tokens":1432,"llm_calls":6,
+ "candidate_counts":[9],"checkpoint_generations":[5],"wall_sec":41.2}
 ```
+
+The executor rejects a superficially completed run if it did not reach the
+requested generation, produced no evolved candidate, or (for an LLM variant)
+recorded no successful LLM call. Such runs go through the bounded retry queue
+and are never included as zero-token benchmark successes.
 
 Aggregate results and calculate deterministic bootstrap confidence intervals
 and confidence-aware regressions against the full variant. The report also makes

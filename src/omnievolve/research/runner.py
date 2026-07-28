@@ -172,6 +172,13 @@ class ResearchBenchmarkRunner:
             "total_tokens": sum(
                 measurement["total_tokens"] for measurement in measurements
             ),
+            "llm_calls": sum(measurement["llm_calls"] for measurement in measurements),
+            "candidate_counts": [
+                measurement["candidate_count"] for measurement in measurements
+            ],
+            "checkpoint_generations": [
+                measurement["checkpoint_generation"] for measurement in measurements
+            ],
             "wall_sec": sum(measurement["wall_sec"] for measurement in measurements),
             "git_commit": self._git_commit(),
             "generations": self._settings.generations,
@@ -258,12 +265,14 @@ class ResearchBenchmarkRunner:
         if completed.returncode != 0:
             tail = "\n".join(completed.stderr.splitlines()[-20:])
             raise RuntimeError(f"benchmark command failed ({completed.returncode}): {tail}")
-        stats = self._read_run_stats(db_path)
+        stats = self._read_run_stats(db_path, job)
         stats["wall_sec"] = time.monotonic() - started
         return stats
 
-    @staticmethod
-    def _read_run_stats(db_path: Path) -> dict[str, float | int]:
+    def _read_run_stats(
+        self, db_path: Path, job: BenchmarkJob
+    ) -> dict[str, float | int]:
+        """Read metrics and reject superficially completed, non-evolving runs."""
         if not db_path.exists():
             raise RuntimeError(f"benchmark database was not created: {db_path}")
         with sqlite3.connect(db_path) as connection:
@@ -276,16 +285,52 @@ class ResearchBenchmarkRunner:
             ).fetchone()
             ledger = connection.execute(
                 """
-                SELECT COALESCE(SUM(cost_usd), 0), COALESCE(SUM(total_tokens), 0)
+                SELECT COUNT(*), COALESCE(SUM(cost_usd), 0),
+                       COALESCE(SUM(total_tokens), 0)
                 FROM llm_call_ledger
+                """
+            ).fetchone()
+            candidate_count = int(
+                connection.execute("SELECT COUNT(*) FROM candidate").fetchone()[0]
+            )
+            experiment = connection.execute(
+                """
+                SELECT status, checkpoint_data
+                FROM experiment
+                ORDER BY started_at DESC, id DESC
+                LIMIT 1
                 """
             ).fetchone()
         if row is None or row[0] is None:
             raise RuntimeError("benchmark produced no completed score")
+        if experiment is None:
+            raise RuntimeError("benchmark produced no experiment record")
+        if experiment[0] != "completed":
+            raise RuntimeError(f"benchmark experiment ended with status {experiment[0]!r}")
+        checkpoint = json.loads(experiment[1] or "{}")
+        checkpoint_generation = int(checkpoint.get("generation", 0))
+        if checkpoint_generation < self._settings.generations:
+            raise RuntimeError(
+                "benchmark stopped before the requested generation "
+                f"({checkpoint_generation} < {self._settings.generations})"
+            )
+        if candidate_count <= 1:
+            raise RuntimeError(
+                "benchmark produced no evolved candidates; candidate-slot failures "
+                "must not be reported as a completed run"
+            )
+        llm_calls = int(ledger[0] if ledger else 0)
+        if job.variant.name != "random_search" and llm_calls == 0:
+            raise RuntimeError(
+                f"benchmark variant {job.variant.name!r} produced no successful LLM calls"
+            )
         return {
             "score": float(row[0]),
-            "cost_usd": float(ledger[0] if ledger else 0.0),
-            "total_tokens": int(ledger[1] if ledger else 0),
+            "cost_usd": float(ledger[1] if ledger else 0.0),
+            "total_tokens": int(ledger[2] if ledger else 0),
+            "llm_calls": llm_calls,
+            "candidate_count": candidate_count,
+            "checkpoint_generation": checkpoint_generation,
         }
 
     def _find_existing_result(self, run_id: str) -> dict[str, Any] | None:

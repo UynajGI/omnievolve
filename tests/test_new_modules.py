@@ -492,6 +492,76 @@ class TestAgentRetryBackoff:
             else:
                 del sys.modules["litellm"]
 
+    def test_authentication_failure_is_fail_closed_without_retry(self):
+        """Invalid credentials must never degrade into benchmark mock output."""
+        import sys
+        from types import ModuleType
+
+        from omnievolve.agents.llm_gateway import LLMGateway
+        from omnievolve.exceptions import LLMAuthenticationError
+
+        calls: list[str] = []
+
+        class AuthenticationError(Exception):
+            status_code = 401
+
+        class StubLiteLLM(ModuleType):
+            @staticmethod
+            def completion(**kwargs):
+                calls.append(kwargs["model"])
+                raise AuthenticationError("Invalid API Key")
+
+        fake_module = StubLiteLLM("litellm")
+        original = sys.modules.get("litellm")
+        sys.modules["litellm"] = fake_module  # type: ignore[assignment]
+
+        try:
+            gateway = LLMGateway(
+                default_model="primary-model",
+                fallback_model="fallback-model",
+                max_retries=3,
+                retry_backoff_base=0.01,
+            )
+            with pytest.raises(LLMAuthenticationError, match="Invalid API Key"):
+                gateway.chat([{"role": "user", "content": "test"}])
+            assert calls == ["primary-model"]
+        finally:
+            if original:
+                sys.modules["litellm"] = original
+            else:
+                del sys.modules["litellm"]
+
+    def test_exhausted_transient_failure_raises_instead_of_mocking(self):
+        """A failed real run must be retryable by the research job queue."""
+        import sys
+        from types import ModuleType
+
+        from omnievolve.agents.llm_gateway import LLMGateway
+        from omnievolve.exceptions import LLMError
+
+        call_count = [0]
+
+        class StubLiteLLM(ModuleType):
+            @staticmethod
+            def completion(**kwargs):
+                call_count[0] += 1
+                raise RuntimeError("provider unavailable")
+
+        fake_module = StubLiteLLM("litellm")
+        original = sys.modules.get("litellm")
+        sys.modules["litellm"] = fake_module  # type: ignore[assignment]
+
+        try:
+            gateway = LLMGateway(max_retries=2, retry_backoff_base=0.01)
+            with pytest.raises(LLMError, match="provider unavailable"):
+                gateway.chat([{"role": "user", "content": "test"}])
+            assert call_count[0] == 2
+        finally:
+            if original:
+                sys.modules["litellm"] = original
+            else:
+                del sys.modules["litellm"]
+
 
 # --------------------------------------------------------------------------- #
 #  S5-09: Structured output repair

@@ -107,3 +107,23 @@ Discovery
   implementation and adapts across search phases. It is a meaningful future alternative
   to OmniEvolve's hand-authored Slow Loop, but should be considered only after the current
   ablation matrix establishes that Slow Loop adds measurable value.
+
+## 2026-07-28 — Benchmark execution integrity
+
+- The supplied Token Plan credential was probed against the CN, Singapore, and
+  Europe OpenAI-compatible endpoints using both documented authentication
+  headers. Every combination returned HTTP 401 `invalid_key`; therefore no LLM
+  benchmark result from this session is considered valid.
+- LLMGateway now fails closed on provider/authentication errors. Fake responses
+  require the explicit `FakeLLM` test double and cannot silently enter research
+  runs.
+- The research runner now rejects nominally completed experiments that did not
+  reach the requested generation, produced no evolved candidate, or (for an LLM
+  variant) recorded no successful LLM call. A 2-generation `sort/full` probe with
+  the invalid credential was correctly recorded as failed rather than as a
+  zero-token score.
+- `random_search` was corrected from “LLM agents plus random parent selection”
+  to deterministic, task-agnostic, LLM-free AST mutation of the frozen initial
+  program. A current-code 2-generation `sort/random_search` smoke completed with
+  three candidates, checkpoint generation 2, zero LLM calls, and zero tokens.
+  Its score is execution-chain evidence only, not a scientific comparison.

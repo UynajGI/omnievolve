@@ -108,9 +108,10 @@ DEFAULT_VARIANTS = (
     AblationVariant("full", "Full OmniEvolve system."),
     AblationVariant(
         "random_search",
-        "Random parent search without novelty, crossover, or slow loop.",
+        "LLM-free deterministic AST random search.",
         {
             "selection.parent_selector": "random",
+            "evolution.random_search_mode": True,
             "evolution.novelty_enabled": False,
             "evolution.crossover_rate": 0.0,
             "evolution.self_evolve_enabled": False,

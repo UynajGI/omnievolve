@@ -162,6 +162,7 @@ class AsyncEvolutionEngine:
                     generation,
                     tid,
                     island_id,
+                    slot=slot,
                 )
 
         # 主循环

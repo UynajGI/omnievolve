@@ -36,6 +36,7 @@ class EvolutionSettings(BaseSettings):
     seed: int = Field(default=42, ge=0)
     novelty_enabled: bool = True
     single_agent_mode: bool = False
+    random_search_mode: bool = False
     reference_credit_enabled: bool = True
     reference_credit_weight: float = Field(default=0.25, ge=0.0, le=1.0)
 
@@ -339,6 +340,7 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         seed=e.seed,
         novelty_enabled=e.novelty_enabled,
         single_agent_mode=e.single_agent_mode,
+        random_search_mode=e.random_search_mode,
         reference_credit_enabled=e.reference_credit_enabled,
         reference_credit_weight=e.reference_credit_weight,
     )
