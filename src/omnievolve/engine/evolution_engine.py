@@ -984,19 +984,32 @@ class EvolutionEngine:
             random_k=random_k,
         )
 
-    def _update_meta_scratchpad(self, thought: str, score: float) -> None:
+    def _update_meta_scratchpad(
+        self,
+        thought: str,
+        score: float,
+        *,
+        failure_summary: str = "",
+    ) -> None:
         """ShinkaEvolve meta-scratchpad: 跨代累积全局洞察.
 
         当某方向连续失败时记录到 scratchpad，供后续 Director 参考。
         保持 scratchpad 有界（最近 N 条洞察）。
         """
         if score < 0.1 and thought:
-            # 提取思想关键词（简化）
-            keyword = thought[:80]
+            compact_thought = " ".join(thought.split())
+            compact_failure = " ".join(failure_summary.split())
+            keyword = (
+                f"{compact_failure}; attempted_direction={compact_thought[:240]}"
+                if compact_failure
+                else compact_thought[:320]
+            )
             if keyword not in self._failed_directions:
                 self._failed_directions.append(keyword)
-                # 只保留最近 5 条失败方向
-                self._failed_directions = self._failed_directions[-5:]
+                # Keep a full ten-generation audit window.  The previous
+                # 80-character/5-entry memory forgot structurally identical
+                # failures before the search returned to the same component.
+                self._failed_directions = self._failed_directions[-10:]
 
         # 重建 scratchpad
         if self._failed_directions:

@@ -164,8 +164,14 @@ class Coder:
         # P2-2: 兄弟节点摘要
         if ctx.sibling_summaries:
             parts.append("\n## Sibling Approaches (same island, recent):")
-            for s in ctx.sibling_summaries[:3]:
+            for s in ctx.sibling_summaries[:8]:
                 parts.append(f"- {s}")
+
+        if ctx.meta_scratchpad:
+            parts.append(
+                "\n## Failed Directions (DO NOT reproduce these or an equivalent "
+                f"failure signature):\n{ctx.meta_scratchpad[:4000]}"
+            )
 
         # 记忆摘要
         if ctx.memory_hits:

@@ -51,6 +51,7 @@ class RoleAwareFakeLLM:
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.coder_calls = 0
 
     def chat(
         self,
@@ -73,8 +74,10 @@ class RoleAwareFakeLLM:
                 '"mechanism_tags": ["algo"]}'
             )
         elif agent_role == "coder":
+            self.coder_calls += 1
             content = (
-                '{"full_code": "x = 1\\nprint(x)", "diff": "rewrite", "explanation": "simpler"}'
+                f'{{"full_code": "x = {self.coder_calls}\\nprint(x)", '
+                '"diff": "rewrite", "explanation": "simpler"}'
             )
         else:
             content = '{"passed": true, "feedback": "ok"}'
