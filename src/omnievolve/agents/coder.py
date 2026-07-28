@@ -166,6 +166,11 @@ class Coder:
             parts.append("\n## Sibling Approaches (same island, recent):")
             for s in ctx.sibling_summaries[:8]:
                 parts.append(f"- {s}")
+            parts.append(
+                "Treat search_outcome=no_improvement as negative evidence: do not "
+                "repeat that mechanism unchanged. Implement a materially different "
+                "structure whose expected metric gain is explicit."
+            )
 
         if ctx.meta_scratchpad:
             parts.append(

@@ -1290,7 +1290,17 @@ class FastLoopStep:
                          SELECT er.metrics FROM evaluation_run er
                          WHERE er.candidate_id = c.id AND er.status = 'completed'
                          ORDER BY er.finished_at DESC LIMIT 1
-                       ) AS metrics
+                       ) AS metrics,
+                       (
+                         SELECT MAX(er_prev.primary_score)
+                         FROM candidate c_prev
+                         JOIN evaluation_run er_prev
+                           ON er_prev.candidate_id = c_prev.id
+                         WHERE c_prev.experiment_id = c.experiment_id
+                           AND c_prev.generation < c.generation
+                           AND er_prev.status = 'completed'
+                           AND er_prev.passed = 1
+                       ) AS previous_best_score
                 FROM candidate c
                 WHERE c.experiment_id = ?
                   AND c.island_id = ?
@@ -1327,11 +1337,23 @@ class FastLoopStep:
                     metric_text = ", ".join(
                         f"{key}={metric_data[key]}" for key in keys if key in metric_data
                     )
-                    outcome = (
-                        f"passed={bool(row['passed'])}, score={row['primary_score']}"
-                        if row["passed"] is not None
-                        else "evaluation=pending"
-                    )
+                    if row["passed"] is None:
+                        outcome = "evaluation=pending"
+                    else:
+                        passed = bool(row["passed"])
+                        previous_best = row["previous_best_score"]
+                        if not passed:
+                            search_outcome = "invalid"
+                        elif previous_best is None or float(row["primary_score"]) > float(
+                            previous_best
+                        ):
+                            search_outcome = "improved_best"
+                        else:
+                            search_outcome = "no_improvement"
+                        outcome = (
+                            f"passed={passed}, score={row['primary_score']}, "
+                            f"search_outcome={search_outcome}"
+                        )
                     if metric_text:
                         outcome += f", {metric_text}"
                     summaries.append(

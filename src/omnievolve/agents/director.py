@@ -121,6 +121,11 @@ class Director:
             parts.append("\n## Sibling Approaches (same island, recent):")
             for s in ctx.sibling_summaries[:8]:
                 parts.append(f"- {s}")
+            parts.append(
+                "Treat search_outcome=no_improvement as negative evidence: do not "
+                "repeat that mechanism unchanged. Propose a materially different "
+                "structure and explain why it can improve the measured score."
+            )
 
         # Step 4: 向量 RAG 检索（语义相关的历史 thought）
         if ctx.rag_context:

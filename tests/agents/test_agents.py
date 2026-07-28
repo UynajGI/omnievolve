@@ -1,5 +1,7 @@
 """Sprint 5 测试: Agents + LLM Gateway."""
 
+from dataclasses import replace
+
 import pytest
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
@@ -82,6 +84,22 @@ class TestDirector:
         assert "Domain Hints" in message
         assert "This is an optimization problem" in message
 
+    def test_prompt_treats_non_improvement_as_negative_evidence(
+        self, fake_llm, agent_context
+    ):
+        context = replace(
+            agent_context,
+            sibling_summaries=[
+                "[gen 7; passed=True, score=0.8, "
+                "search_outcome=no_improvement] thought=repeat tree"
+            ],
+        )
+        message = Director(fake_llm)._build_user_message(context)
+
+        assert "search_outcome=no_improvement" in message
+        assert "negative evidence" in message
+        assert "materially different" in message
+
 
 class TestCoder:
     """Coder 测试."""
@@ -120,6 +138,23 @@ class TestCoder:
 
         assert "Task Contract and Domain Constraints" in message
         assert "This is an optimization problem" in message
+
+    def test_prompt_requires_material_change_after_non_improvement(
+        self, fake_llm, agent_context
+    ):
+        context = replace(
+            agent_context,
+            sibling_summaries=[
+                "[gen 7; passed=True, score=0.8, "
+                "search_outcome=no_improvement] thought=repeat tree"
+            ],
+        )
+        thought = ThoughtOutput(thought="test", rationale="test")
+        message = Coder(fake_llm)._build_user_message(context, thought)
+
+        assert "search_outcome=no_improvement" in message
+        assert "negative evidence" in message
+        assert "materially different" in message
 
 
 class TestCritic:
