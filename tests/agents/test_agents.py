@@ -74,6 +74,14 @@ class TestDirector:
         assert thought.thought == "This is not JSON"
         assert thought.confidence == 0.5
 
+    def test_prompt_includes_domain_hints(self, fake_llm, agent_context):
+        director = Director(fake_llm)
+
+        message = director._build_user_message(agent_context)
+
+        assert "Domain Hints" in message
+        assert "This is an optimization problem" in message
+
 
 class TestCoder:
     """Coder 测试."""
@@ -103,6 +111,15 @@ class TestCoder:
         code = coder.generate_code(agent_context, thought)
 
         assert "def hello" in code.full_code
+
+    def test_prompt_includes_task_contract(self, fake_llm, agent_context):
+        coder = Coder(fake_llm)
+        thought = ThoughtOutput(thought="test", rationale="test")
+
+        message = coder._build_user_message(agent_context, thought)
+
+        assert "Task Contract and Domain Constraints" in message
+        assert "This is an optimization problem" in message
 
 
 class TestCritic:

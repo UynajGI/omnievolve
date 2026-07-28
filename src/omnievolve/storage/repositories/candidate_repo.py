@@ -400,7 +400,7 @@ class CandidateRepository:
               AND er.evaluator_version_id = ?
               AND er.environment_version_id = ?
               AND er.status = 'completed'
-              AND er.passed = 1
+              AND er.primary_score IS NOT NULL
             ORDER BY er.primary_score DESC
             LIMIT ?
             """,

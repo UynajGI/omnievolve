@@ -114,12 +114,31 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
             raise ValueError("OMNIEVOLVE_LLM_MAX_TOKENS must be positive")
         settings.models.max_tokens = max_tokens
 
+    request_timeout = settings.models.request_timeout
+    raw_request_timeout = os.environ.get("OMNIEVOLVE_LLM_REQUEST_TIMEOUT")
+    if raw_request_timeout:
+        try:
+            request_timeout = float(raw_request_timeout)
+        except ValueError as exc:
+            raise ValueError("OMNIEVOLVE_LLM_REQUEST_TIMEOUT must be a number") from exc
+        if request_timeout <= 0:
+            raise ValueError("OMNIEVOLVE_LLM_REQUEST_TIMEOUT must be positive")
+        settings.models.request_timeout = request_timeout
+
+    extra_body: dict[str, Any] = {}
+    if settings.models.enable_thinking is not None:
+        extra_body["enable_thinking"] = settings.models.enable_thinking
+    if settings.models.reasoning_effort is not None:
+        extra_body["reasoning_effort"] = settings.models.reasoning_effort
+
     return {
         "api_key": os.environ.get("OMNIEVOLVE_LLM_API_KEY"),
         "api_base": (
             os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
         ),
         "default_max_tokens": max_tokens,
+        "request_timeout": request_timeout,
+        "extra_body": extra_body or None,
     }
 
 
@@ -196,25 +215,26 @@ def _build_engine_components(
 
     # 向量索引器（设计文档 §4.2: Outbox → Embed → VectorBackend）
     vector_indexer = None
-    try:
-        from omnievolve.storage.vector_indexer import VectorIndexer
-        from omnievolve.storage.zvec_backend import create_vector_backend
-        from omnievolve.utils.embedding import FakeEmbedder
-
-        # 尝试加载真实 embedding 模型，失败则用 FakeEmbedder
-        embedder: Any = None
+    if settings.novelty.embedding_gate:
         try:
-            from omnievolve.utils.embedding import SentenceTransformerEmbedder
+            from omnievolve.storage.vector_indexer import VectorIndexer
+            from omnievolve.storage.zvec_backend import create_vector_backend
+            from omnievolve.utils.embedding import FakeEmbedder
 
-            embedder = SentenceTransformerEmbedder(model=settings.embedding.code.model)
+            # 尝试加载真实 embedding 模型，失败则用 FakeEmbedder
+            embedder: Any = None
+            try:
+                from omnievolve.utils.embedding import SentenceTransformerEmbedder
+
+                embedder = SentenceTransformerEmbedder(model=settings.embedding.code.model)
+            except Exception:
+                embedder = FakeEmbedder(dimension=128)
+
+            # 优先 zvec（HNSW ANN），不可用时回退 NumPy
+            vector_backend = create_vector_backend(prefer_zvec=True)
+            vector_indexer = VectorIndexer(db, vector_backend, embedder)
         except Exception:
-            embedder = FakeEmbedder(dimension=128)
-
-        # 优先 zvec（HNSW ANN），不可用时回退 NumPy
-        vector_backend = create_vector_backend(prefer_zvec=True)
-        vector_indexer = VectorIndexer(db, vector_backend, embedder)
-    except Exception:
-        pass  # core 模式无向量也可运行
+            pass  # core 模式无向量也可运行
 
     return {
         "router": router,

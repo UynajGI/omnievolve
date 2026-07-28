@@ -11,7 +11,7 @@ import pytest
 from omnievolve.agents.base import AgentContext, ThoughtOutput
 from omnievolve.agents.coder import Coder
 from omnievolve.agents.llm_gateway import FakeLLM
-from omnievolve.engine.fast_loop import _combine_failures
+from omnievolve.engine.fast_loop import _combine_failures, _parent_evaluation_feedback
 
 pytestmark = pytest.mark.unit
 
@@ -82,6 +82,32 @@ class TestCombineFailures:
     def test_strips_whitespace(self):
         result = _combine_failures(["  \n  error here  \n  "])
         assert result == "error here"
+
+
+def test_parent_evaluation_feedback_exposes_occam_gate_breakdown():
+    class FakeDB:
+        @staticmethod
+        def fetchone(query, params):
+            return {
+                "primary_score": 0.99578,
+                "passed": 1,
+                "metrics": (
+                    '{"total_gates":422,"mystery-A_gates":37,'
+                    '"mystery-B_gates":50,"mystery-C_gates":191,'
+                    '"mystery-D_gates":144}'
+                ),
+            }
+
+    class FakeEngine:
+        _db = FakeDB()
+        _experiment_id = "exp1"
+
+    feedback = _parent_evaluation_feedback(FakeEngine(), ["parent"])
+
+    assert "total_gates=422" in feedback
+    assert "mystery-C_gates=191" in feedback
+    assert "same or higher total is not an improvement" in feedback
+    assert "not immutable" in feedback
 
 
 class TestCoderPromptWithFailure:

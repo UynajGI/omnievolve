@@ -82,6 +82,10 @@ class EvolutionConfig:
     """进化配置."""
 
     max_generations: int = 50
+    # Stable horizon for exploration/exploitation scheduling. CLI ``--gens``
+    # may lower max_generations for a checkpoint, but that must not make MCTS
+    # believe every resumed checkpoint is the final round.
+    search_horizon_generations: int | None = None
     population_size: int = 8
     island_count: int = 4
     novelty_threshold: float = 0.92
@@ -180,6 +184,7 @@ class EvolutionEngine:
         self._environment_version_id = environment_version_id or getattr(
             sandbox, "environment_version_id", ""
         )
+        self._task_description = ""
         self._config = config or EvolutionConfig()
         self._search_policy = search_policy or SearchPolicyGenome()
         # 配置中的 epiplexity_beta 覆盖 genome 默认值（允许不开 Slow Loop 也能用）
@@ -205,7 +210,10 @@ class EvolutionEngine:
         # 预算
         budget_state = BudgetState(
             token_budget=self._config.token_budget,
-            compute_budget_sec=self._config.compute_budget_sec,
+            # Config files use zero as the conventional "unlimited" value.
+            # BudgetState treats any numeric value as a hard ceiling, so passing
+            # through 0 made every resumed generation immediately exhausted.
+            compute_budget_sec=self._config.compute_budget_sec or None,
         )
         self._budget_guard = BudgetGuard(budget_state)
 
@@ -380,6 +388,11 @@ class EvolutionEngine:
     def _run_evolution(self, initial_code: str, task_name: str) -> EvolutionResult:
         """进化主循环（内部实现）."""
         logger.info("Starting evolution: %s", task_name)
+        from omnievolve.engine.fast_loop import _extract_domain_hint
+
+        # Keep the task contract available even when the baseline fails the
+        # evaluator's pass threshold and therefore is not selectable as a parent.
+        self._task_description = _extract_domain_hint(initial_code, task_name)
 
         # Git 后端: 绑定到当前 task（确保正确的 per-task 仓库）
         store = self._artifact_store
@@ -421,7 +434,10 @@ class EvolutionEngine:
             self._current_generation = gen
 
             # P1: 更新 MCTS 探索进度（渐进衰减）
-            self._mcts.set_progress(gen, self._config.max_generations)
+            self._mcts.set_progress(
+                gen,
+                self._config.search_horizon_generations or self._config.max_generations,
+            )
 
             self._step_generation(gen, task_name)
 
@@ -461,6 +477,36 @@ class EvolutionEngine:
         exp = self._experiment_repo.get(experiment_id)
         if exp is None:
             raise ValueError(f"Experiment not found: {experiment_id}")
+
+        # A newly constructed sandbox may expose a fresh runtime identifier
+        # (TrustedSubprocessBackend uses a UUID per instance).  Resume must stay
+        # in the experiment's original evaluation scope; otherwise historical
+        # candidates disappear from parent/best selection and the first new
+        # evaluation violates the environment-version foreign key.
+        scope = self._db.fetchone(
+            """
+            SELECT er.evaluator_version_id, er.environment_version_id
+            FROM evaluation_run er
+            JOIN candidate c ON c.id = er.candidate_id
+            WHERE er.experiment_id = ? AND er.status = 'completed'
+            ORDER BY c.generation DESC, er.finished_at DESC
+            LIMIT 1
+            """,
+            (experiment_id,),
+        )
+        if scope is not None:
+            stored_evaluator_id = scope["evaluator_version_id"]
+            if (
+                self._evaluator_version_id
+                and self._evaluator_version_id != stored_evaluator_id
+            ):
+                raise ValueError(
+                    "Cannot resume experiment with a different evaluator version: "
+                    f"stored={stored_evaluator_id}, current={self._evaluator_version_id}"
+                )
+            self._evaluator_version_id = stored_evaluator_id
+            self._environment_version_id = scope["environment_version_id"]
+        self._ensure_version_rows()
 
         store = self._artifact_store
         if hasattr(store, "bind_experiment"):
@@ -512,8 +558,48 @@ class EvolutionEngine:
                 logger.warning("Budget exhausted, stopping resume before gen %d", gen)
                 break
             self._current_generation = gen
-            self._mcts.set_progress(gen, self._config.max_generations)
-            self._step_generation(gen, task_name)
+            self._mcts.set_progress(
+                gen,
+                self._config.search_horizon_generations or self._config.max_generations,
+            )
+            # P1 forced backpropagation and novelty rejection intentionally return
+            # no prepared candidate.  They are search-control events, not a
+            # durable evolution generation.  Retry the same generation a bounded
+            # number of times before declaring the pipeline unable to produce an
+            # auditable candidate.
+            generated = False
+            attempts = max(2, self._config.novelty_retry_limit + 1)
+            for attempt in range(1, attempts + 1):
+                before = self._db.fetchone(
+                    "SELECT COUNT(*) AS count FROM candidate WHERE experiment_id = ?",
+                    (experiment_id,),
+                )["count"]
+                self._step_generation(gen, task_name)
+                after = self._db.fetchone(
+                    "SELECT COUNT(*) AS count FROM candidate WHERE experiment_id = ?",
+                    (experiment_id,),
+                )["count"]
+                if after > before:
+                    generated = True
+                    break
+                logger.warning(
+                    "Generation %d produced no candidate on attempt %d/%d; retrying",
+                    gen,
+                    attempt,
+                    attempts,
+                )
+                if self._budget_guard.state.is_exhausted:
+                    break
+            if not generated:
+                self._current_generation = gen - 1
+                logger.error(
+                    "Generation %d produced no candidate after %d attempts; "
+                    "leaving checkpoint at %d",
+                    gen,
+                    attempts,
+                    self._current_generation,
+                )
+                break
             if self._island_manager.should_migrate(gen):
                 self._island_manager.migrate(gen)
             if self._config.self_evolve_enabled and gen % self._config.health_window_gens == 0:
@@ -533,7 +619,10 @@ class EvolutionEngine:
         """
         gen = self._current_generation + 1
         self._current_generation = gen
-        self._mcts.set_progress(gen, self._config.max_generations)
+        self._mcts.set_progress(
+            gen,
+            self._config.search_horizon_generations or self._config.max_generations,
+        )
         name = task_name or "default"
         self._step_generation(gen, name)
         return {
@@ -596,7 +685,22 @@ class EvolutionEngine:
     def _step_generation(self, generation: int, task_name: str) -> None:
         """执行一代进化（Fast Loop 11 步 × population_size 个候选）."""
         for i in range(self._config.population_size):
-            if self._shutdown_requested or not self._budget_guard.can_proceed():
+            if self._shutdown_requested:
+                logger.warning(
+                    "Candidate slot skipped because shutdown was requested: "
+                    "generation=%d slot=%d",
+                    generation,
+                    i,
+                )
+                break
+            if not self._budget_guard.can_proceed():
+                logger.warning(
+                    "Candidate slot skipped by budget guard: generation=%d slot=%d "
+                    "budget=%s",
+                    generation,
+                    i,
+                    self._budget_guard.check_budget(),
+                )
                 break
             try:
                 island_id = f"island_{i % self._config.island_count}"
