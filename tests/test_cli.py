@@ -18,6 +18,11 @@ def test_llm_env_overrides(monkeypatch):
     settings.models.reasoning_effort = "low"
     monkeypatch.setenv("OMNIEVOLVE_LLM_MODEL", "openai/test-model")
     monkeypatch.setenv("OMNIEVOLVE_LLM_API_BASE", "https://example.test/v1")
+    monkeypatch.setenv("OMNIEVOLVE_LLM_FALLBACK_MODEL", "openai/fallback-model")
+    monkeypatch.setenv("OMNIEVOLVE_LLM_FALLBACK_API_KEY", "fallback-key")
+    monkeypatch.setenv(
+        "OMNIEVOLVE_LLM_FALLBACK_API_BASE", "https://fallback.test/v1"
+    )
     monkeypatch.setenv("OMNIEVOLVE_LLM_MAX_TOKENS", "2048")
 
     kwargs = _apply_llm_env_overrides(settings)
@@ -26,6 +31,9 @@ def test_llm_env_overrides(monkeypatch):
     assert settings.models.light == ["openai/test-model"]
     assert settings.models.max_tokens == 2048
     assert kwargs["api_base"] == "https://example.test/v1"
+    assert kwargs["fallback_model"] == "openai/fallback-model"
+    assert kwargs["fallback_api_key"] == "fallback-key"
+    assert kwargs["fallback_api_base"] == "https://fallback.test/v1"
     assert kwargs["default_max_tokens"] == 2048
     assert kwargs["extra_body"] == {"reasoning_effort": "low"}
 

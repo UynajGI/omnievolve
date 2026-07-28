@@ -70,6 +70,8 @@ class LLMGateway:
         max_retries: int = 3,
         retry_backoff_base: float = 1.0,
         fallback_model: str | None = None,
+        fallback_api_key: str | None = None,
+        fallback_api_base: str | None = None,
         circuit_breaker: Any | None = None,
         rate_limiter: Any | None = None,
         budget_guard: Any | None = None,
@@ -84,6 +86,8 @@ class LLMGateway:
         self._max_retries = max_retries
         self._retry_backoff_base = retry_backoff_base
         self._fallback_model = fallback_model
+        self._fallback_api_key = fallback_api_key
+        self._fallback_api_base = fallback_api_base
         self._total_tokens = 0
         self._total_cost = 0.0
         # P1: 熔断器 + 限流
@@ -149,6 +153,24 @@ class LLMGateway:
             models_to_try.append(self._fallback_model)
 
         for try_model in models_to_try:
+            is_fallback = (
+                self._fallback_model is not None
+                and try_model == self._fallback_model
+                and try_model != model
+            )
+            try_api_key = (
+                self._fallback_api_key or self._api_key
+                if is_fallback
+                else self._api_key
+            )
+            try_api_base = (
+                self._fallback_api_base or self._api_base
+                if is_fallback
+                else self._api_base
+            )
+            # Provider-specific primary extras (for example Qwen thinking
+            # controls) must not leak into an unrelated fallback provider.
+            try_extra_body = None if is_fallback else self._extra_body
             for attempt in range(self._max_retries):
                 try:
                     import litellm
@@ -158,10 +180,10 @@ class LLMGateway:
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        api_key=self._api_key,
-                        api_base=self._api_base,
+                        api_key=try_api_key,
+                        api_base=try_api_base,
                         timeout=self._request_timeout,
-                        **({"extra_body": self._extra_body} if self._extra_body else {}),
+                        **({"extra_body": try_extra_body} if try_extra_body else {}),
                     )
 
                     latency_ms = (time.time() - start_time) * 1000
