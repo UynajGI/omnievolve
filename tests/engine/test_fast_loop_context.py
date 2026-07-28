@@ -38,7 +38,10 @@ def test_sibling_summary_includes_failure_metrics():
                     "previous_best_score": 0.9954,
                     "metrics": (
                         '{"total_gates":460,"mystery-D_test_acc":0.0,'
-                        '"mystery-D_gates":182}'
+                        '"mystery-D_bit_acc":0.875,"mystery-D_gates":182,'
+                        '"behavior_signature":"same-output",'
+                        '"mystery-D_first_test_failure":{"input":"0000",'
+                        '"expected":"01","actual":"00","wrong_bits":[0]}}'
                     ),
                 }
             ]
@@ -52,6 +55,9 @@ def test_sibling_summary_includes_failure_metrics():
     assert "passed=False" in summaries[0]
     assert "search_outcome=invalid" in summaries[0]
     assert "mystery-D_test_acc=0.0" in summaries[0]
+    assert "mystery-D_bit_acc=0.875" in summaries[0]
+    assert "behavior_signature=same-output" in summaries[0]
+    assert "wrong_bits" in summaries[0]
     assert "mystery-D_gates=182" in summaries[0]
     assert "replace the squarer" in summaries[0]
     assert FakeDB.params[-1] == 0
