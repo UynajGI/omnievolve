@@ -10,7 +10,10 @@ commit_result() 串行执行所有共享状态更新（MCTS/best/router/island�
 
 from __future__ import annotations
 
+import ast
+import json
 import logging
+import os
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -31,6 +34,84 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _extract_domain_hint(code: str, task_name: str, limit: int = 2000) -> str:
+    """Extract the candidate module contract for task-aware agent prompts."""
+    try:
+        docstring = ast.get_docstring(ast.parse(code), clean=True)
+    except (SyntaxError, ValueError):
+        docstring = None
+    hint = docstring or task_name
+    return hint[:limit]
+
+
+def _protect_occam_multiplier(parent_code: str, candidate_code: str, task_hint: str) -> str:
+    """Keep the audited multiplier kernel immutable during Occam stabilization.
+
+    The #71 campaign found a repeatable failure mode: a full-code rewrite can
+    shrink the multiplier dramatically while silently changing C's arithmetic.
+    C and D are retained after independent exhaustive checks; A/B and the
+    surrounding program can still evolve until a separately audited synthesis
+    route is deliberately enabled.
+    """
+    if "OCCAM_PROTECTED_MULTIPLIER" not in task_hint or not parent_code:
+        return candidate_code
+    protected_names = {
+        "Netlist",
+        "read_train",
+        "detect",
+        "xvar",
+        "yvar",
+        "_add_bits",
+        "_multiply_bits",
+        "build_multiplier",
+        "_square_bits",
+        "build_sum_of_squares",
+        "run",
+    }
+
+    def blocks(
+        source: str, names: set[str]
+    ) -> dict[str, tuple[int, int, list[str]]]:
+        tree = ast.parse(source)
+        lines = source.splitlines(keepends=True)
+        result = {}
+        for node in tree.body:
+            name = getattr(node, "name", None)
+            if name in names and getattr(node, "end_lineno", None):
+                result[name] = (node.lineno - 1, node.end_lineno, lines[node.lineno - 1 : node.end_lineno])
+        return result
+
+    try:
+        parent_blocks = blocks(parent_code, protected_names)
+        candidate_blocks = blocks(candidate_code, protected_names)
+        if protected_names - parent_blocks.keys():
+            logger.warning("Occam multiplier guard unavailable: audited parent block missing")
+            return parent_code
+        if protected_names - candidate_blocks.keys():
+            # A whole-program model rewrite can omit part of the audited kernel.
+            # Never let that omission bypass the guard: start from the verified
+            # parent and permit only the two intentionally mutable A/B builders.
+            safe_names = {"build_adder", "build_absdiff"}
+            parent_safe = blocks(parent_code, safe_names)
+            candidate_safe = blocks(candidate_code, safe_names)
+            lines = parent_code.splitlines(keepends=True)
+            for name, (start, end, _) in sorted(
+                parent_safe.items(), key=lambda item: item[1][0], reverse=True
+            ):
+                if name in candidate_safe:
+                    lines[start:end] = candidate_safe[name][2]
+            logger.warning("Occam multiplier guard reassembled audited parent")
+            return "".join(lines)
+        lines = candidate_code.splitlines(keepends=True)
+        # Replace in reverse source order so line offsets stay valid.
+        for name, (start, end, _) in sorted(candidate_blocks.items(), key=lambda item: item[1][0], reverse=True):
+            lines[start:end] = parent_blocks[name][2]
+        return "".join(lines)
+    except (SyntaxError, ValueError):
+        logger.warning("Occam multiplier guard skipped: unparsable candidate")
+        return candidate_code
+
+
 def _combine_failures(failures: list[str]) -> str:
     """合并多个父代的评估失败信息（P0-1）.
 
@@ -41,6 +122,53 @@ def _combine_failures(failures: list[str]) -> str:
         if f and f.strip():
             return f.strip()[:1000]  # 硬截断防止超长 stderr 撇爆 token budget
     return ""
+
+
+def _parent_evaluation_feedback(engine: Any, parent_ids: list[str]) -> str:
+    """Expose the selected parent's actionable fitness metrics to the agents."""
+    if not parent_ids:
+        return ""
+    row = engine._db.fetchone(  # noqa: SLF001
+        """
+        SELECT er.primary_score, er.passed, er.metrics
+        FROM evaluation_run er
+        WHERE er.experiment_id = ? AND er.candidate_id = ?
+          AND er.status = 'completed'
+        ORDER BY er.finished_at DESC
+        LIMIT 1
+        """,
+        (engine._experiment_id, parent_ids[0]),  # noqa: SLF001
+    )
+    if not row:
+        return ""
+    try:
+        metrics = json.loads(row["metrics"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        metrics = {}
+    preferred = [
+        "total_gates",
+        "mystery-A_gates",
+        "mystery-B_gates",
+        "mystery-C_gates",
+        "mystery-D_gates",
+        "energy",
+        "strict_energy",
+    ]
+    values = [f"{key}={metrics[key]}" for key in preferred if key in metrics]
+    metric_text = ", ".join(values) if values else json.dumps(metrics, sort_keys=True)[:600]
+    feedback = (
+        "VERIFIED PARENT FITNESS: "
+        f"passed={bool(row['passed'])}, primary_score={row['primary_score']}; {metric_text}. "
+        "The next candidate must preserve correctness and improve the primary objective."
+    )
+    if "total_gates" in metrics:
+        feedback += (
+            " Accuracy is already exact, so optimize actual rendered gate count. "
+            "A changed implementation with the same or higher total is not an improvement."
+            " The audited C/D kernels are the rollback baseline, not immutable: C and D may be "
+            "changed because the full evaluator will reject any arithmetic regression."
+        )
+    return feedback[:1200]
 
 
 @dataclass
@@ -226,6 +354,10 @@ class FastLoopStep:
             except Exception:
                 logger.debug("Director RAG search failed", exc_info=True)
 
+        task_hint = getattr(e, "_task_description", "") or (
+            _extract_domain_hint(parent_codes[0], task_name) if parent_codes else task_name
+        )
+        parent_feedback = _parent_evaluation_feedback(e, parent_ids)
         ctx = AgentContext(
             experiment_id=e._experiment_id,
             task_id=task_name,  # noqa: SLF001
@@ -236,6 +368,7 @@ class FastLoopStep:
             parent_artifact_hashes=[],
             inspiration_programs=inspiration,
             memory_hits=memory_summaries,
+            domain_hints=[hint for hint in (task_hint, parent_feedback) if hint],
             meta_scratchpad=e._meta_scratchpad,  # noqa: SLF001
             last_eval_failure=_combine_failures(parent_failures),
             stagnation_level=stagnation_level,
@@ -300,6 +433,17 @@ class FastLoopStep:
                     code = type(code)(
                         diff="", full_code=parent_codes[0], explanation="fallback to parent code"
                     )
+        audited_parent = base_code or (parent_codes[0] if parent_codes else "")
+        protected_code = code.full_code
+        if os.environ.get("OCCAM_PROTECT_MULTIPLIER", "").strip() == "1":
+            protected_code = _protect_occam_multiplier(audited_parent, code.full_code, task_hint)
+        if protected_code != code.full_code:
+            code = type(code)(
+                diff=code.diff,
+                full_code=protected_code,
+                explanation=f"{code.explanation}; protected audited Occam multiplier kernel",
+                touched_files=code.touched_files,
+            )
 
         with self._prof_step("critic", generation):
             critic_stderr = ctx.last_eval_failure
@@ -972,14 +1116,27 @@ class FastLoopStep:
         return 0
 
     def _load_sibling_summaries(self, island_id: str, generation: int) -> list[str]:
-        """P2-2: 加载兄弟节点摘要（同一 island，最近 2 代）."""
-        import json
-
+        """Load recent sibling ideas together with their evaluator outcome."""
         e = self._e
         try:
             rows = e._db.fetchall(  # noqa: SLF001
                 """
-                SELECT c.id, c.generation, c.meta
+                SELECT c.id, c.generation, c.meta,
+                       (
+                         SELECT er.passed FROM evaluation_run er
+                         WHERE er.candidate_id = c.id AND er.status = 'completed'
+                         ORDER BY er.finished_at DESC LIMIT 1
+                       ) AS passed,
+                       (
+                         SELECT er.primary_score FROM evaluation_run er
+                         WHERE er.candidate_id = c.id AND er.status = 'completed'
+                         ORDER BY er.finished_at DESC LIMIT 1
+                       ) AS primary_score,
+                       (
+                         SELECT er.metrics FROM evaluation_run er
+                         WHERE er.candidate_id = c.id AND er.status = 'completed'
+                         ORDER BY er.finished_at DESC LIMIT 1
+                       ) AS metrics
                 FROM candidate c
                 WHERE c.experiment_id = ?
                   AND c.island_id = ?
@@ -995,7 +1152,37 @@ class FastLoopStep:
                 meta = json.loads(raw_meta) if isinstance(raw_meta, str) and raw_meta else {}
                 thought = meta.get("thought", "")[:200] if meta else ""
                 if thought:
-                    summaries.append(f"[gen {row['generation']}] {thought}")
+                    metric_data = (
+                        json.loads(row["metrics"])
+                        if isinstance(row["metrics"], str) and row["metrics"]
+                        else {}
+                    )
+                    keys = [
+                        "total_gates",
+                        "mystery-A_test_acc",
+                        "mystery-A_gates",
+                        "mystery-B_test_acc",
+                        "mystery-B_gates",
+                        "mystery-C_test_acc",
+                        "mystery-C_gates",
+                        "mystery-D_test_acc",
+                        "mystery-D_gates",
+                        "energy",
+                        "max_atom_force",
+                    ]
+                    metric_text = ", ".join(
+                        f"{key}={metric_data[key]}" for key in keys if key in metric_data
+                    )
+                    outcome = (
+                        f"passed={bool(row['passed'])}, score={row['primary_score']}"
+                        if row["passed"] is not None
+                        else "evaluation=pending"
+                    )
+                    if metric_text:
+                        outcome += f", {metric_text}"
+                    summaries.append(
+                        f"[gen {row['generation']}; {outcome}] thought={thought}"
+                    )
             return summaries[:3]
         except Exception:
             logger.debug("Failed to load sibling summaries", exc_info=True)

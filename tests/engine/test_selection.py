@@ -80,6 +80,19 @@ class TestSelectBest:
             idx = cids.index(cid)
             assert idx >= 7
 
+    def test_nonpassing_scored_candidate_is_still_selectable(self, seeded_db):
+        """A quality target is not the same thing as evaluator validity."""
+        db, cids = seeded_db
+        db.execute(
+            "UPDATE evaluation_run SET passed = 0 WHERE candidate_id = ?",
+            (cids[9],),
+        )
+        selector = ParentSelector(db, strategy="best")
+
+        result = selector.select("exp_test", "ev_v1", "env_v1", count=1)
+
+        assert result == [cids[9]]
+
 
 class TestSelectTournament:
     def test_returns_correct_count(self, seeded_db):

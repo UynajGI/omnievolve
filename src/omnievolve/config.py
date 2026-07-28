@@ -64,6 +64,9 @@ class ModelsSettings(BaseSettings):
     heavy: list[str] = Field(default_factory=lambda: ["reasoning-model-primary"])
     light: list[str] = Field(default_factory=lambda: ["fast-model-primary"])
     max_tokens: int = Field(default=16384, gt=0)
+    request_timeout: float = Field(default=120.0, gt=0)
+    enable_thinking: bool | None = None
+    reasoning_effort: str | None = None
     routing: ModelRoutingSettings = Field(default_factory=ModelRoutingSettings)
 
 
@@ -280,6 +283,9 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
             heavy=data.get("models", {}).get("heavy", ["reasoning-model-primary"]),
             light=data.get("models", {}).get("light", ["fast-model-primary"]),
             max_tokens=data.get("models", {}).get("max_tokens", 16384),
+            request_timeout=data.get("models", {}).get("request_timeout", 120.0),
+            enable_thinking=data.get("models", {}).get("enable_thinking"),
+            reasoning_effort=data.get("models", {}).get("reasoning_effort"),
             routing=ModelRoutingSettings(**data.get("models", {}).get("routing", {})),
         ),
         embedding=EmbeddingSettings(
@@ -317,6 +323,7 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
     e = settings.evolution
     return EvolutionConfig(
         max_generations=e.max_generations,
+        search_horizon_generations=e.max_generations,
         population_size=e.population_size,
         island_count=e.island_count,
         novelty_threshold=e.novelty_threshold,

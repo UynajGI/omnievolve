@@ -75,6 +75,7 @@ class LLMGateway:
         budget_guard: Any | None = None,
         request_timeout: float = 120.0,
         default_max_tokens: int = 16384,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         self._db = db
         self._default_model = default_model
@@ -94,6 +95,8 @@ class LLMGateway:
         self._request_timeout = request_timeout
         # 默认最大输出 token 数（可被 chat() 调用方覆盖）
         self._default_max_tokens = default_max_tokens
+        # Provider-specific OpenAI-compatible parameters, e.g. Qwen thinking mode.
+        self._extra_body = extra_body
 
     def chat(
         self,
@@ -158,6 +161,7 @@ class LLMGateway:
                         api_key=self._api_key,
                         api_base=self._api_base,
                         timeout=self._request_timeout,
+                        **({"extra_body": self._extra_body} if self._extra_body else {}),
                     )
 
                     latency_ms = (time.time() - start_time) * 1000

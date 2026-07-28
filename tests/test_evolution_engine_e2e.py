@@ -292,7 +292,9 @@ class TestEvolutionEngineE2E:
         total = sum(statuses.values())
         assert total >= 2
 
-    def test_resume_continues_from_checkpoint(self, db, tmp_artifact_store, sandbox, experiment):
+    def test_resume_continues_from_checkpoint(
+        self, db, tmp_artifact_store, sandbox, experiment, tmp_path
+    ):
         """resume 应从中断处继续."""
         llm = RoleAwareFakeLLM()
         config = EvolutionConfig(
@@ -322,26 +324,38 @@ class TestEvolutionEngineE2E:
         # 用更大代数 resume
         config2 = EvolutionConfig(
             max_generations=3,
+            search_horizon_generations=110,
             population_size=1,
             island_count=1,
             crossover_rate=0.0,
             health_window_gens=5,  # 不触发 Slow Loop
             sandbox_timeout=5.0,
+            compute_budget_sec=0,  # TOML 中 0 表示不设计算时限
         )
+        resumed_sandbox = TrustedSubprocessBackend(
+            work_dir=tmp_path / "resumed-sandbox",
+            artifact_store=tmp_artifact_store,
+            trusted=True,
+        )
+        assert resumed_sandbox.environment_version_id != sandbox.environment_version_id
+
         engine2 = EvolutionEngine(
             db,
             tmp_artifact_store,
             StubEvaluator(),
-            sandbox,
+            resumed_sandbox,
             RoleAwareFakeLLM(),
             experiment_id=experiment,
             evaluator_version_id=StubEvaluator.version_id,
-            environment_version_id=sandbox.environment_version_id,
+            environment_version_id=resumed_sandbox.environment_version_id,
             config=config2,
             policy_archive=PolicyArchive(db),
         )
         result2 = engine2.resume(experiment)
         assert result2.total_generations >= 2
+        assert engine2._environment_version_id == sandbox.environment_version_id  # noqa: SLF001
+        assert not engine2._budget_guard.state.is_exhausted  # noqa: SLF001
+        assert engine2._mcts._progress == pytest.approx(3 / 110)  # noqa: SLF001
 
     def test_evolution_result_has_all_fields(self, db, tmp_artifact_store, sandbox, experiment):
         """EvolutionResult 包含设计要求的全部字段."""

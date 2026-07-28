@@ -134,6 +134,11 @@ class Coder:
             f"\n## Rationale:\n{thought.rationale}",
         ]
 
+        if ctx.domain_hints:
+            parts.append("\n## Task Contract and Domain Constraints:")
+            for hint in ctx.domain_hints[:3]:
+                parts.append(f"- {hint}")
+
         # 父代码（用于 diff 基础）
         parent_code = self._get_parent_code(ctx)
         if parent_code:

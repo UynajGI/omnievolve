@@ -79,6 +79,7 @@ tmpfs_mb = 256
 inherit_host_env = false
 
 [storage]
+code_backend = "cas"  # portable default; opt in to "git" only when Git plumbing is required
 db_path = ".omnievolve/omnievolve.db"
 vector_dir = ".omnievolve/vectors"
 artifact_dir = ".omnievolve/artifacts"

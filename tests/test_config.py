@@ -76,6 +76,9 @@ class TestModelsSettings:
         s = ModelsSettings()
         assert len(s.heavy) == 1
         assert len(s.light) == 1
+        assert s.request_timeout == 120.0
+        assert s.enable_thinking is None
+        assert s.reasoning_effort is None
         assert isinstance(s.routing, ModelRoutingSettings)
 
     def test_custom_models(self):
@@ -244,6 +247,14 @@ class TestBuildSettings:
         assert s.evolution.max_generations == 3
         assert s.evolution.population_size == 8  # default
 
+    def test_model_request_timeout_override(self):
+        s = _build_settings({"models": {"request_timeout": 300}})
+        assert s.models.request_timeout == 300.0
+
+    def test_model_thinking_override(self):
+        s = _build_settings({"models": {"reasoning_effort": "low"}})
+        assert s.models.reasoning_effort == "low"
+
     def test_nested_embedding(self):
         s = _build_settings(
             {
@@ -274,6 +285,7 @@ class TestBuildEvolutionConfig:
         s = OmniEvolveSettings()
         cfg = build_evolution_config(s)
         assert cfg.max_generations == 50
+        assert cfg.search_horizon_generations == 50
         assert cfg.population_size == 8
 
 

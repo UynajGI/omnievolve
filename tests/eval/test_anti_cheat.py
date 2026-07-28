@@ -32,5 +32,14 @@ def test_candidate_evaluator_peeking_is_flagged():
     assert {finding.rule for finding in findings} == {"forbidden_literal"}
 
 
+def test_evaluator_contract_in_docstring_is_not_flagged():
+    source = '''"""The evaluator owns hidden tests; candidate code must not inspect them."""
+def solve(values):
+    """Return values without reading test files."""
+    return values
+'''
+    assert scan_candidate_source(source) == []
+
+
 def test_normal_algorithm_is_not_flagged():
     assert scan_candidate_source("def sort(values): return sorted(values)") == []
