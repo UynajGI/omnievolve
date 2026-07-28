@@ -433,6 +433,7 @@ class TestAgentRetryBackoff:
 
         primary_calls = [0]
         fallback_calls = [0]
+        fallback_kwargs = {}
 
         class StubResponse:
             def __init__(self, content):
@@ -467,6 +468,7 @@ class TestAgentRetryBackoff:
                     primary_calls[0] += 1
                     raise RuntimeError("primary always fails")
                 fallback_calls[0] += 1
+                fallback_kwargs.update(kwargs)
                 resp = StubResponse('{"ok": true}')
                 resp.usage = StubUsage()
                 return resp
@@ -479,6 +481,11 @@ class TestAgentRetryBackoff:
             gateway = LLMGateway(
                 default_model="primary-model",
                 fallback_model="fallback-model",
+                api_key="primary-key",
+                api_base="https://primary.test/v1",
+                fallback_api_key="fallback-key",
+                fallback_api_base="https://fallback.test/v1",
+                extra_body={"enable_thinking": True},
                 max_retries=2,
                 retry_backoff_base=0.01,
             )
@@ -486,6 +493,9 @@ class TestAgentRetryBackoff:
             assert "ok" in response.content
             assert response.model == "fallback-model"
             assert fallback_calls[0] == 1
+            assert fallback_kwargs["api_key"] == "fallback-key"
+            assert fallback_kwargs["api_base"] == "https://fallback.test/v1"
+            assert "extra_body" not in fallback_kwargs
         finally:
             if original:
                 sys.modules["litellm"] = original

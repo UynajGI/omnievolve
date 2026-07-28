@@ -136,6 +136,9 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
         "api_base": (
             os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
         ),
+        "fallback_model": os.environ.get("OMNIEVOLVE_LLM_FALLBACK_MODEL"),
+        "fallback_api_key": os.environ.get("OMNIEVOLVE_LLM_FALLBACK_API_KEY"),
+        "fallback_api_base": os.environ.get("OMNIEVOLVE_LLM_FALLBACK_API_BASE"),
         "default_max_tokens": max_tokens,
         "request_timeout": request_timeout,
         "extra_body": extra_body or None,
