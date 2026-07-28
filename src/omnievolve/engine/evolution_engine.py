@@ -474,7 +474,7 @@ class EvolutionEngine:
         self._experiment_id = experiment_id
 
         # P1: 恢复检查点状态（meta_scratchpad 等易失状态）
-        self._load_checkpoint()
+        checkpoint = self._load_checkpoint()
 
         exp = self._experiment_repo.get(experiment_id)
         if exp is None:
@@ -514,12 +514,17 @@ class EvolutionEngine:
         if hasattr(store, "bind_experiment"):
             store.bind_experiment(experiment_id, task_name=exp.task_name)
 
-        # 找到当前最大 generation
-        row = self._db.fetchone(
-            "SELECT MAX(generation) as max_gen FROM candidate WHERE experiment_id = ?",
-            (experiment_id,),
-        )
-        self._current_generation = row["max_gen"] if row and row["max_gen"] else 0
+        # The durable checkpoint is authoritative.  Candidate/evaluation rows
+        # can be committed before the end-of-generation checkpoint, so MAX
+        # candidate generation may describe an interrupted, non-resumable step.
+        if checkpoint:
+            self._current_generation = max(0, int(checkpoint.get("generation", 0)))
+        else:
+            row = self._db.fetchone(
+                "SELECT MAX(generation) as max_gen FROM candidate WHERE experiment_id = ?",
+                (experiment_id,),
+            )
+            self._current_generation = row["max_gen"] if row and row["max_gen"] else 0
 
         # 恢复 best
         bests = self._candidate_repo.get_best_candidates(
@@ -856,7 +861,7 @@ class EvolutionEngine:
             recent_scores=self._recent_scores,
         )
 
-    def _load_checkpoint(self) -> None:
+    def _load_checkpoint(self) -> dict | None:
         """恢复检查点（T1: 委托给 CheckpointManager）."""
         checkpoint = self._checkpoint.load(self._experiment_id)
         if checkpoint:
@@ -864,6 +869,7 @@ class EvolutionEngine:
             self._failed_directions = checkpoint.get("failed_directions", [])
             self._recent_scores = checkpoint.get("recent_scores", [])
             self._total_candidates = checkpoint.get("total_candidates", self._total_candidates)
+        return checkpoint
 
     def _batch_load_artifacts(self, artifact_hashes: list[str]) -> list[str]:
         """批量加载 artifact 内容."""
