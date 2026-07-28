@@ -169,7 +169,13 @@ class Coder:
             parts.append(
                 "Treat search_outcome=no_improvement as negative evidence: do not "
                 "repeat that mechanism unchanged. Implement a materially different "
-                "structure whose expected metric gain is explicit."
+                "structure whose expected metric gain is explicit. An identical "
+                "behavior_signature/proposal_coords_hash is a behavioral no-op even "
+                "when the source differs. For Occam, repair the reported counterexample "
+                "without assuming a 5-bit task; the official operands are 6-bit. For "
+                "LJ, wire the proposed search into run() and improve the independently "
+                "verified proposal energy/force rather than merely returning the "
+                "incumbent faster."
             )
 
         if ctx.meta_scratchpad:

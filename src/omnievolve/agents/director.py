@@ -124,7 +124,11 @@ class Director:
             parts.append(
                 "Treat search_outcome=no_improvement as negative evidence: do not "
                 "repeat that mechanism unchanged. Propose a materially different "
-                "structure and explain why it can improve the measured score."
+                "structure and explain why it can improve the measured score. "
+                "An identical behavior_signature/proposal_coords_hash is a behavioral "
+                "no-op even when the source hash or prose is different. Use any "
+                "first_test_failure or proposal energy/force diagnostics to target "
+                "the next change."
             )
 
         # Step 4: 向量 RAG 检索（语义相关的历史 thought）
