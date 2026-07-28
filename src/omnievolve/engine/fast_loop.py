@@ -44,6 +44,19 @@ def _extract_domain_hint(code: str, task_name: str, limit: int = 2000) -> str:
     return hint[:limit]
 
 
+def _top_level_blocks(
+    source: str, names: set[str]
+) -> dict[str, tuple[int, int, list[str]]]:
+    tree = ast.parse(source)
+    lines = source.splitlines(keepends=True)
+    result = {}
+    for node in tree.body:
+        name = getattr(node, "name", None)
+        if name in names and getattr(node, "end_lineno", None):
+            result[name] = (node.lineno - 1, node.end_lineno, lines[node.lineno - 1 : node.end_lineno])
+    return result
+
+
 def _protect_occam_multiplier(parent_code: str, candidate_code: str, task_hint: str) -> str:
     """Keep the audited multiplier kernel immutable during Occam stabilization.
 
@@ -69,21 +82,9 @@ def _protect_occam_multiplier(parent_code: str, candidate_code: str, task_hint: 
         "run",
     }
 
-    def blocks(
-        source: str, names: set[str]
-    ) -> dict[str, tuple[int, int, list[str]]]:
-        tree = ast.parse(source)
-        lines = source.splitlines(keepends=True)
-        result = {}
-        for node in tree.body:
-            name = getattr(node, "name", None)
-            if name in names and getattr(node, "end_lineno", None):
-                result[name] = (node.lineno - 1, node.end_lineno, lines[node.lineno - 1 : node.end_lineno])
-        return result
-
     try:
-        parent_blocks = blocks(parent_code, protected_names)
-        candidate_blocks = blocks(candidate_code, protected_names)
+        parent_blocks = _top_level_blocks(parent_code, protected_names)
+        candidate_blocks = _top_level_blocks(candidate_code, protected_names)
         if protected_names - parent_blocks.keys():
             logger.warning("Occam multiplier guard unavailable: audited parent block missing")
             return parent_code
@@ -92,8 +93,8 @@ def _protect_occam_multiplier(parent_code: str, candidate_code: str, task_hint: 
             # Never let that omission bypass the guard: start from the verified
             # parent and permit only the two intentionally mutable A/B builders.
             safe_names = {"build_adder", "build_absdiff"}
-            parent_safe = blocks(parent_code, safe_names)
-            candidate_safe = blocks(candidate_code, safe_names)
+            parent_safe = _top_level_blocks(parent_code, safe_names)
+            candidate_safe = _top_level_blocks(candidate_code, safe_names)
             lines = parent_code.splitlines(keepends=True)
             for name, (start, end, _) in sorted(
                 parent_safe.items(), key=lambda item: item[1][0], reverse=True
@@ -110,6 +111,117 @@ def _protect_occam_multiplier(parent_code: str, candidate_code: str, task_hint: 
     except (SyntaxError, ValueError):
         logger.warning("Occam multiplier guard skipped: unparsable candidate")
         return candidate_code
+
+
+def _occam_thought_targets(thought: str) -> set[str]:
+    """Extract the explicitly proposed mystery components from a Director thought."""
+    text = thought.strip()
+    if text.startswith("```"):
+        inner = text.strip("`").strip()
+        if inner.startswith("json"):
+            inner = inner[4:].strip()
+        try:
+            payload = json.loads(inner)
+            text = str(payload.get("thought", text))
+        except json.JSONDecodeError:
+            pass
+    lowered = text.lower()
+    targets: set[str] = set()
+    if "mystery a" in lowered or "build_adder" in lowered:
+        targets.add("A")
+    if (
+        "mystery b" in lowered
+        or "absdiff" in lowered
+        or "absolute difference" in lowered
+    ):
+        targets.add("B")
+    if (
+        "mystery c" in lowered
+        or "multiplier" in lowered
+        or "multiplication" in lowered
+        or "booth" in lowered
+    ):
+        targets.add("C")
+    if (
+        "mystery d" in lowered
+        or "squarer" in lowered
+        or "sum of squares" in lowered
+        or "x²" in lowered
+    ):
+        targets.add("D")
+    return targets
+
+
+def _align_occam_candidate_scope(
+    parent_code: str,
+    candidate_code: str,
+    thought: str,
+    task_hint: str,
+) -> tuple[str, list[str]]:
+    """Restore component edits that contradict the Director's explicit target.
+
+    This is not a correctness shortcut: allowed edits still face the full suite
+    evaluator.  It prevents an expensive C-focused proposal from silently
+    mutating D instead, a repeated failure observed in the #71 campaign.
+    """
+    if "#71 Occam" not in task_hint or not parent_code:
+        return candidate_code, []
+    targets = _occam_thought_targets(thought)
+    if not targets:
+        return candidate_code, []
+
+    component_symbols = {
+        "A": {"build_adder"},
+        "B": {"build_absdiff"},
+        "C": {"_multiply_bits", "build_multiplier"},
+        "D": {"_square_bits", "build_sum_of_squares"},
+    }
+    contract_symbols = {"Netlist", "read_train", "detect", "xvar", "yvar", "run"}
+    all_symbols = contract_symbols | set().union(*component_symbols.values()) | {"_add_bits"}
+    try:
+        parent_blocks = _top_level_blocks(parent_code, all_symbols)
+        candidate_blocks = _top_level_blocks(candidate_code, all_symbols)
+    except (SyntaxError, ValueError):
+        return candidate_code, []
+
+    protected = set(contract_symbols)
+    for component, symbols in component_symbols.items():
+        if component not in targets:
+            protected.update(symbols)
+    # _add_bits is shared by C and D, so a one-component thought may not change it.
+    if not {"C", "D"}.issubset(targets):
+        protected.add("_add_bits")
+
+    reverted = [
+        name
+        for name in sorted(protected)
+        if name in parent_blocks
+        and (name not in candidate_blocks or candidate_blocks[name][2] != parent_blocks[name][2])
+    ]
+    if not reverted:
+        return candidate_code, []
+
+    # Missing contract/component blocks indicate an unsafe full rewrite.  Start
+    # from the parent, then transplant only explicitly targeted component blocks.
+    if protected - candidate_blocks.keys():
+        result_lines = parent_code.splitlines(keepends=True)
+        allowed = set().union(*(component_symbols[target] for target in targets))
+        if {"C", "D"}.issubset(targets):
+            allowed.add("_add_bits")
+        for name, (start, end, _) in sorted(
+            _top_level_blocks(parent_code, allowed).items(),
+            key=lambda item: item[1][0],
+            reverse=True,
+        ):
+            if name in candidate_blocks:
+                result_lines[start:end] = candidate_blocks[name][2]
+        return "".join(result_lines), reverted
+
+    result_lines = candidate_code.splitlines(keepends=True)
+    for name in sorted(reverted, key=lambda item: candidate_blocks[item][0], reverse=True):
+        start, end, _ = candidate_blocks[name]
+        result_lines[start:end] = parent_blocks[name][2]
+    return "".join(result_lines), reverted
 
 
 def _combine_failures(failures: list[str]) -> str:
@@ -442,6 +554,22 @@ class FastLoopStep:
                 diff=code.diff,
                 full_code=protected_code,
                 explanation=f"{code.explanation}; protected audited Occam multiplier kernel",
+                touched_files=code.touched_files,
+            )
+        aligned_code, reverted_symbols = _align_occam_candidate_scope(
+            audited_parent,
+            code.full_code,
+            thought.thought,
+            task_hint,
+        )
+        if reverted_symbols:
+            code = type(code)(
+                diff=code.diff,
+                full_code=aligned_code,
+                explanation=(
+                    f"{code.explanation}; restored out-of-scope symbols: "
+                    f"{', '.join(reverted_symbols)}"
+                ),
                 touched_files=code.touched_files,
             )
 
