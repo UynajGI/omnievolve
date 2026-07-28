@@ -572,6 +572,17 @@ class FastLoopStep:
                 ),
                 touched_files=code.touched_files,
             )
+        # A scope repair or failed patch can collapse back to the exact parent.
+        # Such an artifact contains no evolutionary information and must not
+        # consume a durable generation.  resume() will retry this generation
+        # through its bounded no-candidate path.
+        if audited_parent and code.full_code == audited_parent:
+            logger.warning(
+                "Rejected no-op candidate at generation %d after code alignment",
+                generation,
+            )
+            e._mcts.rollback_last_select()  # noqa: SLF001
+            return None
 
         with self._prof_step("critic", generation):
             critic_stderr = ctx.last_eval_failure

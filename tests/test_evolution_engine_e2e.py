@@ -89,6 +89,25 @@ class RoleAwareFakeLLM:
         )
 
 
+class NoOpFakeLLM(RoleAwareFakeLLM):
+    """Return the exact parent for every coder call."""
+
+    def chat(self, messages, **kwargs):
+        if kwargs.get("agent_role") == "coder":
+            self.calls.append(
+                {"agent_role": "coder", "model": kwargs.get("model")}
+            )
+            return LLMResponse(
+                content='{"full_code":"x = 0\\n","diff":"","explanation":"no change"}',
+                model=kwargs.get("model") or "fake",
+                input_tokens=10,
+                output_tokens=10,
+                total_tokens=20,
+                latency_ms=1.0,
+            )
+        return super().chat(messages, **kwargs)
+
+
 class StubEvaluator:
     """不依赖候选代码内容的桩评估器：运行一条固定命令并按成功与否评分."""
 
@@ -228,6 +247,36 @@ class TestEvolutionEngineE2E:
         # --- MCTS 节点已建立 ---
         stats = engine._mcts.get_stats()  # noqa: SLF001
         assert stats["nodes"] >= 1
+
+    def test_exact_parent_noop_does_not_advance_generation(
+        self, db, tmp_artifact_store, sandbox, experiment
+    ):
+        engine = EvolutionEngine(
+            db,
+            tmp_artifact_store,
+            StubEvaluator(),
+            sandbox,
+            NoOpFakeLLM(),
+            experiment_id=experiment,
+            evaluator_version_id=StubEvaluator.version_id,
+            environment_version_id=sandbox.environment_version_id,
+            config=EvolutionConfig(
+                max_generations=1,
+                population_size=1,
+                island_count=1,
+                novelty_retry_limit=1,
+                self_evolve_enabled=False,
+            ),
+        )
+
+        result = engine.run("x = 0\n", "e2e-task")
+
+        assert result.total_generations == 0
+        assert result.total_candidates == 1
+        checkpoint = db.fetchone(
+            "SELECT checkpoint_data FROM experiment WHERE id=?", (experiment,)
+        )
+        assert '"generation": 0' in checkpoint["checkpoint_data"]
 
         # --- 岛屿精英已更新 ---
         island_stats = engine._island_manager.get_stats()  # noqa: SLF001
