@@ -119,7 +119,7 @@ class Director:
         # 1.2: 兄弟节点摘要（同一 island 最近尝试，避免重复）
         if ctx.sibling_summaries:
             parts.append("\n## Sibling Approaches (same island, recent):")
-            for s in ctx.sibling_summaries[:3]:
+            for s in ctx.sibling_summaries[:8]:
                 parts.append(f"- {s}")
 
         # Step 4: 向量 RAG 检索（语义相关的历史 thought）
@@ -130,7 +130,10 @@ class Director:
 
         # P2-1: 反例集合（从 meta_scratchpad 取失败方向）
         if ctx.meta_scratchpad:
-            parts.append(f"\n## Failed Directions (AVOID repeating):\n{ctx.meta_scratchpad[:500]}")
+            parts.append(
+                "\n## Failed Directions (AVOID repeating, including equivalent "
+                f"failure signatures):\n{ctx.meta_scratchpad[:4000]}"
+            )
 
         if ctx.domain_hints:
             parts.append("\n## Domain Hints:")

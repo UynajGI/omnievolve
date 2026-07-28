@@ -1057,7 +1057,22 @@ class FastLoopStep:
         cand_meta = e._candidate_repo.get_candidate(candidate_id)  # noqa: SLF001
         if cand_meta and cand_meta.meta:
             thought_text = cand_meta.meta.get("thought", "")
-        e._update_meta_scratchpad(thought_text, output.score)  # noqa: SLF001
+        failure_parts = []
+        for component in ("A", "B", "C", "D"):
+            accuracy_key = f"mystery-{component}_test_acc"
+            gate_key = f"mystery-{component}_gates"
+            accuracy = output.metrics.get(accuracy_key)
+            if accuracy is not None and float(accuracy) < 1.0:
+                part = f"mystery-{component}:test_acc={accuracy}"
+                if gate_key in output.metrics:
+                    part += f",gates={output.metrics[gate_key]}"
+                failure_parts.append(part)
+        failure_summary = "; ".join(failure_parts) or output.failure_reason or ""
+        e._update_meta_scratchpad(  # noqa: SLF001
+            thought_text,
+            output.score,
+            failure_summary=failure_summary,
+        )
 
         # MCTS 回传
         e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
@@ -1281,9 +1296,9 @@ class FastLoopStep:
                   AND c.island_id = ?
                   AND c.generation >= ?
                 ORDER BY c.generation DESC, c.created_at DESC
-                LIMIT 5
+                LIMIT 20
                 """,
-                (e._experiment_id, island_id, max(0, generation - 2)),  # noqa: SLF001
+                (e._experiment_id, island_id, max(0, generation - 10)),  # noqa: SLF001
             )
             summaries = []
             for row in rows:
@@ -1322,7 +1337,7 @@ class FastLoopStep:
                     summaries.append(
                         f"[gen {row['generation']}; {outcome}] thought={thought}"
                     )
-            return summaries[:3]
+            return summaries[:8]
         except Exception:
             logger.debug("Failed to load sibling summaries", exc_info=True)
             return []

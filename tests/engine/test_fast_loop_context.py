@@ -2,6 +2,7 @@
 
 import pytest
 
+from omnievolve.engine.evolution_engine import EvolutionEngine
 from omnievolve.engine.fast_loop import FastLoopStep, _extract_domain_hint
 
 pytestmark = pytest.mark.unit
@@ -22,8 +23,11 @@ def test_extract_domain_hint_falls_back_for_invalid_code():
 
 def test_sibling_summary_includes_failure_metrics():
     class FakeDB:
+        params = None
+
         @staticmethod
         def fetchall(query, params):
+            FakeDB.params = params
             return [
                 {
                     "id": "bad-d",
@@ -48,3 +52,23 @@ def test_sibling_summary_includes_failure_metrics():
     assert "mystery-D_test_acc=0.0" in summaries[0]
     assert "mystery-D_gates=182" in summaries[0]
     assert "replace the squarer" in summaries[0]
+    assert FakeDB.params[-1] == 0
+
+
+def test_failed_direction_memory_keeps_structured_outcome_and_ten_entries():
+    class State:
+        _failed_directions = []
+        _meta_scratchpad = ""
+
+    state = State()
+    for index in range(12):
+        EvolutionEngine._update_meta_scratchpad(
+            state,
+            f"rewrite squarer attempt {index} with a long structural explanation",
+            0.006,
+            failure_summary=f"mystery-D:test_acc=0.0,gates={120 + index}",
+        )
+
+    assert len(state._failed_directions) == 10
+    assert "mystery-D:test_acc=0.0,gates=131" in state._meta_scratchpad
+    assert "attempted_direction=rewrite squarer attempt 11" in state._meta_scratchpad
