@@ -114,6 +114,17 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
             raise ValueError("OMNIEVOLVE_LLM_MAX_TOKENS must be positive")
         settings.models.max_tokens = max_tokens
 
+    empty_content_max_tokens = settings.models.empty_content_max_tokens
+    raw_empty_content_max_tokens = os.environ.get("OMNIEVOLVE_LLM_EMPTY_CONTENT_MAX_TOKENS")
+    if raw_empty_content_max_tokens:
+        try:
+            empty_content_max_tokens = int(raw_empty_content_max_tokens)
+        except ValueError as exc:
+            raise ValueError("OMNIEVOLVE_LLM_EMPTY_CONTENT_MAX_TOKENS must be an integer") from exc
+        if empty_content_max_tokens <= 0:
+            raise ValueError("OMNIEVOLVE_LLM_EMPTY_CONTENT_MAX_TOKENS must be positive")
+        settings.models.empty_content_max_tokens = empty_content_max_tokens
+
     request_timeout = settings.models.request_timeout
     raw_request_timeout = os.environ.get("OMNIEVOLVE_LLM_REQUEST_TIMEOUT")
     if raw_request_timeout:
@@ -140,6 +151,7 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
         "fallback_api_key": os.environ.get("OMNIEVOLVE_LLM_FALLBACK_API_KEY"),
         "fallback_api_base": os.environ.get("OMNIEVOLVE_LLM_FALLBACK_API_BASE"),
         "default_max_tokens": max_tokens,
+        "empty_content_max_tokens": empty_content_max_tokens,
         "request_timeout": request_timeout,
         "extra_body": extra_body or None,
     }

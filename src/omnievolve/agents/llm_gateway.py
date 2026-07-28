@@ -77,6 +77,7 @@ class LLMGateway:
         budget_guard: Any | None = None,
         request_timeout: float = 120.0,
         default_max_tokens: int = 16384,
+        empty_content_max_tokens: int = 131072,
         extra_body: dict[str, Any] | None = None,
     ) -> None:
         self._db = db
@@ -99,6 +100,10 @@ class LLMGateway:
         self._request_timeout = request_timeout
         # 默认最大输出 token 数（可被 chat() 调用方覆盖）
         self._default_max_tokens = default_max_tokens
+        # Reasoning providers may spend the entire output budget on hidden
+        # reasoning and return an empty final content field.  Grow the budget
+        # on that specific signal, up to the provider-supported ceiling.
+        self._empty_content_max_tokens = max(default_max_tokens, empty_content_max_tokens)
         # Provider-specific OpenAI-compatible parameters, e.g. Qwen thinking mode.
         self._extra_body = extra_body
 
@@ -148,6 +153,7 @@ class LLMGateway:
 
         # S5-10: retry/backoff/fallback
         last_error: Exception | None = None
+        last_empty_response: LLMResponse | None = None
         models_to_try = [model]
         if self._fallback_model and self._fallback_model != model:
             models_to_try.append(self._fallback_model)
@@ -171,7 +177,10 @@ class LLMGateway:
             # Provider-specific primary extras (for example Qwen thinking
             # controls) must not leak into an unrelated fallback provider.
             try_extra_body = None if is_fallback else self._extra_body
-            for attempt in range(self._max_retries):
+            transport_attempt = 0
+            try_max_tokens = max_tokens
+            empty_content_cap = max(max_tokens, self._empty_content_max_tokens)
+            while transport_attempt < self._max_retries:
                 try:
                     import litellm
 
@@ -179,7 +188,7 @@ class LLMGateway:
                         model=try_model,
                         messages=messages,
                         temperature=temperature,
-                        max_tokens=max_tokens,
+                        max_tokens=try_max_tokens,
                         api_key=try_api_key,
                         api_base=try_api_base,
                         timeout=self._request_timeout,
@@ -203,32 +212,41 @@ class LLMGateway:
                         else {},
                     )
 
-                    self._total_tokens += llm_response.total_tokens
-                    if llm_response.cost_usd:
-                        self._total_cost += llm_response.cost_usd
+                    self._account_response(
+                        llm_response,
+                        messages=messages,
+                        experiment_id=experiment_id,
+                        agent_role=agent_role,
+                        prompt_version_id=prompt_version_id,
+                    )
 
-                    # 1.1: 传播 LLM token 消耗到 BudgetGuard
-                    if self._budget_guard:
-                        self._budget_guard.consume(
-                            model=try_model,
-                            input_tokens=llm_response.input_tokens,
-                            output_tokens=llm_response.output_tokens,
-                            compute_sec=0.0,
+                    if not content.strip():
+                        last_empty_response = llm_response
+                        saturated = llm_response.output_tokens >= max(1, int(try_max_tokens * 0.9))
+                        if saturated and try_max_tokens < empty_content_cap:
+                            next_max_tokens = min(empty_content_cap, try_max_tokens * 2)
+                            logger.warning(
+                                "LLM returned empty content after using %d/%d output "
+                                "tokens (model=%s); retrying with max_tokens=%d",
+                                llm_response.output_tokens,
+                                try_max_tokens,
+                                try_model,
+                                next_max_tokens,
+                            )
+                            try_max_tokens = next_max_tokens
+                            continue
+                        logger.warning(
+                            "LLM returned empty content (model=%s, output_tokens=%d, "
+                            "max_tokens=%d); trying fallback or rejecting generation",
+                            try_model,
+                            llm_response.output_tokens,
+                            try_max_tokens,
                         )
+                        break
 
                     # P1: 熔断器 — 成功
                     if self._circuit_breaker:
                         self._circuit_breaker.on_success()
-
-                    if self._db:
-                        self._record_call(
-                            experiment_id=experiment_id,
-                            agent_role=agent_role,
-                            model=try_model,
-                            prompt_version_id=prompt_version_id,
-                            response=llm_response,
-                            messages=messages,
-                        )
 
                     return llm_response
 
@@ -239,9 +257,10 @@ class LLMGateway:
                     return self._mock_response(messages, try_model)
                 except Exception as e:
                     last_error = e
+                    transport_attempt += 1
                     logger.warning(
                         "LLM call attempt %d/%d failed (model=%s): %s",
-                        attempt + 1,
+                        transport_attempt,
                         self._max_retries,
                         try_model,
                         e,
@@ -249,13 +268,51 @@ class LLMGateway:
                     # P1: 熔断器 — 单次失败
                     if self._circuit_breaker:
                         self._circuit_breaker.on_failure(str(e))
-                    if attempt < self._max_retries - 1:
-                        backoff = self._retry_backoff_base * (2**attempt)
+                    if transport_attempt < self._max_retries:
+                        backoff = self._retry_backoff_base * (2 ** (transport_attempt - 1))
                         time.sleep(backoff)
 
         # All retries exhausted
+        if last_empty_response is not None:
+            logger.error(
+                "All models returned empty content; rejecting the generation "
+                "instead of fabricating an empty candidate"
+            )
+            return last_empty_response
         logger.error("All LLM retries exhausted: %s", last_error)
         return self._mock_response(messages, model)
+
+    def _account_response(
+        self,
+        response: LLMResponse,
+        *,
+        messages: list[dict[str, str]],
+        experiment_id: str | None,
+        agent_role: str,
+        prompt_version_id: str | None,
+    ) -> None:
+        """Account every provider response, including truncated empty ones."""
+        self._total_tokens += response.total_tokens
+        if response.cost_usd:
+            self._total_cost += response.cost_usd
+
+        if self._budget_guard:
+            self._budget_guard.consume(
+                model=response.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                compute_sec=0.0,
+            )
+
+        if self._db:
+            self._record_call(
+                experiment_id=experiment_id,
+                agent_role=agent_role,
+                model=response.model,
+                prompt_version_id=prompt_version_id,
+                response=response,
+                messages=messages,
+            )
 
     @staticmethod
     def _extract_cost(response: Any, model: str, usage: Any) -> float | None:

@@ -545,6 +545,13 @@ class FastLoopStep:
                     code = type(code)(
                         diff="", full_code=parent_codes[0], explanation="fallback to parent code"
                     )
+            if not code.full_code.strip():
+                logger.warning(
+                    "Rejected empty candidate at generation %d before critic",
+                    generation,
+                )
+                e._mcts.rollback_last_select()  # noqa: SLF001
+                return None
         audited_parent = base_code or (parent_codes[0] if parent_codes else "")
         protected_code = code.full_code
         if os.environ.get("OCCAM_PROTECT_MULTIPLIER", "").strip() == "1":
@@ -592,6 +599,13 @@ class FastLoopStep:
                 retries += 1
                 code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
                 passed, _ = e._critic.review(code, thought, last_eval_stderr=critic_stderr)  # noqa: SLF001
+        if not code.full_code.strip():
+            logger.warning(
+                "Rejected empty candidate at generation %d after critic retry",
+                generation,
+            )
+            e._mcts.rollback_last_select()  # noqa: SLF001
+            return None
 
         # 步骤 8: 存储代码 + 创建候选
         # CodeStore: 优先使用 store_snapshot（支持 Git ancestry）

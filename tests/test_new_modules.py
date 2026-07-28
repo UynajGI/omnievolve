@@ -502,6 +502,71 @@ class TestAgentRetryBackoff:
             else:
                 del sys.modules["litellm"]
 
+    def test_empty_saturated_response_retries_with_larger_budget(self):
+        """Reasoning-only truncation grows output budget until content appears."""
+        import sys
+        from types import ModuleType
+
+        from omnievolve.agents.llm_gateway import LLMGateway
+
+        budgets = []
+
+        class StubResponse:
+            class _Choice:
+                class _Message:
+                    def __init__(self, content):
+                        self.content = content
+
+                def __init__(self, content):
+                    self.message = self._Message(content)
+
+            def __init__(self, content, output_tokens):
+                self._content = content
+                self.usage = type(
+                    "Usage",
+                    (),
+                    {
+                        "prompt_tokens": 10,
+                        "completion_tokens": output_tokens,
+                        "total_tokens": output_tokens + 10,
+                    },
+                )()
+
+            @property
+            def choices(self):
+                return [self._Choice(self._content)]
+
+            def model_dump(self):
+                return {}
+
+        class ReasoningHeavyLiteLLM(ModuleType):
+            @staticmethod
+            def completion(**kwargs):
+                budget = kwargs["max_tokens"]
+                budgets.append(budget)
+                if budget < 16384:
+                    return StubResponse("", budget)
+                return StubResponse('{"full_code":"x = 1"}', 100)
+
+        fake_module = ReasoningHeavyLiteLLM("litellm")
+        original = sys.modules.get("litellm")
+        sys.modules["litellm"] = fake_module  # type: ignore[assignment]
+        try:
+            gateway = LLMGateway(
+                max_retries=1,
+                default_max_tokens=4096,
+                empty_content_max_tokens=131072,
+            )
+            response = gateway.chat([{"role": "user", "content": "write code"}])
+            assert response.content == '{"full_code":"x = 1"}'
+            assert budgets == [4096, 8192, 16384]
+            assert gateway.get_stats()["total_tokens"] == 4096 + 8192 + 100 + 30
+        finally:
+            if original:
+                sys.modules["litellm"] = original
+            else:
+                del sys.modules["litellm"]
+
 
 # --------------------------------------------------------------------------- #
 #  S5-09: Structured output repair

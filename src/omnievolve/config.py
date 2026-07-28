@@ -64,6 +64,7 @@ class ModelsSettings(BaseSettings):
     heavy: list[str] = Field(default_factory=lambda: ["reasoning-model-primary"])
     light: list[str] = Field(default_factory=lambda: ["fast-model-primary"])
     max_tokens: int = Field(default=16384, gt=0)
+    empty_content_max_tokens: int = Field(default=131072, gt=0)
     request_timeout: float = Field(default=120.0, gt=0)
     enable_thinking: bool | None = None
     reasoning_effort: str | None = None
@@ -283,6 +284,7 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
             heavy=data.get("models", {}).get("heavy", ["reasoning-model-primary"]),
             light=data.get("models", {}).get("light", ["fast-model-primary"]),
             max_tokens=data.get("models", {}).get("max_tokens", 16384),
+            empty_content_max_tokens=data.get("models", {}).get("empty_content_max_tokens", 131072),
             request_timeout=data.get("models", {}).get("request_timeout", 120.0),
             enable_thinking=data.get("models", {}).get("enable_thinking"),
             reasoning_effort=data.get("models", {}).get("reasoning_effort"),

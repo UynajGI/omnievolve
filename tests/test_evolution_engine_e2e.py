@@ -110,6 +110,29 @@ class NoOpFakeLLM(RoleAwareFakeLLM):
         return super().chat(messages, **kwargs)
 
 
+class EmptyCriticRetryFakeLLM(RoleAwareFakeLLM):
+    """First coder output fails syntax; its retry has no final content."""
+
+    def chat(self, messages, **kwargs):
+        if kwargs.get("agent_role") == "coder":
+            self.coder_calls += 1
+            self.calls.append({"agent_role": "coder", "model": kwargs.get("model")})
+            content = (
+                '{"full_code":"def broken(","diff":"","explanation":"bad"}'
+                if self.coder_calls == 1
+                else ""
+            )
+            return LLMResponse(
+                content=content,
+                model=kwargs.get("model") or "fake",
+                input_tokens=10,
+                output_tokens=4096 if not content else 20,
+                total_tokens=4106 if not content else 30,
+                latency_ms=1.0,
+            )
+        return super().chat(messages, **kwargs)
+
+
 class StubEvaluator:
     """不依赖候选代码内容的桩评估器：运行一条固定命令并按成功与否评分."""
 
@@ -288,6 +311,37 @@ class TestEvolutionEngineE2E:
         gs = GraphStore(db)
         graph = gs.load_subgraph(experiment)
         assert graph.number_of_nodes() >= 1
+
+    def test_empty_code_after_critic_retry_is_not_stored(
+        self, db, tmp_artifact_store, sandbox, experiment
+    ):
+        engine = EvolutionEngine(
+            db,
+            tmp_artifact_store,
+            StubEvaluator(),
+            sandbox,
+            EmptyCriticRetryFakeLLM(),
+            experiment_id=experiment,
+            evaluator_version_id=StubEvaluator.version_id,
+            environment_version_id=sandbox.environment_version_id,
+            config=EvolutionConfig(
+                max_generations=1,
+                population_size=1,
+                island_count=1,
+                novelty_retry_limit=1,
+                self_evolve_enabled=False,
+            ),
+        )
+
+        result = engine.run("x = 0\n", "e2e-task")
+
+        assert result.total_generations == 0
+        rows = db.fetchall(
+            "SELECT artifact_hash FROM candidate WHERE experiment_id=?",
+            (experiment,),
+        )
+        assert len(rows) == 1
+        assert tmp_artifact_store.load_text(rows[0]["artifact_hash"]) == "x = 0\n"
 
     def test_slow_loop_creates_challenger_policies(
         self, db, tmp_artifact_store, sandbox, experiment

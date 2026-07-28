@@ -24,6 +24,7 @@ def test_llm_env_overrides(monkeypatch):
         "OMNIEVOLVE_LLM_FALLBACK_API_BASE", "https://fallback.test/v1"
     )
     monkeypatch.setenv("OMNIEVOLVE_LLM_MAX_TOKENS", "2048")
+    monkeypatch.setenv("OMNIEVOLVE_LLM_EMPTY_CONTENT_MAX_TOKENS", "131072")
 
     kwargs = _apply_llm_env_overrides(settings)
 
@@ -35,6 +36,7 @@ def test_llm_env_overrides(monkeypatch):
     assert kwargs["fallback_api_key"] == "fallback-key"
     assert kwargs["fallback_api_base"] == "https://fallback.test/v1"
     assert kwargs["default_max_tokens"] == 2048
+    assert kwargs["empty_content_max_tokens"] == 131072
     assert kwargs["extra_body"] == {"reasoning_effort": "low"}
 
 
