@@ -104,6 +104,19 @@ class CodeStore(Protocol):
         ...
 
 
+def resolve_snapshot_refs(store: CodeStore, ref: str) -> tuple[str, str | None]:
+    """将后端快照 ref 拆为入口源码 ref 与可选 manifest ref.
+
+    Git 等单 ref 后端返回 ``(ref, None)``；CAS manifest 返回
+    ``(entrypoint_artifact_hash, manifest_hash)``。
+    """
+    is_manifest = getattr(store, "is_snapshot_manifest", None)
+    get_entrypoint = getattr(store, "get_snapshot_entrypoint_ref", None)
+    if callable(is_manifest) and callable(get_entrypoint) and is_manifest(ref):
+        return get_entrypoint(ref), ref
+    return ref, None
+
+
 def create_code_store(settings: StorageSettings, db: Database) -> CodeStore:
     """根据配置创建代码存储后端.
 

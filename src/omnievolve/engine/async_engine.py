@@ -60,7 +60,9 @@ class AsyncEvolutionEngine:
         self._shutdown_event = asyncio.Event()
         self._executor: ThreadPoolExecutor | None = None
 
-    async def run(self, initial_code: str, task_name: str) -> EvolutionResult:
+    async def run(
+        self, initial_code: str | dict[str, str], task_name: str
+    ) -> EvolutionResult:
         """异步进化主循环.
 
         .. deprecated:: 使用 AsyncPipelineEngine.run() 代替。
@@ -103,7 +105,9 @@ class AsyncEvolutionEngine:
         if hasattr(self._engine, "_shutdown_requested"):
             self._engine._shutdown_requested = True  # noqa: SLF001
 
-    async def _run_async_loop(self, initial_code: str, task_name: str) -> EvolutionResult:
+    async def _run_async_loop(
+        self, initial_code: str | dict[str, str], task_name: str
+    ) -> EvolutionResult:
         """异步进化循环 — 并行生成候选."""
         # 初始化阶段（同步，复用引擎的 setup）
         engine = self._engine
@@ -111,18 +115,35 @@ class AsyncEvolutionEngine:
         engine._ensure_champion_policy()  # noqa: SLF001
         engine._ensure_version_rows()  # noqa: SLF001
 
-        initial_hash = engine._artifact_store.store_text(initial_code, "source")  # noqa: SLF001
+        store = engine._artifact_store  # noqa: SLF001
+        initial_manifest_hash = None
+        if hasattr(store, "store_snapshot"):
+            from omnievolve.storage.code_store import resolve_snapshot_refs
+
+            initial_ref = store.store_snapshot(
+                initial_code,
+                message="initial candidate",
+                meta={"entrypoint": "main.py"} if isinstance(initial_code, dict) else None,
+            )
+            initial_hash, initial_manifest_hash = resolve_snapshot_refs(store, initial_ref)
+        else:
+            if not isinstance(initial_code, str):
+                raise TypeError("This storage backend does not support multi-file snapshots")
+            initial_hash = store.store_text(initial_code, "source")
         initial_candidate = engine._candidate_repo.create_candidate(  # noqa: SLF001
             experiment_id=engine._experiment_id,  # noqa: SLF001
             task_id=task_name,
             generation=0,
             artifact_hash=initial_hash,
+            manifest_hash=initial_manifest_hash,
             search_policy_id=engine._champion_policy_id,  # noqa: SLF001
         )
         initial_id = initial_candidate.id
 
         engine._mcts.add_node(initial_id, parent=None, prior=1.0)  # noqa: SLF001
-        engine._evaluate_candidate(initial_id, initial_hash)  # noqa: SLF001
+        engine._evaluate_candidate(  # noqa: SLF001
+            initial_id, initial_hash, initial_manifest_hash
+        )
         engine._island_manager.assign_candidate(initial_id, "island_0")  # noqa: SLF001
         engine._experiment_repo.set_baseline(engine._experiment_id, initial_id)  # noqa: SLF001
 
@@ -257,7 +278,9 @@ class AsyncPipelineEngine:
 
         self._fast_loop = FastLoopStep(engine)
 
-    async def run(self, initial_code: str, task_name: str) -> EvolutionResult:
+    async def run(
+        self, initial_code: str | dict[str, str], task_name: str
+    ) -> EvolutionResult:
         """异步流水线主循环."""
         from omnievolve.utils.seed import set_global_seed
 
@@ -306,22 +329,39 @@ class AsyncPipelineEngine:
         if hasattr(self._engine, "_shutdown_requested"):
             self._engine._shutdown_requested = True  # noqa: SLF001
 
-    def _sync_init(self, initial_code: str, task_name: str) -> None:
+    def _sync_init(self, initial_code: str | dict[str, str], task_name: str) -> None:
         """同步初始化 — 复用引擎的 setup 流程."""
         engine = self._engine
         engine._ensure_champion_policy()  # noqa: SLF001
         engine._ensure_version_rows()  # noqa: SLF001
 
-        initial_hash = engine._artifact_store.store_text(initial_code, "source")  # noqa: SLF001
+        store = engine._artifact_store  # noqa: SLF001
+        initial_manifest_hash = None
+        if hasattr(store, "store_snapshot"):
+            from omnievolve.storage.code_store import resolve_snapshot_refs
+
+            initial_ref = store.store_snapshot(
+                initial_code,
+                message="initial candidate",
+                meta={"entrypoint": "main.py"} if isinstance(initial_code, dict) else None,
+            )
+            initial_hash, initial_manifest_hash = resolve_snapshot_refs(store, initial_ref)
+        else:
+            if not isinstance(initial_code, str):
+                raise TypeError("This storage backend does not support multi-file snapshots")
+            initial_hash = store.store_text(initial_code, "source")
         initial_candidate = engine._candidate_repo.create_candidate(  # noqa: SLF001
             experiment_id=engine._experiment_id,  # noqa: SLF001
             task_id=task_name,
             generation=0,
             artifact_hash=initial_hash,
+            manifest_hash=initial_manifest_hash,
             search_policy_id=engine._champion_policy_id,  # noqa: SLF001
         )
         engine._mcts.add_node(initial_candidate.id, parent=None, prior=1.0)  # noqa: SLF001
-        engine._evaluate_candidate(initial_candidate.id, initial_hash)  # noqa: SLF001
+        engine._evaluate_candidate(  # noqa: SLF001
+            initial_candidate.id, initial_hash, initial_manifest_hash
+        )
         engine._island_manager.assign_candidate(initial_candidate.id, "island_0")  # noqa: SLF001
         engine._experiment_repo.set_baseline(engine._experiment_id, initial_candidate.id)  # noqa: SLF001
 

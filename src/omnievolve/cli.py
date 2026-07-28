@@ -46,10 +46,95 @@ console = Console()
 # --------------------------------------------------------------------------- #
 
 
+def _load_project_snapshot(root: Path) -> dict[str, str]:
+    """读取一个有界、纯文本的多文件项目快照."""
+    ignored_dirs = {
+        ".git",
+        ".omnievolve",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+    }
+    allowed_suffixes = {
+        ".cfg",
+        ".ini",
+        ".js",
+        ".json",
+        ".md",
+        ".py",
+        ".pyi",
+        ".pyx",
+        ".toml",
+        ".ts",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
+    max_files = 256
+    max_file_bytes = 1024 * 1024
+    max_total_bytes = 4 * 1024 * 1024
+    files: dict[str, str] = {}
+    total_bytes = 0
+
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if any(part in ignored_dirs or part.startswith(".") for part in relative.parts):
+            continue
+        if not path.is_file() or path.is_symlink() or path.suffix.lower() not in allowed_suffixes:
+            continue
+        if len(files) >= max_files:
+            raise ValueError(f"Project snapshot exceeds {max_files} text files")
+        data = path.read_bytes()
+        if len(data) > max_file_bytes:
+            raise ValueError(f"Project file exceeds 1 MiB: {relative.as_posix()}")
+        total_bytes += len(data)
+        if total_bytes > max_total_bytes:
+            raise ValueError("Project snapshot exceeds 4 MiB")
+        try:
+            files[relative.as_posix()] = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"Project file is not UTF-8 text: {relative.as_posix()}"
+            ) from exc
+
+    if "main.py" not in files:
+        raise ValueError("A project task must contain a UTF-8 main.py entrypoint")
+    return files
+
+
+def _apply_setting_overrides(
+    settings: OmniEvolveSettings, overrides: list[str] | None
+) -> None:
+    """Apply validated ``section.field=JSON`` overrides to loaded settings."""
+    for raw in overrides or []:
+        if "=" not in raw:
+            raise ValueError(f"Setting override must use key=value: {raw!r}")
+        dotted_key, raw_value = raw.split("=", 1)
+        parts = [part.strip() for part in dotted_key.split(".") if part.strip()]
+        if len(parts) < 2:
+            raise ValueError(f"Setting override must include a section: {raw!r}")
+        target: Any = settings
+        for part in parts[:-1]:
+            if not hasattr(target, part):
+                raise ValueError(f"Unknown setting path: {dotted_key}")
+            target = getattr(target, part)
+        field_name = parts[-1]
+        if not hasattr(target, field_name):
+            raise ValueError(f"Unknown setting path: {dotted_key}")
+        try:
+            value = json.loads(raw_value)
+        except json.JSONDecodeError:
+            value = raw_value
+        setattr(target, field_name, value)
+
+
 def _bootstrap(
     config_path: str | None,
     *,
     trusted: bool = False,
+    settings_overrides: list[str] | None = None,
 ) -> tuple:
     """加载配置、初始化 DB/migrations、artifact_store、sandbox.
 
@@ -57,6 +142,7 @@ def _bootstrap(
         (settings, db, artifact_store, sandbox)
     """
     settings = load_settings(config_path)
+    _apply_setting_overrides(settings, settings_overrides)
 
     from omnievolve.storage.db import Database
     from omnievolve.storage.migrations import initialize_database
@@ -115,7 +201,10 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
         settings.models.max_tokens = max_tokens
 
     return {
-        "api_key": os.environ.get("OMNIEVOLVE_LLM_API_KEY"),
+        "api_key": (
+            os.environ.get("OMNIEVOLVE_LLM_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        ),
         "api_base": (
             os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
         ),
@@ -248,6 +337,11 @@ def run(
         False, "--no-self-evolve", help="关闭 Slow Loop 受控策略进化，仅运行 Fast Loop"
     ),
     seed: int | None = typer.Option(None, "--seed", help="确定性实验随机种子"),
+    setting: list[str] | None = typer.Option(
+        None,
+        "--set",
+        help="覆盖配置项，格式 section.field=JSON；可重复使用",
+    ),
 ) -> None:
     """启动候选进化；按健康窗口自动运行受控策略进化."""
     from omnievolve.utils.logging import setup_logging
@@ -261,7 +355,12 @@ def run(
     if trusted:
         console.print("[yellow]WARNING: trusted subprocess 模式（非隔离）[/yellow]")
 
-    settings, db, artifact_store, sandbox = _bootstrap(config, trusted=trusted)
+    try:
+        settings, db, artifact_store, sandbox = _bootstrap(
+            config, trusted=trusted, settings_overrides=setting
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--set") from exc
     llm_kwargs = _apply_llm_env_overrides(settings)
     eval_config = build_evolution_config(settings)
     if generations is not None:
@@ -300,6 +399,7 @@ def run(
     from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
 
     exp_repo = ExperimentRepository(db)
+    initial_code: str | dict[str, str]
     if resume:
         exp = exp_repo.get(resume)
         if exp is None:
@@ -313,7 +413,14 @@ def run(
             console.print("[red]TASK is required unless --resume is used[/red]")
             raise typer.Exit(2)
         task_path = Path(task)
-        if task_path.exists():
+        if task_path.is_dir():
+            try:
+                initial_code = _load_project_snapshot(task_path)
+            except ValueError as exc:
+                typer.echo(f"Error: 无法读取项目快照: {exc}", err=True)
+                raise typer.Exit(code=1) from exc
+            task_name = task_path.name
+        elif task_path.exists():
             initial_code = task_path.read_text(encoding="utf-8")
             task_name = task_path.stem
         elif task_path.suffix in (".py", ".toml", ".txt"):
@@ -688,7 +795,9 @@ def migrate(
 
 @app.command("research")
 def research_benchmark(
-    action: str = typer.Argument("plan", help="plan 或 analyze"),
+    action: str = typer.Argument(
+        "plan", help="plan、plan-reference、execute 或 analyze"
+    ),
     output: str = typer.Option(
         ".omnievolve/research/matrix.json", "--output", "-o", help="输出 JSON 路径"
     ),
@@ -696,24 +805,92 @@ def research_benchmark(
     results: str = typer.Option(
         ".omnievolve/research/results.jsonl", "--results", help="analyze 输入 JSONL"
     ),
+    queue_db: str = typer.Option(
+        ".omnievolve/research/queue.db", "--queue-db", help="可恢复任务队列数据库"
+    ),
+    runs_dir: str = typer.Option(
+        ".omnievolve/research/runs", "--runs-dir", help="各 run 的隔离产物目录"
+    ),
+    workers: int = typer.Option(2, "--workers", min=1, help="并发 run 上限"),
+    max_attempts: int = typer.Option(3, "--max-attempts", min=1, help="失败重试上限"),
+    generations: int = typer.Option(5, "--gens", min=1, help="每个 run 的进化代数"),
+    population: int = typer.Option(4, "--population", min=1, help="每代候选数量"),
+    timeout_sec: float = typer.Option(3600.0, "--timeout", min=1.0, help="单 run 超时秒数"),
+    task_filter: str | None = typer.Option(None, "--task", help="execute 时仅运行指定任务"),
+    variant_filter: str | None = typer.Option(
+        None, "--variant", help="execute 时仅运行指定变体"
+    ),
+    seed_limit: int | None = typer.Option(
+        None, "--seed-limit", min=1, help="execute 时每个 cell 仅取前 N 个种子"
+    ),
 ) -> None:
     """建立研究矩阵，或聚合已完成运行并计算置信区间."""
     from omnievolve.research.matrix import (
         build_default_matrix,
+        build_reference_credit_matrix,
         summarize_results,
         write_manifest,
     )
 
-    if action == "plan":
+    if action in {"plan", "plan-reference"}:
         try:
             seed_values = tuple(int(value.strip()) for value in seeds.split(",") if value.strip())
-            jobs = build_default_matrix(seeds=seed_values)
+            jobs = (
+                build_default_matrix(seeds=seed_values)
+                if action == "plan"
+                else build_reference_credit_matrix(seeds=seed_values)
+            )
         except ValueError as exc:
             raise typer.BadParameter(str(exc), param_hint="--seeds") from exc
         path = write_manifest(jobs, output)
+        variant_count = len({job.variant.name for job in jobs})
         console.print(
-            f"[green]Research matrix: 9 tasks × 5 variants × "
+            f"[green]Research matrix: 9 tasks × {variant_count} variants × "
             f"{len(seed_values)} seeds = {len(jobs)} runs → {path}[/green]"
+        )
+        return
+
+    if action == "execute":
+        from omnievolve.research.runner import (
+            ResearchBenchmarkRunner,
+            ResearchRunSettings,
+            load_manifest_jobs,
+        )
+
+        matrix_path = Path(output)
+        if not matrix_path.exists():
+            raise typer.BadParameter(
+                f"matrix file not found: {output}", param_hint="--output"
+            )
+        jobs = load_manifest_jobs(matrix_path)
+        if task_filter:
+            jobs = [job for job in jobs if job.task.name == task_filter]
+        if variant_filter:
+            jobs = [job for job in jobs if job.variant.name == variant_filter]
+        if seed_limit is not None:
+            allowed = sorted({job.seed for job in jobs})[:seed_limit]
+            jobs = [job for job in jobs if job.seed in allowed]
+        if not jobs:
+            raise typer.BadParameter("no jobs match the execute filters")
+        runner = ResearchBenchmarkRunner(
+            ResearchRunSettings(
+                repo_root=Path.cwd(),
+                results_path=Path(results),
+                runs_dir=Path(runs_dir),
+                generations=generations,
+                population_size=population,
+                timeout_sec=timeout_sec,
+                trusted=True,
+            ),
+            max_concurrency=workers,
+            max_attempts=max_attempts,
+        )
+        report = runner.run(jobs, queue_db)
+        console.print(
+            "[green]"
+            f"Research queue idle: completed={report.completed}, "
+            f"failed={report.failed}, retried={report.retried} → {results}"
+            "[/green]"
         )
         return
 
@@ -726,14 +903,20 @@ def research_benchmark(
             for line in result_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        report = summarize_results(records)
+        analysis_report = summarize_results(records)
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        output_path.write_text(
+            json.dumps(analysis_report, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
         console.print(f"[green]Aggregated {len(records)} records → {output_path}[/green]")
         return
 
-    raise typer.BadParameter("action must be 'plan' or 'analyze'", param_hint="ACTION")
+    raise typer.BadParameter(
+        "action must be plan, plan-reference, execute, or analyze",
+        param_hint="ACTION",
+    )
 
 
 @app.command()

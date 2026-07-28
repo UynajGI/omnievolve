@@ -86,7 +86,7 @@ class CrossoverOperator:
     def combine(
         self,
         parent_codes: list[str],
-        strategy: str = "segment",
+        strategy: str = "semantic",
         *,
         code_store: Any = None,
         parent_refs: list[str] | None = None,
@@ -95,7 +95,7 @@ class CrossoverOperator:
 
         Args:
             parent_codes: 父代代码列表
-            strategy: 融合策略 (segment/function_level/feature_merge)
+            strategy: 融合策略 (semantic/segment/function_level/feature_merge)
             code_store: CodeStore 实例（Git 后端优先尝试 merge）
             parent_refs: 父代 ref 列表（用于 Git merge）
 
@@ -116,13 +116,76 @@ class CrossoverOperator:
                         "Git merge load failed, falling back to text crossover", exc_info=True
                     )
 
-        # Fallback: 文本/AST 策略
+        # Fallback: AST 语义策略优先，文本段交叉仅作显式兼容选项。
+        if strategy == "semantic":
+            return self._semantic_crossover(parent_codes)
         if strategy == "segment":
             return self._segment_crossover(parent_codes)
         elif strategy == "function_level":
             return self._function_level_crossover(parent_codes)
         else:
             return self._feature_merge(parent_codes)
+
+    def _semantic_crossover(self, codes: list[str]) -> str:
+        """按顶层符号身份融合父代，同时保留主父代的模块结构.
+
+        同名函数/类从不同父代选择一个完整 AST 节点；其他父代新增的
+        顶层符号追加到模块末尾。任一父代不可解析时退回 feature merge，
+        不再随机拼接可能破坏语法的行段。
+        """
+        import ast
+
+        parsed: list[tuple[str, ast.Module]] = []
+        try:
+            parsed = [(code, ast.parse(code)) for code in codes]
+        except SyntaxError:
+            return self._feature_merge(codes)
+
+        symbol_types = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        variants: dict[tuple[type[ast.AST], str], list[str]] = {}
+        symbol_order: list[tuple[type[ast.AST], str]] = []
+        for code, tree in parsed:
+            for node in tree.body:
+                if not isinstance(node, symbol_types):
+                    continue
+                key = (type(node), node.name)
+                segment = ast.get_source_segment(code, node)
+                if not segment:
+                    continue
+                if key not in variants:
+                    variants[key] = []
+                    symbol_order.append(key)
+                if segment not in variants[key]:
+                    variants[key].append(segment)
+
+        base_code, base_tree = parsed[0]
+        lines = base_code.splitlines(keepends=True)
+        replacements: list[tuple[int, int, str]] = []
+        base_keys: set[tuple[type[ast.AST], str]] = set()
+        for node in base_tree.body:
+            if not isinstance(node, symbol_types):
+                continue
+            key = (type(node), node.name)
+            base_keys.add(key)
+            choices = variants.get(key)
+            if choices:
+                replacement = random.choice(choices)
+                if node.end_lineno is not None:
+                    replacements.append((node.lineno - 1, node.end_lineno, replacement))
+
+        for start, end, replacement in sorted(replacements, reverse=True):
+            suffix = "\n" if end <= len(lines) and lines[end - 1].endswith("\n") else ""
+            lines[start:end] = [replacement.rstrip("\n") + suffix]
+
+        result = "".join(lines).rstrip()
+        novel = [
+            random.choice(variants[key])
+            for key in symbol_order
+            if key not in base_keys and variants.get(key)
+        ]
+        if novel:
+            result += "\n\n" + "\n\n".join(segment.rstrip() for segment in novel)
+        return result + ("\n" if base_code.endswith("\n") else "")
 
     def _segment_crossover(self, codes: list[str]) -> str:
         """段交叉 - 按行段交叉."""

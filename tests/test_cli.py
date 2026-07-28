@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from omnievolve.cli import _apply_llm_env_overrides, app
+from omnievolve.cli import (
+    _apply_llm_env_overrides,
+    _apply_setting_overrides,
+    _load_project_snapshot,
+    app,
+)
 from omnievolve.config import OmniEvolveSettings
 
 pytestmark = pytest.mark.unit
@@ -28,12 +33,67 @@ def test_llm_env_overrides(monkeypatch):
     assert kwargs["default_max_tokens"] == 2048
 
 
+def test_llm_env_overrides_falls_back_to_openai_key(monkeypatch):
+    monkeypatch.delenv("OMNIEVOLVE_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "provider-key")
+
+    kwargs = _apply_llm_env_overrides(OmniEvolveSettings())
+
+    assert kwargs["api_key"] == "provider-key"
+
+
 def test_invalid_llm_max_tokens(monkeypatch):
     settings = OmniEvolveSettings()
     monkeypatch.setenv("OMNIEVOLVE_LLM_MAX_TOKENS", "many")
 
     with pytest.raises(ValueError, match="must be an integer"):
         _apply_llm_env_overrides(settings)
+
+
+def test_load_project_snapshot_preserves_text_tree(tmp_path):
+    (tmp_path / "main.py").write_bytes(b"from pkg import answer\n")
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_bytes(b"answer = 42\n")
+    ignored = tmp_path / "__pycache__"
+    ignored.mkdir()
+    (ignored / "main.py").write_text("bad = True\n", encoding="utf-8")
+
+    snapshot = _load_project_snapshot(tmp_path)
+
+    assert snapshot == {
+        "main.py": "from pkg import answer\n",
+        "pkg/__init__.py": "answer = 42\n",
+    }
+
+
+def test_load_project_snapshot_requires_main(tmp_path):
+    (tmp_path / "solver.py").write_text("pass\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="main.py"):
+        _load_project_snapshot(tmp_path)
+
+
+def test_apply_setting_overrides_supports_typed_nested_values():
+    settings = OmniEvolveSettings()
+
+    _apply_setting_overrides(
+        settings,
+        [
+            "evolution.seed=7",
+            "evolution.self_evolve_enabled=false",
+            "selection.parent_selector=random",
+        ],
+    )
+
+    assert settings.evolution.seed == 7
+    assert settings.evolution.self_evolve_enabled is False
+    assert settings.selection.parent_selector == "random"
+
+
+def test_apply_setting_overrides_rejects_unknown_path():
+    with pytest.raises(ValueError, match="Unknown setting path"):
+        _apply_setting_overrides(OmniEvolveSettings(), ["evolution.unknown=1"])
 
 
 # --------------------------------------------------------------------------- #

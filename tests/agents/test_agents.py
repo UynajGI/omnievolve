@@ -1,5 +1,7 @@
 """Sprint 5 测试: Agents + LLM Gateway."""
 
+from dataclasses import replace
+
 import pytest
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
@@ -103,6 +105,54 @@ class TestCoder:
         code = coder.generate_code(agent_context, thought)
 
         assert "def hello" in code.full_code
+
+    def test_diff_uses_indentation_aware_application(self, agent_context):
+        """SEARCH 块可忽略统一的外层缩进差异."""
+        parent_code = "def solve():\n    value = 1\n    return value"
+        agent_context = replace(
+            agent_context,
+            inspiration_programs=[{"is_parent": True, "code": parent_code}],
+        )
+        response = (
+            "<<<<<<< SEARCH\n"
+            "value = 1\n"
+            "return value\n"
+            "=======\n"
+            "value = 2\n"
+            "return value\n"
+            ">>>>>>> REPLACE"
+        )
+        coder = Coder(FakeLLM(responses=[response]))
+
+        code = coder.generate_code(
+            agent_context,
+            ThoughtOutput(thought="increase value", rationale="test enhanced diff"),
+        )
+
+        assert "    value = 2" in code.full_code
+        assert "    return value" in code.full_code
+
+    def test_partial_diff_application_is_rejected(self, agent_context):
+        """多块 diff 必须全部应用，避免持久化半修改候选."""
+        agent_context = replace(
+            agent_context,
+            inspiration_programs=[
+                {"is_parent": True, "code": "value = 1\nprint(value)"},
+            ],
+        )
+        response = (
+            "<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE\n"
+            "<<<<<<< SEARCH\nmissing = True\n=======\nmissing = False\n>>>>>>> REPLACE"
+        )
+        coder = Coder(FakeLLM(responses=[response]))
+
+        code = coder.generate_code(
+            agent_context,
+            ThoughtOutput(thought="change both", rationale="atomic edit"),
+        )
+
+        assert code.full_code == ""
+        assert "atomically" in code.explanation
 
 
 class TestCritic:

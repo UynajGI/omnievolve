@@ -184,25 +184,34 @@ class Coder:
 
     def _parse_response(self, content: str, ctx: AgentContext) -> CodeOutput:
         """解析 LLM 响应 — 优先 SEARCH/REPLACE diff，回退 JSON/全量."""
-        from omnievolve.engine.diff import apply_diffs, parse_diffs
+        from omnievolve.engine.diff import apply_diffs_with_retry, parse_diffs
 
         # 尝试 1: SEARCH/REPLACE diff
         diffs = parse_diffs(content)
         if diffs:
             parent_code = self._get_parent_code(ctx)
             if parent_code:
-                result = apply_diffs(parent_code, diffs)
-                if result:
+                result, applied, error = apply_diffs_with_retry(parent_code, diffs)
+                if result is not None and applied == len(diffs):
                     return CodeOutput(
                         diff=content[:500],
                         full_code=result,
-                        explanation=f"Applied {len(diffs)} SEARCH/REPLACE block(s)",
+                        explanation=f"Applied {applied} SEARCH/REPLACE block(s)",
                         touched_files=[],
+                    )
+                if error:
+                    logger.debug(
+                        "Rejected non-atomic SEARCH/REPLACE response (%d/%d applied): %s",
+                        applied,
+                        len(diffs),
+                        error,
                     )
             return CodeOutput(
                 diff=content[:500],
                 full_code="",
-                explanation=f"Parsed {len(diffs)} diff block(s) but could not apply",
+                explanation=(
+                    f"Parsed {len(diffs)} diff block(s) but could not apply all blocks atomically"
+                ),
             )
 
         # 尝试 2: JSON 格式（回退）

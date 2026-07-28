@@ -12,7 +12,7 @@ import json
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from omnievolve.eval.benchmark_stats import detect_regression, summarize_samples
 
@@ -144,6 +144,19 @@ DEFAULT_VARIANTS = (
     ),
 )
 
+REFERENCE_CREDIT_VARIANTS = (
+    AblationVariant(
+        "reference_credit_on",
+        "Full system with graph reference-edge credit enabled.",
+        {"evolution.reference_credit_enabled": True},
+    ),
+    AblationVariant(
+        "reference_credit_off",
+        "Paired ablation with graph reference-edge credit disabled.",
+        {"evolution.reference_credit_enabled": False},
+    ),
+)
+
 
 def _run_id(task: str, variant: str, seed: int) -> str:
     raw = f"v1:{task}:{variant}:{seed}".encode()
@@ -174,6 +187,33 @@ def build_default_matrix(
         )
         for task in DEFAULT_TASKS
         for variant in DEFAULT_VARIANTS
+        for seed in seed_values
+    ]
+
+
+def build_reference_credit_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+) -> list[BenchmarkJob]:
+    """Build the separate paired reference-edge-credit ablation matrix."""
+    seed_values = tuple(seeds)
+    if not seed_values or len(set(seed_values)) != len(seed_values):
+        raise ValueError("seeds must be a non-empty unique sequence")
+    if any(seed < 0 for seed in seed_values):
+        raise ValueError("seeds must be non-negative")
+    if repetitions < 1:
+        raise ValueError("repetitions must be positive")
+    return [
+        BenchmarkJob(
+            run_id=_run_id(task.name, variant.name, seed),
+            task=task,
+            variant=variant,
+            seed=seed,
+            repetitions=repetitions,
+        )
+        for task in DEFAULT_TASKS
+        for variant in REFERENCE_CREDIT_VARIANTS
         for seed in seed_values
     ]
 
@@ -264,4 +304,62 @@ def summarize_results(records: list[dict[str, Any]]) -> dict[str, Any]:
                         **comparison.to_dict(),
                     }
                 )
-    return {"schema_version": 1, "cells": cells, "comparisons": comparisons}
+    return {
+        "schema_version": 1,
+        "cells": cells,
+        "comparisons": comparisons,
+        "slow_loop_decision": _assess_slow_loop(records),
+    }
+
+
+def _assess_slow_loop(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Make a confidence-aware keep/simplify decision from paired runs."""
+    completed: dict[tuple[str, str, int], float] = {}
+    for record in records:
+        if record.get("status") != "completed" or record.get("score") is None:
+            continue
+        completed[
+            (str(record["task"]), str(record["variant"]), int(record.get("seed", -1)))
+        ] = float(record["score"])
+
+    differences = []
+    pair_ids = []
+    task_seeds = sorted(
+        (task, seed)
+        for task, variant, seed in completed
+        if variant == "full"
+    )
+    for task, seed in task_seeds:
+        full = completed.get((task, "full", seed))
+        no_slow = completed.get((task, "no_slow_loop", seed))
+        if full is None or no_slow is None:
+            continue
+        differences.append(full - no_slow)
+        pair_ids.append(f"{task}:{seed}")
+
+    if len(differences) < 2:
+        return {
+            "decision": "insufficient_data",
+            "paired_runs": len(differences),
+            "reason": "At least two paired full/no_slow_loop runs are required.",
+        }
+
+    stats = summarize_samples(differences, seed=0).to_dict()
+    lower = cast(float, stats["ci_low"])
+    upper = cast(float, stats["ci_high"])
+    if lower > 0:
+        decision = "keep"
+        reason = "Slow Loop has a positive paired effect with a CI entirely above zero."
+    elif upper < 0:
+        decision = "simplify"
+        reason = "No-slow-loop is better with a CI entirely below zero."
+    else:
+        decision = "inconclusive"
+        reason = "The paired effect CI crosses zero; keep the feature flag and gather more data."
+    return {
+        "decision": decision,
+        "paired_runs": len(differences),
+        "paired_ids": pair_ids,
+        "effect_full_minus_no_slow_loop": stats,
+        "reason": reason,
+    }

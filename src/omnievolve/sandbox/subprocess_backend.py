@@ -110,7 +110,9 @@ class TrustedSubprocessBackend:
         code_store = self._artifact_store
         ws_handle = None
         if hasattr(code_store, "materialize"):
-            ws_handle = code_store.materialize(candidate.source_hash)
+            ws_handle = code_store.materialize(
+                candidate.manifest_hash or candidate.source_hash
+            )
             exec_dir = ws_handle.path
         else:
             exec_dir = self._work_dir / f"exec_{uuid.uuid4().hex[:8]}"

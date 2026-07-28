@@ -24,9 +24,10 @@ def test_protocol_and_roundtrip(cas_store: CASCodeStore):
     assert cas_store.backend_name == "cas"
 
     code = "def sort(values):\n    return sorted(values)\n"
-    ref = cas_store.store_snapshot(code, parents=["ignored"], message="ignored")
+    ref = cas_store.store_snapshot(code, message="initial")
 
     assert cas_store.exists(ref)
+    assert cas_store.is_snapshot_manifest(ref)
     assert cas_store.load_snapshot(ref) == code
     assert cas_store.load(ref) == code.encode()
     assert cas_store.get_parents(ref) == []
@@ -42,6 +43,39 @@ def test_materialize_and_release(cas_store: CASCodeStore):
     cas_store.release(handle)
     assert not handle.path.exists()
     cas_store.release(handle)
+
+
+def test_multifile_snapshot_roundtrip_and_parent_overlay(cas_store: CASCodeStore):
+    parent = cas_store.store_snapshot(
+        {
+            "main.py": "from helpers import value\nprint(value())\n",
+            "helpers.py": "def value():\n    return 1\n",
+            "pkg/__init__.py": "",
+        },
+        meta={"entrypoint": "main.py"},
+    )
+    child = cas_store.store_snapshot(
+        "from helpers import value\nprint(value() + 1)\n",
+        parents=[parent],
+        message="change entrypoint only",
+    )
+
+    assert cas_store.get_parents(child) == [parent]
+    assert cas_store.load_snapshot(child).endswith("print(value() + 1)\n")
+    assert cas_store.load_snapshot_files(child)["helpers.py"].endswith("return 1\n")
+
+    handle = cas_store.materialize(child)
+    try:
+        assert (handle.path / "helpers.py").is_file()
+        assert (handle.path / "pkg" / "__init__.py").is_file()
+    finally:
+        cas_store.release(handle)
+
+
+@pytest.mark.parametrize("path", ["../escape.py", "/absolute.py", "pkg\\module.py", "a//b.py"])
+def test_multifile_snapshot_rejects_unsafe_paths(cas_store: CASCodeStore, path: str):
+    with pytest.raises(ValueError):
+        cas_store.store_snapshot({path: "pass\n"})
 
 
 def test_diff_and_degraded_operations(cas_store: CASCodeStore):

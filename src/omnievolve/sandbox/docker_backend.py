@@ -21,7 +21,7 @@ import tarfile
 import tempfile
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from omnievolve.sandbox.base import (
@@ -255,15 +255,33 @@ class DockerBackend:
             return
 
         try:
-            # 从 ArtifactStore 加载源代码
-            source_code = self._artifact_store.load(candidate.source_hash)
+            files: dict[str, bytes]
+            if candidate.manifest_hash and hasattr(
+                self._artifact_store, "load_snapshot_files"
+            ):
+                files = {
+                    path: content.encode("utf-8")
+                    for path, content in self._artifact_store.load_snapshot_files(
+                        candidate.manifest_hash
+                    ).items()
+                }
+            else:
+                files = {"main.py": self._artifact_store.load(candidate.source_hash)}
 
             # 创建 tar 归档
             tar_stream = io.BytesIO()
             with tarfile.open(fileobj=tar_stream, mode="w") as tar:
-                info = tarfile.TarInfo(name="main.py")
-                info.size = len(source_code)
-                tar.addfile(info, io.BytesIO(source_code))
+                for path, content in sorted(files.items()):
+                    pure = PurePosixPath(path)
+                    if (
+                        pure.is_absolute()
+                        or ".." in pure.parts
+                        or pure.as_posix() != path
+                    ):
+                        raise ValueError(f"Unsafe snapshot path: {path!r}")
+                    info = tarfile.TarInfo(name=path)
+                    info.size = len(content)
+                    tar.addfile(info, io.BytesIO(content))
 
             tar_stream.seek(0)
 

@@ -72,7 +72,7 @@ class MCTSNode:
             return 0.0
         return self.value_sum / self.visit_count
 
-    def update_beta(self, reward: float) -> None:
+    def update_beta(self, reward: float, weight: float = 1.0) -> None:
         """Beta 分布更新.
 
         对于连续 reward ∈ [0, 1]：
@@ -85,8 +85,9 @@ class MCTSNode:
         对于 reward 超出 [0,1] 的情况，先 clamp。
         """
         r = max(0.0, min(1.0, reward))
-        self.alpha += r
-        self.beta += 1.0 - r
+        w = max(0.0, weight)
+        self.alpha += w * r
+        self.beta += w * (1.0 - r)
 
     def ucb1(self, exploration: float = 1.414, total_visits: int = 1) -> float:
         """UCB1 值（使用 Beta 后验均值）."""
@@ -332,6 +333,31 @@ class ProgressiveMCGS:
             node.virtual_loss = max(0, node.virtual_loss - self._virtual_loss)
 
             current = node.parent
+
+    def credit_references(
+        self,
+        reference_ids: list[str],
+        value: float,
+        *,
+        weight: float = 0.25,
+        exclude_ids: set[str] | None = None,
+    ) -> list[str]:
+        """给非树 reference edge 的源节点分配折扣信用.
+
+        Reference credit 只更新 Beta 后验，不增加真实访问次数，也不沿
+        reference 节点的祖先继续传播，从而避免 DAG 多路径重复计权。
+        """
+        excluded = exclude_ids or set()
+        credited: list[str] = []
+        for reference_id in dict.fromkeys(reference_ids):
+            if reference_id in excluded:
+                continue
+            node = self._nodes.get(reference_id)
+            if node is None:
+                continue
+            node.update_beta(value, weight=weight)
+            credited.append(reference_id)
+        return credited
 
     def get_best_child(self, node_id: str) -> str | None:
         """获取最优子节点（按访问次数）."""

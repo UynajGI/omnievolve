@@ -110,6 +110,8 @@ class EvolutionConfig:
     seed: int = 42
     novelty_enabled: bool = True
     single_agent_mode: bool = False
+    reference_credit_enabled: bool = True
+    reference_credit_weight: float = 0.25
 
 
 @dataclass
@@ -352,7 +354,9 @@ class EvolutionEngine:
     def champion_policy_id(self) -> str:
         return self._champion_policy_id
 
-    def run(self, initial_code: str, task_name: str) -> EvolutionResult:
+    def run(
+        self, initial_code: str | dict[str, str], task_name: str
+    ) -> EvolutionResult:
         """启动进化循环（Fast Loop + 按窗口触发 Slow Loop）.
 
         支持 SIGINT/SIGTERM 优雅关闭（参考 OpenEvolve）。
@@ -377,7 +381,9 @@ class EvolutionEngine:
             signal.signal(signal.SIGTERM, prev_term)
         return result
 
-    def _run_evolution(self, initial_code: str, task_name: str) -> EvolutionResult:
+    def _run_evolution(
+        self, initial_code: str | dict[str, str], task_name: str
+    ) -> EvolutionResult:
         """进化主循环（内部实现）."""
         logger.info("Starting evolution: %s", task_name)
 
@@ -391,18 +397,32 @@ class EvolutionEngine:
         self._ensure_version_rows()
 
         # 存储并评估初始代码
-        initial_hash = store.store_text(initial_code, "source")
+        initial_manifest_hash = None
+        if hasattr(store, "store_snapshot"):
+            from omnievolve.storage.code_store import resolve_snapshot_refs
+
+            initial_ref = store.store_snapshot(
+                initial_code,
+                message="initial candidate",
+                meta={"entrypoint": "main.py"} if isinstance(initial_code, dict) else None,
+            )
+            initial_hash, initial_manifest_hash = resolve_snapshot_refs(store, initial_ref)
+        else:
+            if not isinstance(initial_code, str):
+                raise TypeError("This storage backend does not support multi-file snapshots")
+            initial_hash = store.store_text(initial_code, "source")
         initial_candidate = self._candidate_repo.create_candidate(
             experiment_id=self._experiment_id,
             task_id=task_name,
             generation=0,
             artifact_hash=initial_hash,
+            manifest_hash=initial_manifest_hash,
             search_policy_id=self._champion_policy_id,
         )
         initial_id = initial_candidate.id
         self._mcts.add_node(initial_id, parent=None, prior=1.0)
         self._total_candidates += 1
-        self._evaluate_candidate(initial_id, initial_hash)
+        self._evaluate_candidate(initial_id, initial_hash, initial_manifest_hash)
         self._island_manager.assign_candidate(initial_id, "island_0")
 
         # 设置 baseline
@@ -694,10 +714,13 @@ class EvolutionEngine:
         self,
         candidate_id: str,
         artifact_hash: str,
+        manifest_hash: str | None = None,
     ) -> EvalOutput | None:
         """评估候选（T1: 委托给 FastLoopStep）."""
         assert self._fast_loop is not None
-        return self._fast_loop.evaluate_candidate(candidate_id, artifact_hash)
+        return self._fast_loop.evaluate_candidate(
+            candidate_id, artifact_hash, manifest_hash
+        )
 
     # ------------------------------------------------------------------ #
     #  Slow Loop

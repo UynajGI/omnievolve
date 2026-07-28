@@ -56,3 +56,54 @@ optimization
 - Relevance: Its nine-problem matched comparison and component ablations directly
   motivated the 9-task × 5-seed matrix and full/random/single-agent/no-novelty/no-slow-loop
   variants used here.
+
+## 2026-07-28 — Reference implementation gap analysis
+
+### Darwin Godel Machine: Open-Ended Evolution of Self-Improving Agents
+
+- Authors: Jenny Zhang, Shengran Hu, Cong Lu, Robert Lange, Jeff Clune
+- Published: 2025-05-29; revised 2026-03-12
+- Link: https://arxiv.org/abs/2505.22954
+- Relevance: DGM evolves the coding-agent implementation itself and validates descendants
+  on SWE-bench and Polyglot. It highlights a gap between OmniEvolve's governed policy
+  slow loop and genuine, benchmark-validated self-modification of the agent codebase.
+
+### ShinkaEvolve: Towards Open-Ended And Sample-Efficient Program Evolution
+
+- Authors: Robert Tjarko Lange, Yuki Imajuku, Edoardo Cetin
+- Published: 2025-09-17
+- Link: https://arxiv.org/abs/2509.19349
+- Relevance: Its power-law parent sampling, novelty rejection sampling, and bandit model
+  selection are represented in OmniEvolve, but ShinkaEvolve has substantially stronger
+  published sample-efficiency evidence and a more mature async/local/Slurm runtime.
+
+### MLEvolve: A Self-Evolving Framework for Automated Machine Learning Algorithm
+Discovery
+
+- Authors: Shangheng Du et al.
+- Published: 2026-06-04
+- Link: https://arxiv.org/abs/2606.06473
+- Relevance: Progressive MCGS, cross-branch reference edges, retrospective memory, and
+  adaptive coding modes closely match OmniEvolve's intended search design. Its 75-task,
+  three-seed MLE-bench results expose OmniEvolve's main current gap: implemented
+  infrastructure without completed matched-budget empirical validation.
+
+### EvoX: A Distributed GPU-accelerated Framework for Scalable Evolutionary Computation
+
+- Authors: Beichen Huang, Ran Cheng, Zhuozhao Li, Yaochu Jin, Kay Chen Tan
+- Published: 2023-01-29; revised 2024-04-14
+- Link: https://arxiv.org/abs/2301.12457
+- Relevance: EvoX is a tensorized evolutionary-computation substrate rather than an LLM
+  coding agent. Its 50+ algorithms and GPU/distributed execution are useful only if
+  OmniEvolve later needs numerical inner-loop optimization; they are not a priority for
+  the current single-machine research scope.
+
+### PACEvolve++: Improving Test-time Learning for Evolutionary Search Agents
+
+- Authors: Minghao Yan et al.
+- Published: 2026-05-07
+- Link: https://arxiv.org/abs/2605.07039
+- Relevance: Its trainable advisor separates strategic hypothesis selection from candidate
+  implementation and adapts across search phases. It is a meaningful future alternative
+  to OmniEvolve's hand-authored Slow Loop, but should be considered only after the current
+  ablation matrix establishes that Slow Loop adds measurable value.

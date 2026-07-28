@@ -57,6 +57,7 @@ class PreparedCandidate:
     parent_ids: list[str]
     model: str
     island_id: str
+    manifest_hash: str | None = None
     thought_confidence: float = 1.0
     critic_passed: bool = True
     # 评估上下文（供 commit 使用）
@@ -64,6 +65,7 @@ class PreparedCandidate:
     job_id: str | None = None
     sandbox_result: Any = None
     memory_hits: list = field(default_factory=list)
+    reference_ids: list[str] = field(default_factory=list)
 
 
 class FastLoopStep:
@@ -128,9 +130,9 @@ class FastLoopStep:
         # 步骤 3/可选 crossover + fusion
         base_code = None
         if relation == "crossover" and len(parent_codes) >= 2:
-            base_code = e._crossover.combine(parent_codes, strategy="segment")  # noqa: SLF001
+            base_code = e._crossover.combine(parent_codes, strategy="semantic")  # noqa: SLF001
         if (
-            stagnation_level >= 2
+            (relation == "crossover" or stagnation_level >= 2)
             and e._config.fusion_mode == "llm"  # noqa: SLF001
             and parent_codes
         ):
@@ -213,6 +215,15 @@ class FastLoopStep:
                         "source": "parent",
                     },
                 )
+
+        reference_ids = list(
+            dict.fromkeys(
+                str(program["candidate_id"])
+                for program in inspiration
+                if program.get("candidate_id")
+                and program["candidate_id"] not in parent_ids
+            )
+        )
 
         # Director RAG
         rag_context = []
@@ -312,18 +323,27 @@ class FastLoopStep:
 
         # 步骤 8: 存储代码 + 创建候选
         # CodeStore: 优先使用 store_snapshot（支持 Git ancestry）
+        manifest_hash = None
         if hasattr(e._artifact_store, "store_snapshot"):  # noqa: SLF001
-            # 从 DB 查父代 artifact_hash（Git 模式 = commit SHA）
+            from omnievolve.storage.code_store import resolve_snapshot_refs
+
+            # CAS 优先沿用 manifest；Git 使用 commit artifact_hash。
             parent_refs = []
             for pid in parent_ids:
-                prow = e._db.fetchone("SELECT artifact_hash FROM candidate WHERE id=?", (pid,))  # noqa: SLF001
+                prow = e._db.fetchone(  # noqa: SLF001
+                    "SELECT artifact_hash, manifest_hash FROM candidate WHERE id=?",
+                    (pid,),
+                )
                 if prow:
-                    parent_refs.append(prow["artifact_hash"])
-            artifact_hash = e._artifact_store.store_snapshot(  # noqa: SLF001
+                    parent_refs.append(prow["manifest_hash"] or prow["artifact_hash"])
+            snapshot_ref = e._artifact_store.store_snapshot(  # noqa: SLF001
                 code.full_code,
                 parents=parent_refs or None,
                 message=thought.thought[:200],
                 meta={"thought": thought.thought[:500], "relation": relation, "model": model},
+            )
+            artifact_hash, manifest_hash = resolve_snapshot_refs(  # noqa: SLF001
+                e._artifact_store, snapshot_ref
             )
         else:
             artifact_hash = e._artifact_store.store_text(code.full_code, "source")  # noqa: SLF001
@@ -333,6 +353,7 @@ class FastLoopStep:
             task_id=task_name,
             generation=generation,
             artifact_hash=artifact_hash,
+            manifest_hash=manifest_hash,
             search_policy_id=e._champion_policy_id,  # noqa: SLF001
             island_id=island_id,
             parents=parents_with_relation or None,
@@ -355,12 +376,13 @@ class FastLoopStep:
         # 步骤 9-10: sandbox 执行 + 结果解析（无状态变更）
         with self._prof_step("sandbox_eval", generation):
             output, eval_run, job, sandbox_result = self._execute_sandbox(
-                candidate.id, artifact_hash
+                candidate.id, artifact_hash, manifest_hash
             )
 
         return PreparedCandidate(
             candidate_id=candidate.id,
             artifact_hash=artifact_hash,
+            manifest_hash=manifest_hash,
             output=output,
             parent_ids=parent_ids,
             model=model,
@@ -371,6 +393,7 @@ class FastLoopStep:
             job_id=job.id if job else None,
             sandbox_result=sandbox_result,
             memory_hits=memory_hits,
+            reference_ids=reference_ids,
         )
 
     def commit_result(self, prepared: PreparedCandidate) -> tuple[str | None, str]:
@@ -413,6 +436,7 @@ class FastLoopStep:
                 prepared.eval_run_id,
                 prepared.job_id,
                 prepared.sandbox_result,
+                prepared.reference_ids,
             )
 
         # Step 5b: 记录 adoption
@@ -437,6 +461,7 @@ class FastLoopStep:
         self,
         candidate_id: str,
         artifact_hash: str,
+        manifest_hash: str | None = None,
     ) -> EvalOutput | None:
         """评估候选（步骤 9-11）+ 记录 evaluation_run.
 
@@ -448,15 +473,16 @@ class FastLoopStep:
         if e._config.progressive_eval_enabled:  # noqa: SLF001
             build_stage = getattr(e._task_evaluator, "build_stage_plan", None)  # noqa: SLF001
             if build_stage is not None:
-                return self._evaluate_progressive(candidate_id, artifact_hash)
+                return self._evaluate_progressive(candidate_id, artifact_hash, manifest_hash)
 
         # 默认全量评估路径
-        return self._evaluate_full(candidate_id, artifact_hash)
+        return self._evaluate_full(candidate_id, artifact_hash, manifest_hash)
 
     def _evaluate_progressive(
         self,
         candidate_id: str,
         artifact_hash: str,
+        manifest_hash: str | None = None,
     ) -> EvalOutput | None:
         """渐进式评估：Stage 0→3，任一阶段失败则 early-exit."""
         from omnievolve.eval.plan_validator import EvaluationStage
@@ -465,7 +491,7 @@ class FastLoopStep:
         candidate_artifact = CandidateArtifact(
             candidate_id=candidate_id,
             source_hash=artifact_hash,
-            manifest_hash=None,
+            manifest_hash=manifest_hash,
             language="python",
         )
         eval_context = EvaluationContext(
@@ -529,9 +555,12 @@ class FastLoopStep:
         self,
         candidate_id: str,
         artifact_hash: str,
+        manifest_hash: str | None = None,
     ) -> EvalOutput | None:
         """全量评估 — _execute_sandbox + _apply_eval_result."""
-        output, eval_run, job, result = self._execute_sandbox(candidate_id, artifact_hash)
+        output, eval_run, job, result = self._execute_sandbox(
+            candidate_id, artifact_hash, manifest_hash
+        )
         if output is None:
             return None
         self._apply_eval_result(
@@ -548,6 +577,7 @@ class FastLoopStep:
         self,
         candidate_id: str,
         artifact_hash: str,
+        manifest_hash: str | None = None,
     ) -> tuple[EvalOutput | None, Any, Any, Any]:
         """Phase 3: 步骤 9-10 — sandbox 执行 + 结果解析（无状态变更）.
 
@@ -558,7 +588,7 @@ class FastLoopStep:
         candidate_artifact = CandidateArtifact(
             candidate_id=candidate_id,
             source_hash=artifact_hash,
-            manifest_hash=None,
+            manifest_hash=manifest_hash,
             language="python",
         )
         eval_context = EvaluationContext(
@@ -724,6 +754,7 @@ class FastLoopStep:
         eval_run_id: str | None = None,
         job: Any = None,
         result: Any = None,
+        reference_ids: list[str] | None = None,
     ) -> None:
         """Phase 3: 步骤 11 — 所有共享状态变更（串行执行）.
 
@@ -778,6 +809,13 @@ class FastLoopStep:
 
         # MCTS 回传
         e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
+        if e._config.reference_credit_enabled and reference_ids:  # noqa: SLF001
+            e._mcts.credit_references(  # noqa: SLF001
+                reference_ids,
+                output.score,
+                weight=e._config.reference_credit_weight,  # noqa: SLF001
+                exclude_ids={candidate_id},
+            )
 
         # 岛屿精英更新
         island_id = e._lookup_island(candidate_id)  # noqa: SLF001

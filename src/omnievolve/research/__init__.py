@@ -5,6 +5,7 @@ from omnievolve.research.matrix import (
     BenchmarkJob,
     BenchmarkTask,
     build_default_matrix,
+    build_reference_credit_matrix,
     enqueue_matrix,
     summarize_results,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "BenchmarkJob",
     "BenchmarkTask",
     "build_default_matrix",
+    "build_reference_credit_matrix",
     "enqueue_matrix",
     "summarize_results",
 ]

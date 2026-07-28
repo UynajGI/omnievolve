@@ -99,10 +99,30 @@ class TestCrossoverOperator:
         # 不应崩溃，返回空结果或基础代码
         assert isinstance(result, str)
 
-    def test_combine_defaults_to_segment(self):
+    def test_combine_defaults_to_semantic_ast_crossover(self):
         op = CrossoverOperator()
-        result = op.combine(["a\nb\nc\n", "X\nY\nZ\n"])
-        assert len(result) > 0
+        result = op.combine(
+            [
+                "import math\n\n"
+                "def solve():\n    return 1\n\n"
+                "if __name__ == '__main__':\n    print(solve())\n",
+                "def solve():\n    return 2\n\n"
+                "def helper():\n    return 'new'\n",
+            ]
+        )
+
+        compile(result, "<crossover>", "exec")
+        assert "import math" in result
+        assert "if __name__" in result
+        assert "def helper" in result
+
+    def test_semantic_crossover_syntax_error_uses_safe_fallback(self):
+        op = CrossoverOperator()
+
+        result = op.combine(["def broken(:\n", "def solve():\n    return 1\n"])
+
+        assert isinstance(result, str)
+        assert "def solve" in result
 
 
 class TestCrossoverEdgeCases:
