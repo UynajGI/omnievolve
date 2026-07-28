@@ -438,7 +438,9 @@ class EvolutionEngine:
                 logger.warning("Budget exhausted, stopping evolution")
                 break
 
-            self._step_generation(gen, task_name)
+            if not self._run_generation_until_candidate(gen, task_name):
+                self._current_generation = gen - 1
+                break
 
             # 岛间迁移
             if self._island_manager.should_migrate(gen):
@@ -561,43 +563,8 @@ class EvolutionEngine:
             if self._budget_guard.state.is_exhausted:
                 logger.warning("Budget exhausted before generation %d; resume stopped", gen)
                 break
-            # P1 forced backpropagation and novelty rejection intentionally return
-            # no prepared candidate.  They are search-control events, not a
-            # durable evolution generation.  Retry the same generation a bounded
-            # number of times before declaring the pipeline unable to produce an
-            # auditable candidate.
-            generated = False
-            attempts = max(2, self._config.novelty_retry_limit + 1)
-            for attempt in range(1, attempts + 1):
-                before = self._db.fetchone(
-                    "SELECT COUNT(*) AS count FROM candidate WHERE experiment_id = ?",
-                    (experiment_id,),
-                )["count"]
-                self._step_generation(gen, task_name)
-                after = self._db.fetchone(
-                    "SELECT COUNT(*) AS count FROM candidate WHERE experiment_id = ?",
-                    (experiment_id,),
-                )["count"]
-                if after > before:
-                    generated = True
-                    break
-                logger.warning(
-                    "Generation %d produced no candidate on attempt %d/%d; retrying",
-                    gen,
-                    attempt,
-                    attempts,
-                )
-                if self._budget_guard.state.is_exhausted:
-                    break
-            if not generated:
+            if not self._run_generation_until_candidate(gen, task_name):
                 self._current_generation = gen - 1
-                logger.error(
-                    "Generation %d produced no candidate after %d attempts; "
-                    "leaving checkpoint at %d",
-                    gen,
-                    attempts,
-                    self._current_generation,
-                )
                 break
             if self._island_manager.should_migrate(gen):
                 self._island_manager.migrate(gen)
@@ -712,6 +679,38 @@ class EvolutionEngine:
                 self._vector_indexer.process_batch()
             except Exception:
                 logger.debug("Vector index batch processing failed", exc_info=True)
+
+    def _run_generation_until_candidate(self, generation: int, task_name: str) -> bool:
+        """Retry search-control/no-op outcomes without advancing the generation."""
+        attempts = max(2, self._config.novelty_retry_limit + 1)
+        for attempt in range(1, attempts + 1):
+            before = self._db.fetchone(
+                "SELECT COUNT(*) AS count FROM candidate WHERE experiment_id = ?",
+                (self._experiment_id,),
+            )["count"]
+            self._step_generation(generation, task_name)
+            after = self._db.fetchone(
+                "SELECT COUNT(*) AS count FROM candidate WHERE experiment_id = ?",
+                (self._experiment_id,),
+            )["count"]
+            if after > before:
+                return True
+            logger.warning(
+                "Generation %d produced no candidate on attempt %d/%d; retrying",
+                generation,
+                attempt,
+                attempts,
+            )
+            if self._budget_guard.state.is_exhausted or self._shutdown_requested:
+                break
+        logger.error(
+            "Generation %d produced no candidate after %d attempts; "
+            "leaving checkpoint at %d",
+            generation,
+            attempts,
+            generation - 1,
+        )
+        return False
 
     def _select_parents(self, island_id: str) -> tuple[list[str], str]:
         """选择父代（步骤 2）：P1-2 软切换 + MCTS 引导 + ParentSelector 兖底.
