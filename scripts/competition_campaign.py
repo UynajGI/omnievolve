@@ -110,24 +110,36 @@ def _generation_summary(rows: list[dict], generation: int) -> list[str]:
 
 
 def _health(challenge: str, rows: list[dict], generation: int) -> tuple[bool, list[str]]:
+    first_generation = max(1, generation - 9)
     recent = [
         r
         for r in rows
-        if max(1, generation - 9) <= r["generation"] <= generation
-        and r["eval_status"] == "completed"
+        if first_generation <= r["generation"] <= generation
     ]
     reasons: list[str] = []
-    if len(recent) < 5:
-        reasons.append(f"最近十轮只有 {len(recent)} 个完成评估")
-    pass_rate = sum(bool(r["passed"]) for r in recent) / max(1, len(recent))
-    if pass_rate < 0.5:
-        reasons.append(f"最近十轮 passed 比例仅 {pass_rate:.1%}")
+    expected_generations = set(range(first_generation, generation + 1))
+    completed_generations = {
+        int(r["generation"]) for r in recent if r["eval_status"] == "completed"
+    }
+    missing_generations = sorted(expected_generations - completed_generations)
+    if missing_generations:
+        reasons.append(f"缺少完成评估的 generation：{missing_generations}")
+    incomplete = [r for r in recent if r["eval_status"] != "completed"]
+    if incomplete:
+        reasons.append(f"存在 {len(incomplete)} 个未完成 evaluation")
+    completed = [r for r in recent if r["eval_status"] == "completed"]
     finite_scores = [
-        r for r in recent if r["primary_score"] is not None and math.isfinite(float(r["primary_score"]))
+        r
+        for r in completed
+        if r["primary_score"] is not None and math.isfinite(float(r["primary_score"]))
     ]
-    if len(finite_scores) != len(recent):
+    if len(finite_scores) != len(completed):
         reasons.append("存在缺失或非有限 primary score")
 
+    # A failed candidate is a normal, useful outcome of evolutionary search:
+    # it proves the evaluator rejected an incorrect mutation.  Pipeline health
+    # is about durable generation coverage and completed, finite evaluations,
+    # not the fraction of proposals that happened to be correct.
     passed = [r for r in rows if r["passed"] and r["primary_score"] is not None]
     if not passed:
         reasons.append("实验没有任何 passed 候选")
@@ -166,7 +178,8 @@ def write_report(
         "",
         f"- 实验 ID：`{experiment_id}`",
         f"- pipeline：**{'健康，可继续' if healthy else '异常，已停止待修'}**",
-        f"- 本批候选：{len(recent)}；passed 比例：{pass_rate:.1%}",
+        f"- 本批候选：{len(recent)}；候选 correctness 通过率：{pass_rate:.1%}"
+        "（仅作搜索统计，不作为 pipeline 健康门）",
         f"- 累计 tokens：{cumulative_tokens}；累计 evaluator compute："
         f"{cumulative_compute:.1f}s",
     ]
