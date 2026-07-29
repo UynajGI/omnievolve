@@ -14,6 +14,14 @@ token_budget = 2_000_000
 compute_budget_sec = 0
 health_window_gens = 3
 self_evolve_enabled = true
+# Independent post-pilot ablations. Keep both off in the canonical baseline
+# and enable only one family at a time.
+qd_archive_enabled = false
+qd_parent_probability = 0.15
+qd_max_cells_per_island = 128
+operator_portfolio_enabled = false
+operator_portfolio_algorithm = "ucb" # ucb / thompson
+operator_portfolio_ucb_c = 1.414
 
 [selection]
 parent_selector = "lineage_ucb"

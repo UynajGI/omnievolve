@@ -45,6 +45,7 @@ TASK_CONFIGS = {
     "orbit_q": "configs/orbit_q.toml",
     "sort": "configs/sort_optimization.toml",
 }
+_SLOW_LOOP_REQUIRED_VARIANTS = frozenset({"full", "no_novelty"})
 
 _SAFE_REPLAY_ENV = (
     "OMNIEVOLVE_LLM_MODEL",
@@ -117,7 +118,7 @@ def build_replay_record(
         name: {"path": str(path), "sha256": _sha256_file(path)}
         for name, path in _replay_input_paths(repo_root, job, config_path).items()
     }
-    deterministic = job.variant.name == "random_search"
+    artifact_deterministic = job.variant.name == "random_search"
     return {
         "schema_version": 2,
         "run_id": job.run_id,
@@ -143,10 +144,15 @@ def build_replay_record(
             "generations": generations,
             "population_size": population_size,
         },
-        "replay_class": "deterministic" if deterministic else "stochastic_llm",
+        "replay_class": (
+            "deterministic_artifacts"
+            if artifact_deterministic
+            else "stochastic_llm"
+        ),
         "determinism_note": (
-            "All stages are expected to reproduce exactly."
-            if deterministic
+            "Mutation artifacts and lineage must reproduce exactly; runtime "
+            "benchmark measurements are compared separately because they are noisy."
+            if artifact_deterministic
             else "Inputs and non-LLM stages are reproducible; provider output may vary."
         ),
     }
@@ -178,6 +184,155 @@ def validate_replay_record(record: dict[str, Any], repo_root: Path) -> list[str]
         if os.environ.get(key) != expected:
             issues.append(f"safe environment mismatch: {key}")
     return issues
+
+
+def _setting_path(argv: list[str], key: str) -> Path:
+    prefix = f"{key}="
+    for value in argv:
+        if value.startswith(prefix):
+            return Path(json.loads(value[len(prefix) :]))
+    raise RuntimeError(f"replay command is missing required setting {key}")
+
+
+def _deterministic_outcome(db_path: Path) -> dict[str, Any]:
+    """Return a timing-independent, ID-normalized replay outcome."""
+    if not db_path.is_file():
+        raise RuntimeError(f"replay database was not created: {db_path}")
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        candidates = connection.execute(
+            """
+            SELECT id, generation, artifact_hash, manifest_hash, status
+            FROM candidate ORDER BY generation, artifact_hash, id
+            """
+        ).fetchall()
+        id_map = {
+            row["id"]: f"{row['generation']}:{row['artifact_hash']}:{row['manifest_hash'] or ''}"
+            for row in candidates
+        }
+
+        def normalize(value: Any) -> Any:
+            if isinstance(value, str):
+                return id_map.get(value, value)
+            if isinstance(value, list):
+                return [normalize(item) for item in value]
+            if isinstance(value, dict):
+                return {
+                    key: normalize(item)
+                    for key, item in sorted(value.items())
+                    if key not in {"used_compute_sec", "total_compute_sec"}
+                }
+            return value
+
+        lineage = connection.execute(
+            """
+            SELECT child_id, parent_id, relation_type, parent_order, op_detail
+            FROM candidate_lineage
+            ORDER BY child_id, parent_order, parent_id
+            """
+        ).fetchall()
+        evaluations = connection.execute(
+            """
+            SELECT c.id AS candidate_id, er.seed, er.split_name, er.attempt,
+                   er.status, er.passed, er.primary_score, er.metrics, er.result_hash
+            FROM evaluation_run er
+            JOIN candidate c ON c.id = er.candidate_id
+            ORDER BY c.generation, c.artifact_hash, er.seed, er.split_name, er.attempt
+            """
+        ).fetchall()
+        llm_calls = connection.execute(
+            """
+            SELECT agent_role, model, input_tokens, output_tokens, total_tokens,
+                   cost_usd, request_hash, response_hash
+            FROM llm_call_ledger ORDER BY created_at, id
+            """
+        ).fetchall()
+        checkpoint_row = connection.execute(
+            """
+            SELECT checkpoint_data FROM experiment
+            ORDER BY started_at DESC, id DESC LIMIT 1
+            """
+        ).fetchone()
+
+    checkpoint = json.loads(checkpoint_row["checkpoint_data"] or "{}") if checkpoint_row else {}
+    checkpoint.pop("failed_directions", None)
+    runtime = checkpoint.get("runtime_state", {})
+    if isinstance(runtime, dict):
+        # Job lease identifiers and wall/compute timings are operational
+        # provenance, not deterministic search state.
+        runtime.pop("jobs", None)
+    outcome = {
+        "candidates": [
+            (
+                row["generation"],
+                row["artifact_hash"],
+                row["manifest_hash"],
+                row["status"],
+            )
+            for row in candidates
+        ],
+        "lineage": [
+            (
+                id_map.get(row["child_id"], row["child_id"]),
+                id_map.get(row["parent_id"], row["parent_id"]),
+                row["relation_type"],
+                row["parent_order"],
+                normalize(json.loads(row["op_detail"] or "{}")),
+            )
+            for row in lineage
+        ],
+        "evaluations": [
+            (
+                id_map.get(row["candidate_id"], row["candidate_id"]),
+                row["seed"],
+                row["split_name"],
+                row["attempt"],
+                row["status"],
+                row["passed"],
+                row["primary_score"],
+                normalize(json.loads(row["metrics"] or "{}")),
+                row["result_hash"],
+            )
+            for row in evaluations
+        ],
+        "llm_calls": [tuple(row) for row in llm_calls],
+        "checkpoint": normalize(checkpoint),
+    }
+    payload = json.dumps(outcome, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    structural = {
+        # Candidate pass/fail is evaluator output and can flip at a timing
+        # threshold even when mutation produced byte-identical artifacts.
+        "candidates": [row[:3] for row in outcome["candidates"]],
+        "lineage": outcome["lineage"],
+        "llm_calls": outcome["llm_calls"],
+        "checkpoint": {
+            "schema_version": checkpoint.get("schema_version"),
+            "generation": checkpoint.get("generation"),
+            "total_candidates": checkpoint.get("total_candidates"),
+            "search_policy": runtime.get("search_policy")
+            if isinstance(runtime, dict)
+            else None,
+            "selection_mode": runtime.get("selection_mode")
+            if isinstance(runtime, dict)
+            else None,
+            "python_random_state": runtime.get("python_random_state")
+            if isinstance(runtime, dict)
+            else None,
+        },
+    }
+    structural_payload = json.dumps(
+        structural,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return {
+        "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "structural_sha256": hashlib.sha256(
+            structural_payload.encode("utf-8")
+        ).hexdigest(),
+        "outcome": outcome,
+    }
 
 
 def strict_replay(
@@ -243,6 +398,34 @@ def strict_replay(
     )
     if completed.returncode != 0:
         raise RuntimeError(f"strict replay command failed with exit code {completed.returncode}")
+    if record["replay_class"] in {"deterministic", "deterministic_artifacts"}:
+        original_db = _setting_path(list(record["argv"]), "storage.db_path")
+        replay_db = replacements["storage.db_path"]
+        original = _deterministic_outcome(original_db)
+        replayed = _deterministic_outcome(replay_db)
+        exact = original["sha256"] == replayed["sha256"]
+        structural = (
+            original["structural_sha256"] == replayed["structural_sha256"]
+        )
+        result.update(
+            {
+                "deterministic_equivalent": exact,
+                "deterministic_artifacts_equivalent": structural,
+                "original_outcome_sha256": original["sha256"],
+                "replay_outcome_sha256": replayed["sha256"],
+                "original_structural_sha256": original["structural_sha256"],
+                "replay_structural_sha256": replayed["structural_sha256"],
+            }
+        )
+        required_equivalent = (
+            exact if record["replay_class"] == "deterministic" else structural
+        )
+        if not required_equivalent:
+            raise RuntimeError(
+                "strict replay outcome mismatch: "
+                f"{original['structural_sha256']} != "
+                f"{replayed['structural_sha256']}"
+            )
     return result
 
 
@@ -395,6 +578,8 @@ class EvaluatorNoiseCalibrator:
             "omnievolve.cli",
             "run",
             task.initial_code,
+            "--task-name",
+            task.name,
             "--config",
             config_path,
             "--evaluator",
@@ -795,6 +980,8 @@ class ResearchBenchmarkRunner:
             "omnievolve.cli",
             "run",
             job.task.initial_code,
+            "--task-name",
+            job.task.name,
             "--config",
             config_path,
             "--evaluator",
@@ -979,9 +1166,13 @@ class ResearchBenchmarkRunner:
         canary_completed = int(
             (policy_experiments[1] or 0) if policy_experiments else 0
         )
-        if job.variant.name == "full" and canary_completed == 0:
+        if (
+            job.variant.name in _SLOW_LOOP_REQUIRED_VARIANTS
+            and canary_completed == 0
+        ):
             raise PermanentJobError(
-                "full variant produced no completed independent policy canary; "
+                f"{job.variant.name} variant produced no completed independent "
+                "policy canary; "
                 "it is not distinguishable from no_slow_loop"
             )
         if job.variant.name == "no_slow_loop" and canary_total:

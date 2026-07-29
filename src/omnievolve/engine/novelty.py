@@ -328,7 +328,7 @@ def compute_code_signature(code: str) -> str:
         tree = ast.parse(code)
         parts = []
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            if isinstance(node, ast.FunctionDef | ast.ClassDef):
                 parts.append(f"{type(node).__name__}:{node.name}")
             else:
                 parts.append(type(node).__name__)

@@ -200,9 +200,9 @@ class EpiplexityEstimator:
             # 提取函数/类名 + 节点类型序列
             parts = []
             for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                if isinstance(node, ast.FunctionDef | ast.ClassDef):
                     parts.append(f"{type(node).__name__}:{node.name}")
-                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                elif isinstance(node, ast.Import | ast.ImportFrom):
                     parts.append(type(node).__name__)
                 else:
                     parts.append(type(node).__name__)

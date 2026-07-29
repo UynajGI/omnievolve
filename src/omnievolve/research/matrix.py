@@ -124,7 +124,15 @@ DEFAULT_VARIANTS = (
     AblationVariant(
         "full",
         "Full OmniEvolve system with the real controlled Slow Loop enabled.",
-        {"evolution.self_evolve_enabled": True},
+        {
+            "evolution.self_evolve_enabled": True,
+            "meta_evolution.enabled": True,
+            "meta_evolution.meta_canary_budget_ratio": 0.5,
+            # A research arm must actually execute a canary. Natural health
+            # triggers are appropriate in production but would make `full`
+            # silently identical to `no_slow_loop` on healthy short runs.
+            "self_evaluator.roi_warn_threshold": 1_000_000_000.0,
+        },
     ),
     AblationVariant(
         "random_search",
@@ -155,7 +163,13 @@ DEFAULT_VARIANTS = (
     AblationVariant(
         "no_novelty",
         "Full system with the novelty gate disabled.",
-        {"evolution.novelty_enabled": False},
+        {
+            "evolution.novelty_enabled": False,
+            "evolution.self_evolve_enabled": True,
+            "meta_evolution.enabled": True,
+            "meta_evolution.meta_canary_budget_ratio": 0.5,
+            "self_evaluator.roi_warn_threshold": 1_000_000_000.0,
+        },
     ),
     AblationVariant(
         "no_slow_loop",

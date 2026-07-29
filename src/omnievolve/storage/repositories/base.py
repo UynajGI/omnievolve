@@ -142,7 +142,7 @@ class BaseRepository(Generic[T]):
         # 处理 JSON 字段
         processed = {}
         for key, value in updates.items():
-            if isinstance(value, (dict, list)):
+            if isinstance(value, dict | list):
                 processed[key] = json.dumps(value, ensure_ascii=False)
             else:
                 processed[key] = value

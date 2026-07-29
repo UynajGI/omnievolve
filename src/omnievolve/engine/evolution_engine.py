@@ -144,7 +144,8 @@ class EvolutionResult:
     total_generations: int
     total_candidates: int = 0
     total_tokens: int = 0
-    total_cost_usd: float = 0.0
+    total_cost_usd: float | None = None
+    cost_known: bool = False
     total_compute_sec: float = 0.0
     evolution_graph_path: str | None = None
     final_health: HealthOutput | None = field(default=None, repr=False)
@@ -1241,7 +1242,10 @@ class EvolutionEngine:
         self._experiment_repo.update_costs(
             self._experiment_id,
             tokens=stats["total_tokens"],
-            cost_usd=stats["total_cost_usd"],
+            # The legacy experiment row stores the known subtotal.  Completeness
+            # is derived from the per-call ledger; never turn an unknown total
+            # into a zero-dollar result.
+            cost_usd=stats["known_cost_usd"],
             compute_sec=elapsed,
         )
         self._experiment_repo.update_status(self._experiment_id, "completed", finished=True)
@@ -1272,6 +1276,7 @@ class EvolutionEngine:
             total_candidates=self._total_candidates,
             total_tokens=stats["total_tokens"],
             total_cost_usd=stats["total_cost_usd"],
+            cost_known=stats["cost_known"],
             total_compute_sec=elapsed,
             final_health=final_health,
         )

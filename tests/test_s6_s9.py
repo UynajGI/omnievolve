@@ -41,7 +41,18 @@ class TestTokenCounter:
     def test_estimate_cost(self):
         counter = TokenCounter()
         cost = counter.estimate_cost("gpt-4o", 1000, 500)
+        assert cost is not None
         assert cost > 0
+
+    def test_unknown_model_price_is_not_imputed_as_zero(self):
+        counter = TokenCounter()
+
+        record = counter.record("private-provider-model", 1000, 500)
+
+        assert record.cost_usd is None
+        assert record.cost_known is False
+        assert counter.total_cost is None
+        assert counter.get_stats()["known_cost_usd"] == 0.0
 
     def test_budget_guard(self):
         state = BudgetState(token_budget=1000)
@@ -49,6 +60,24 @@ class TestTokenCounter:
         assert guard.can_proceed(100)
         guard.consume("gpt-4o", 500, 200)
         assert state.used_tokens == 700
+
+    def test_unknown_cost_remains_auditable_and_does_not_fake_exhaustion(self):
+        state = BudgetState(token_budget=1000, cost_budget_usd=0.01)
+        guard = BudgetGuard(state)
+
+        guard.consume(
+            "private-provider-model",
+            100,
+            50,
+            cost_usd=None,
+            cost_known=False,
+        )
+
+        assert state.cost_known is False
+        assert state.remaining_cost is None
+        assert guard.check_budget()["cost_used"] is None
+        assert guard.check_budget()["known_cost_used"] == 0.0
+        assert not state.is_exhausted
 
     def test_zero_compute_budget_means_unlimited(self):
         state = BudgetState(compute_budget_sec=0)

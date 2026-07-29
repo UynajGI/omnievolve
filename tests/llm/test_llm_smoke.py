@@ -1,12 +1,12 @@
-"""Tier 2 LLM 烟雾测试 — 2-3代真实进化，验证管线连通性.
+"""Tier 2 LLM 烟雾测试 — 有界真实进化，验证管线连通性.
 
 分层测试策略（见 feedback/layered-llm-testing）：
   Tier 1: FakeLLM 单元测试 — 每次 CI 都跑（make test）
-  Tier 2: 真实 LLM 短跑 2-3 代 — 偶尔手动触发（make test-llm）
+  Tier 2: 真实 LLM 单代短跑 — 偶尔手动触发（make test-llm）
   Tier 3: 30+ 代完整进化 — milestone 手动执行（不进 CI）
 
-经济性：Tier 2 每次约 8-24 次 API 调用
-（2-3 代 × population_size 2 × Director/Coder），
+经济性：Tier 2 每次约 2 次成功 API 调用
+（1 代 × population_size 1 × Director/Coder，不含失败 fallback 尝试），
 远低于 Tier 3 的数百次调用。
 
 运行方式:
@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -38,7 +39,12 @@ pytestmark = [
     pytest.mark.slow,
 ]
 
-_API_KEYS = ["DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
+_API_KEYS = [
+    "OMNIEVOLVE_LLM_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+]
 
 
 def _has_api_key() -> bool:
@@ -81,16 +87,44 @@ def _get_api_base() -> str | None:
     return os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
 
 
+def _get_api_key() -> str | None:
+    """Resolve the same explicit credential precedence as the CLI."""
+    return (
+        os.environ.get("OMNIEVOLVE_LLM_API_KEY")
+        or os.environ.get("DEEPSEEK_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+    )
+
+
+def _get_fallback_endpoints():
+    """Load gitignored multi-provider fallbacks using the CLI JSON contract."""
+    from omnievolve.agents.llm_gateway import LLMEndpoint
+
+    raw = os.environ.get("OMNIEVOLVE_LLM_FALLBACKS_JSON")
+    if not raw:
+        return []
+    payload = json.loads(raw)
+    return [
+        LLMEndpoint(
+            model=item["model"],
+            api_key=item.get("api_key"),
+            api_base=item.get("api_base"),
+        )
+        for item in payload
+    ]
+
+
 def _get_max_tokens() -> int:
     """限制 smoke 测试的单次输出预算."""
     return int(os.environ.get("OMNIEVOLVE_LLM_MAX_TOKENS", "4096"))
 
 
 class TestLLMSmoke:
-    """2-3代真实进化 — 验证 Fast Loop 11步全流程连通."""
+    """单代真实进化 — 验证 Fast Loop 11步全流程连通."""
 
-    def test_heilbronn_2gen(self, tmp_path):
-        """Heilbronn 三角问题 — 2代 × 2候选 = 4个 LLM 调用."""
+    def test_heilbronn_bounded_smoke(self, tmp_path):
+        """Heilbronn 三角问题 — 单代单候选，避免 provider 延迟放大."""
         from examples.heilbronn.evaluator import HeilbronnEvaluator
         from omnievolve.agents.llm_gateway import LLMGateway
         from omnievolve.engine.evolution_engine import (
@@ -120,10 +154,13 @@ class TestLLMSmoke:
 
         gateway = LLMGateway(
             default_model=model,
+            api_key=_get_api_key(),
             api_base=_get_api_base(),
+            fallback_endpoints=_get_fallback_endpoints(),
             default_max_tokens=_get_max_tokens(),
-            max_retries=2,
+            max_retries=1,
             retry_backoff_base=1.0,
+            request_timeout=60.0,
         )
 
         engine = EvolutionEngine(
@@ -133,8 +170,8 @@ class TestLLMSmoke:
             sandbox=sandbox,
             llm=gateway,
             config=EvolutionConfig(
-                max_generations=2,
-                population_size=2,
+                max_generations=1,
+                population_size=1,
                 island_count=1,
                 crossover_rate=0.0,  # 减少调用
                 self_evolve_enabled=False,
@@ -161,8 +198,12 @@ class TestLLMSmoke:
         model = _get_model()
         gateway = LLMGateway(
             default_model=model,
+            api_key=_get_api_key(),
             api_base=_get_api_base(),
+            fallback_endpoints=_get_fallback_endpoints(),
             default_max_tokens=_get_max_tokens(),
+            max_retries=1,
+            request_timeout=60.0,
         )
 
         # 简单验证：gateway 能发起调用并返回结果
@@ -170,10 +211,11 @@ class TestLLMSmoke:
             [{"role": "user", "content": "Return the number 42. Nothing else."}],
             model=model,
             temperature=0.0,
-            max_tokens=64,
+            max_tokens=512,
         )
 
         assert response is not None
-        assert response.model == model
+        configured_models = {model, *(endpoint.model for endpoint in _get_fallback_endpoints())}
+        assert response.model in configured_models
         assert response.content
         assert len(response.content) > 0

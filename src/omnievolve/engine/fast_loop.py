@@ -1059,6 +1059,8 @@ class FastLoopStep:
                 input_tokens=0,
                 output_tokens=0,
                 compute_sec=result.execution_time_ms / 1000,
+                cost_usd=0.0,
+                cost_known=True,
             )
 
         # Phase 4.4: 完成 Job 记录

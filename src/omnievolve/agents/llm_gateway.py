@@ -110,6 +110,7 @@ class LLMGateway:
         self._disabled_endpoints: set[tuple[str, str | None, str | None]] = set()
         self._total_tokens = 0
         self._total_cost = 0.0
+        self._cost_known = True
         # P1: 熔断器 + 限流
         self._circuit_breaker = circuit_breaker
         self._rate_limiter = rate_limiter
@@ -223,8 +224,10 @@ class LLMGateway:
                     )
 
                     self._total_tokens += llm_response.total_tokens
-                    if llm_response.cost_usd:
+                    if llm_response.cost_usd is not None:
                         self._total_cost += llm_response.cost_usd
+                    else:
+                        self._cost_known = False
 
                     # 1.1: 传播 LLM token 消耗到 BudgetGuard
                     if self._budget_guard:
@@ -233,6 +236,8 @@ class LLMGateway:
                             input_tokens=llm_response.input_tokens,
                             output_tokens=llm_response.output_tokens,
                             compute_sec=0.0,
+                            cost_usd=llm_response.cost_usd,
+                            cost_known=llm_response.cost_usd is not None,
                         )
 
                     # P1: 熔断器 — 成功
@@ -451,7 +456,12 @@ class LLMGateway:
     def get_stats(self, experiment_id: str | None = None) -> dict[str, Any]:
         """获取调用统计."""
         if not self._db:
-            return {"total_tokens": self._total_tokens, "total_cost": self._total_cost}
+            return {
+                "total_tokens": self._total_tokens,
+                "total_cost": self._total_cost if self._cost_known else None,
+                "known_cost": self._total_cost,
+                "cost_known": self._cost_known,
+            }
 
         if experiment_id:
             row = self._db.fetchone(
@@ -466,10 +476,25 @@ class LLMGateway:
                 "SELECT COUNT(*) as calls, SUM(total_tokens) as tokens, SUM(cost_usd) as cost FROM llm_call_ledger"
             )
 
+        calls = row["calls"] if row else 0
+        priced_row = self._db.fetchone(
+            (
+                "SELECT COUNT(cost_usd) AS priced FROM llm_call_ledger "
+                "WHERE experiment_id = ?"
+                if experiment_id
+                else "SELECT COUNT(cost_usd) AS priced FROM llm_call_ledger"
+            ),
+            (experiment_id,) if experiment_id else (),
+        )
+        priced = priced_row["priced"] if priced_row else 0
+        cost_known = calls == priced
+        known_cost = float(row["cost"] or 0.0) if row else 0.0
         return {
-            "calls": row["calls"] if row else 0,
+            "calls": calls,
             "total_tokens": row["tokens"] if row and row["tokens"] else 0,
-            "total_cost": row["cost"] if row and row["cost"] else 0.0,
+            "total_cost": known_cost if cost_known else None,
+            "known_cost": known_cost,
+            "cost_known": cost_known,
         }
 
     def get_stats_by_role(self, experiment_id: str | None = None) -> dict[str, dict[str, Any]]:

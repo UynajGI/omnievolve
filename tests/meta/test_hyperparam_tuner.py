@@ -80,7 +80,7 @@ class TestBayesianTunerRandomPhase:
         for _ in range(10):
             p = tuner.suggest()
             for k, v in p.items():
-                assert isinstance(v, (int, float))
+                assert isinstance(v, int | float)
 
 
 class TestBayesianTunerUpdate:

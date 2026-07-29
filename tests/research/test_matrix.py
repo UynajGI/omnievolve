@@ -30,8 +30,28 @@ def test_pilot_matrix_is_fixed_45_run_paired_protocol():
         "no_slow_loop",
     }
     full = next(job for job in jobs if job.variant.name == "full")
+    no_novelty = next(job for job in jobs if job.variant.name == "no_novelty")
     no_slow = next(job for job in jobs if job.variant.name == "no_slow_loop")
     assert full.variant.config_overrides["evolution.self_evolve_enabled"] is True
+    assert full.variant.config_overrides["meta_evolution.enabled"] is True
+    assert (
+        full.variant.config_overrides[
+            "meta_evolution.meta_canary_budget_ratio"
+        ]
+        == 0.5
+    )
+    assert (
+        full.variant.config_overrides["self_evaluator.roi_warn_threshold"]
+        > 1_000_000
+    )
+    assert (
+        no_novelty.variant.config_overrides["evolution.self_evolve_enabled"]
+        is True
+    )
+    assert (
+        no_novelty.variant.config_overrides["self_evaluator.roi_warn_threshold"]
+        > 1_000_000
+    )
     assert no_slow.variant.config_overrides["evolution.self_evolve_enabled"] is False
     assert {job.eval_repetitions for job in jobs} == {3}
 

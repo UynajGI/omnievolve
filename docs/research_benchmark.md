@@ -143,6 +143,25 @@ Run these as two independent experiments after the pilot gate:
 1. operator UCB/Thompson versus a fixed mutation mix;
 2. a minimal behavior-cell archive versus the current archive.
 
+Generate their manifests independently:
+
+```bash
+omnievolve research plan-operator \
+  --seeds 0,1,2,3,4 \
+  --output .omnievolve/research/operator-portfolio-matrix.json
+
+omnievolve research plan-qd \
+  --seeds 0,1,2,3,4 \
+  --output .omnievolve/research/qd-archive-matrix.json
+```
+
+`operator_fixed` is the operator-family baseline; `qd_off` is the
+archive-family baseline. Analysis groups by protocol before pairing, applies
+an exact paired randomization test with Holm correction, and reports paired
+effect, standardized effect, and Cliff's delta. Unknown provider prices remain
+`cost_usd = null, cost_known = false` from the call ledger through the CLI and
+are excluded from all cost comparisons.
+
 Do not enable both together, and do not rewrite the search state as full
 MAP-Elites before their independent evidence is available. True DAG MCGS,
 rollouts, PUCT, and continuous steady-state async also remain out of scope.

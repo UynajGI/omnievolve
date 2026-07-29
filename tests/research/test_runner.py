@@ -26,6 +26,98 @@ from omnievolve.research.runner import (
 pytestmark = pytest.mark.unit
 
 
+def _write_deterministic_replay_db(
+    path: Path,
+    *,
+    candidate_id: str,
+    score: float = 1.0,
+    compute_sec: float = 0.1,
+) -> None:
+    checkpoint = {
+        "schema_version": 2,
+        "generation": 1,
+        "total_candidates": 1,
+        "recent_scores": [score],
+        "runtime_state": {
+            "best_candidate": [candidate_id, score],
+            "budget": {
+                "used_tokens": 0,
+                "used_cost_usd": 0.0,
+                "used_compute_sec": compute_sec,
+                "cost_known": True,
+                "counter": {"total_compute_sec": compute_sec},
+            },
+            "jobs": {"lease-id": {"status": "completed"}},
+            "python_random_state": [3, [1, 2, 3], None],
+        },
+    }
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE candidate (
+                id TEXT, generation INTEGER, artifact_hash TEXT,
+                manifest_hash TEXT, status TEXT
+            );
+            CREATE TABLE candidate_lineage (
+                child_id TEXT, parent_id TEXT, relation_type TEXT,
+                parent_order INTEGER, op_detail TEXT
+            );
+            CREATE TABLE evaluation_run (
+                candidate_id TEXT, seed INTEGER, split_name TEXT, attempt INTEGER,
+                status TEXT, passed INTEGER, primary_score REAL,
+                metrics TEXT, result_hash TEXT
+            );
+            CREATE TABLE llm_call_ledger (
+                id TEXT, agent_role TEXT, model TEXT, input_tokens INTEGER,
+                output_tokens INTEGER, total_tokens INTEGER, cost_usd REAL,
+                request_hash TEXT, response_hash TEXT, created_at TEXT
+            );
+            CREATE TABLE experiment (
+                id TEXT, started_at TEXT, checkpoint_data TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO candidate VALUES (?, 1, 'artifact', NULL, 'evaluated')",
+            (candidate_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO evaluation_run
+            VALUES (?, 0, 'default', 1, 'completed', 1, ?, '{}', 'result')
+            """,
+            (candidate_id, score),
+        )
+        connection.execute(
+            "INSERT INTO experiment VALUES ('exp', 'now', ?)",
+            (json.dumps(checkpoint),),
+        )
+
+
+def test_deterministic_outcome_normalizes_ids_and_timings(tmp_path):
+    first = tmp_path / "first.db"
+    second = tmp_path / "second.db"
+    changed = tmp_path / "changed.db"
+    _write_deterministic_replay_db(
+        first, candidate_id="candidate-a", compute_sec=0.1
+    )
+    _write_deterministic_replay_db(
+        second, candidate_id="candidate-b", compute_sec=9.9
+    )
+    _write_deterministic_replay_db(changed, candidate_id="candidate-c", score=0.5)
+
+    first_outcome = runner_module._deterministic_outcome(first)
+    second_outcome = runner_module._deterministic_outcome(second)
+    changed_outcome = runner_module._deterministic_outcome(changed)
+
+    assert first_outcome["sha256"] == second_outcome["sha256"]
+    assert first_outcome["sha256"] != changed_outcome["sha256"]
+    assert (
+        first_outcome["structural_sha256"]
+        == changed_outcome["structural_sha256"]
+    )
+
+
 def test_benchmark_job_payload_roundtrip():
     original = next(job for job in build_default_matrix() if job.task.name == "sort")
 
@@ -87,6 +179,8 @@ def test_run_repetition_records_replay_and_applies_variant(monkeypatch, tmp_path
     assert measurement["score"] == 0.75
     assert measurement["cost_usd"] == 0.1
     benchmark_call = next(call for call in calls if "omnievolve.cli" in call)
+    task_name_index = benchmark_call.index("--task-name")
+    assert benchmark_call[task_name_index + 1] == "sort"
     assert any(arg == "evolution.self_evolve_enabled=false" for arg in benchmark_call)
     assert any(arg == "evolution.population_size=3" for arg in benchmark_call)
     assert any(
@@ -166,7 +260,7 @@ def test_replay_provenance_detects_changed_inputs(monkeypatch, tmp_path):
         population_size=3,
     )
 
-    assert record["replay_class"] == "deterministic"
+    assert record["replay_class"] == "deterministic_artifacts"
     assert validate_replay_record(record, tmp_path) == []
     stable_provenance = {
         key: record[key]

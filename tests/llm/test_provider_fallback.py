@@ -4,6 +4,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 from omnievolve.agents.llm_gateway import LLMEndpoint, LLMGateway
+from omnievolve.utils.token_counter import BudgetGuard, BudgetState
 
 
 def test_authentication_failure_moves_to_distinct_provider(monkeypatch) -> None:
@@ -124,3 +125,35 @@ def test_permanently_denied_endpoint_is_skipped_on_later_calls(monkeypatch) -> N
     assert gateway.chat([{"role": "user", "content": "first"}]).model == "fallback"
     assert gateway.chat([{"role": "user", "content": "second"}]).model == "fallback"
     assert calls == ["openai/primary", "openai/fallback", "openai/fallback"]
+
+
+def test_unknown_provider_price_propagates_to_budget_without_imputation(monkeypatch) -> None:
+    class StubLiteLLM(ModuleType):
+        @staticmethod
+        def completion(**kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+                model_dump=lambda: {},
+            )
+
+        @staticmethod
+        def completion_cost(**kwargs):
+            raise ValueError("unknown model price")
+
+    monkeypatch.setitem(sys.modules, "litellm", StubLiteLLM("litellm"))
+    guard = BudgetGuard(BudgetState(token_budget=100))
+    gateway = LLMGateway(
+        default_model="private-model",
+        api_key="placeholder",
+        api_base="https://provider.invalid/v1",
+        budget_guard=guard,
+        max_retries=1,
+    )
+
+    response = gateway.chat([{"role": "user", "content": "ping"}])
+
+    assert response.cost_usd is None
+    assert gateway.get_stats()["cost_known"] is False
+    assert gateway.get_stats()["total_cost"] is None
+    assert guard.counter.get_stats()["cost_known"] is False

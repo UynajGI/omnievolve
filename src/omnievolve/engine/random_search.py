@@ -46,17 +46,17 @@ def mutate_randomly(source: str, *, seed: int) -> RandomMutation:
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Constant)
-            and isinstance(node.value, (int, float))
+            and isinstance(node.value, int | float)
             and not isinstance(node.value, bool)
         ):
             sites.append(("numeric_constant", node))
         elif isinstance(node, ast.Compare) and node.ops:
             if any(
-                isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq))
+                isinstance(op, ast.Lt | ast.LtE | ast.Gt | ast.GtE | ast.Eq | ast.NotEq)
                 for op in node.ops
             ):
                 sites.append(("comparison_operator", node))
-        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Sub):
             sites.append(("arithmetic_operator", node))
         elif isinstance(node, ast.BoolOp):
             sites.append(("boolean_operator", node))
@@ -85,7 +85,7 @@ def _mutate_site(kind: str, node: ast.AST, rng: random.Random) -> str:
         assert isinstance(node, ast.Constant)
         old_value = node.value
         assert (
-            isinstance(old_value, (int, float)) and not isinstance(old_value, bool)
+            isinstance(old_value, int | float) and not isinstance(old_value, bool)
         )
         if isinstance(old_value, int):
             node.value = old_value + rng.choice((-2, -1, 1, 2))

@@ -396,6 +396,10 @@ max_stagnation_gens = 5       # 最大停滞代数（触发岛屿重置）
 token_budget = 2_000_000      # 总 token 预算（耗尽自动停止）
 health_window_gens = 3        # Slow Loop 评估窗口（代）
 async_pipeline_enabled = false # 异步流水线引擎（实验性）
+qd_archive_enabled = false      # 最小行为单元档案（独立消融，默认关闭）
+qd_parent_probability = 0.15    # 从当前岛 QD 档案采样父代的概率
+operator_portfolio_enabled = false # UCB/Thompson 算子调度（独立消融）
+operator_portfolio_algorithm = "ucb" # ucb / thompson
 
 [selection]
 parent_selector = "lineage_ucb"
@@ -408,7 +412,7 @@ light = ["gpt-4o-mini"]       # 轻型模型（Critic）
 max_tokens = 16384            # 默认最大输出 token（可被 agent 覆盖）
 
 [models.routing]
-algorithm = "sliding_window_ucb"  # sliding_window_ucb / discounted_ucb / thompson_sampling
+algorithm = "sliding_window_ucb"  # sliding_window_ucb / discounted_ucb / thompson
 window_size = 50
 ucb_c = 1.414
 

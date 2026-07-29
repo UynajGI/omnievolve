@@ -53,7 +53,7 @@ def derive_behavior_descriptor(
         "wall_time_ms",
     ):
         value = metrics.get(key)
-        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        if isinstance(value, int | float) and math.isfinite(float(value)):
             runtime_ms = max(0.0, float(value))
             break
     runtime_bin = min(12, int(math.log2(max(1.0, runtime_ms))))
@@ -64,7 +64,9 @@ def derive_behavior_descriptor(
         return BehaviorDescriptor("unparsed", size_bin, runtime_bin)
 
     function_names = {
-        node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     }
     called_names = {
         node.func.id
@@ -74,7 +76,7 @@ def derive_behavior_descriptor(
     imported_roots = {
         alias.asname or alias.name.split(".", 1)[0]
         for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
+        if isinstance(node, ast.Import | ast.ImportFrom)
         for alias in node.names
     }
 
@@ -82,14 +84,14 @@ def derive_behavior_descriptor(
         structure = "recursive"
     elif imported_roots & {"numpy", "np", "jax", "torch", "numba"}:
         structure = "vectorized"
-    elif any(isinstance(node, (ast.For, ast.While, ast.AsyncFor)) for node in ast.walk(tree)):
+    elif any(isinstance(node, ast.For | ast.While | ast.AsyncFor) for node in ast.walk(tree)):
         structure = "iterative"
     elif any(
-        isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+        isinstance(node, ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp)
         for node in ast.walk(tree)
     ):
         structure = "comprehension"
-    elif any(isinstance(node, (ast.If, ast.Match)) for node in ast.walk(tree)):
+    elif any(isinstance(node, ast.If | ast.Match) for node in ast.walk(tree)):
         structure = "branching"
     else:
         structure = "straight_line"

@@ -357,6 +357,11 @@ def run(
     task: str | None = typer.Argument(None, help="任务描述或初始代码文件路径；--resume 时可省略"),
     config: str = typer.Option("omnievolve.toml", "--config", "-c", help="配置文件路径"),
     evaluator: str = typer.Option(..., "--evaluator", "-e", help="评估器路径 (module:Class)"),
+    task_name_override: str | None = typer.Option(
+        None,
+        "--task-name",
+        help="显式任务标识；研究 runner 用它避免不同 initial_code.py 任务混淆",
+    ),
     resume: str | None = typer.Option(None, "--resume", help="恢复实验 ID"),
     generations: int | None = typer.Option(None, "--gens", "-g", help="最大代数"),
     trusted: bool = typer.Option(False, "--trusted", help="启用非隔离 subprocess 模式"),
@@ -457,6 +462,10 @@ def run(
         else:
             initial_code = task
             task_name = task[:60]
+        if task_name_override is not None:
+            task_name = task_name_override.strip()
+            if not task_name:
+                raise typer.BadParameter("--task-name must not be empty")
 
         exp = exp_repo.create(
             task_id=task_name,
@@ -524,7 +533,19 @@ def status(
     table.add_row("started_at", str(exp.started_at))
     table.add_row("finished_at", str(exp.finished_at))
     table.add_row("total_tokens", str(exp.total_tokens))
-    table.add_row("total_cost_usd", f"${exp.total_cost_usd:.4f}")
+    cost_row = db.fetchone(
+        """
+        SELECT COUNT(*) AS calls, COUNT(cost_usd) AS priced
+        FROM llm_call_ledger WHERE experiment_id = ?
+        """,
+        (experiment_id,),
+    )
+    cost_known = bool(cost_row and cost_row["calls"] == cost_row["priced"])
+    table.add_row(
+        "total_cost_usd",
+        f"${exp.total_cost_usd:.4f}" if cost_known else "unknown",
+    )
+    table.add_row("cost_known", str(cost_known).lower())
     table.add_row("total_compute_sec", f"{exp.total_compute_sec:.1f}")
     table.add_row("champion_policy_id", str(exp.champion_policy_id))
     console.print(table)
@@ -1176,7 +1197,11 @@ def _print_result(result, experiment_id: str) -> None:  # noqa: ANN001
     table.add_row("total_generations", str(result.total_generations))
     table.add_row("total_candidates", str(result.total_candidates))
     table.add_row("total_tokens", str(result.total_tokens))
-    table.add_row("total_cost_usd", f"${result.total_cost_usd:.4f}")
+    table.add_row(
+        "total_cost_usd",
+        f"${result.total_cost_usd:.4f}" if result.cost_known else "unknown",
+    )
+    table.add_row("cost_known", str(result.cost_known).lower())
     console.print(table)
 
 

@@ -473,7 +473,11 @@ class TestEvolutionEngineE2E:
         assert result.total_generations >= 1
         assert result.total_candidates >= 1
         assert result.total_tokens >= 0
-        assert result.total_cost_usd >= 0.0
+        if result.cost_known:
+            assert result.total_cost_usd is not None
+            assert result.total_cost_usd >= 0.0
+        else:
+            assert result.total_cost_usd is None
         assert result.total_compute_sec >= 0.0
 
 

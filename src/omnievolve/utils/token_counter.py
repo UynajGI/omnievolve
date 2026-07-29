@@ -28,7 +28,8 @@ class UsageRecord:
     model: str
     input_tokens: int
     output_tokens: int
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
+    cost_known: bool = False
     compute_sec: float = 0.0
 
 
@@ -42,6 +43,7 @@ class BudgetState:
 
     used_tokens: int = 0
     used_cost_usd: float = 0.0
+    cost_known: bool = True
     used_compute_sec: float = 0.0
 
     def __post_init__(self) -> None:
@@ -56,7 +58,9 @@ class BudgetState:
         return max(0, self.token_budget - self.used_tokens)
 
     @property
-    def remaining_cost(self) -> float:
+    def remaining_cost(self) -> float | None:
+        if not self.cost_known:
+            return None
         return max(0.0, self.cost_budget_usd - self.used_cost_usd)
 
     @property
@@ -75,7 +79,7 @@ class BudgetState:
     def is_exhausted(self) -> bool:
         if self.remaining_tokens <= 0:
             return True
-        if self.remaining_cost <= 0:
+        if self.remaining_cost is not None and self.remaining_cost <= 0:
             return True
         if self.remaining_compute is not None and self.remaining_compute <= 0:
             return True
@@ -95,6 +99,7 @@ class TokenCounter:
         self._total_input = 0
         self._total_output = 0
         self._total_cost = 0.0
+        self._cost_known = True
         self._total_compute = 0.0
 
     def estimate_cost(
@@ -102,12 +107,11 @@ class TokenCounter:
         model: str,
         input_tokens: int,
         output_tokens: int,
-    ) -> float:
-        """估算费用."""
+    ) -> float | None:
+        """Return catalog cost, or ``None`` when the model price is unknown."""
         pricing = MODEL_PRICING.get(model)
         if pricing is None:
-            # 未知模型使用平均定价
-            return (input_tokens + output_tokens) * 0.001 / 1000
+            return None
         return input_tokens * pricing["input"] / 1000 + output_tokens * pricing["output"] / 1000
 
     def record(
@@ -116,20 +120,31 @@ class TokenCounter:
         input_tokens: int,
         output_tokens: int,
         compute_sec: float = 0.0,
+        *,
+        cost_usd: float | None = None,
+        cost_known: bool | None = None,
     ) -> UsageRecord:
         """记录使用量."""
-        cost = self.estimate_cost(model, input_tokens, output_tokens)
+        if cost_known is None:
+            cost_usd = self.estimate_cost(model, input_tokens, output_tokens)
+            cost_known = cost_usd is not None
+        elif cost_known and cost_usd is None:
+            raise ValueError("cost_usd is required when cost_known=True")
         record = UsageRecord(
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=cost,
+            cost_usd=cost_usd,
+            cost_known=cost_known,
             compute_sec=compute_sec,
         )
 
         self._total_input += input_tokens
         self._total_output += output_tokens
-        self._total_cost += cost
+        if cost_usd is not None:
+            self._total_cost += cost_usd
+        if not cost_known:
+            self._cost_known = False
         self._total_compute += compute_sec
 
         return record
@@ -139,8 +154,17 @@ class TokenCounter:
         return self._total_input + self._total_output
 
     @property
-    def total_cost(self) -> float:
+    def total_cost(self) -> float | None:
+        return self._total_cost if self._cost_known else None
+
+    @property
+    def known_cost(self) -> float:
+        """Known subtotal, never a substitute for total cost when incomplete."""
         return self._total_cost
+
+    @property
+    def cost_known(self) -> bool:
+        return self._cost_known
 
     @property
     def total_compute_sec(self) -> float:
@@ -152,7 +176,9 @@ class TokenCounter:
             "total_input_tokens": self._total_input,
             "total_output_tokens": self._total_output,
             "total_tokens": self.total_tokens,
-            "total_cost_usd": self._total_cost,
+            "total_cost_usd": self.total_cost,
+            "known_cost_usd": self._total_cost,
+            "cost_known": self._cost_known,
             "total_compute_sec": self._total_compute,
         }
 
@@ -162,7 +188,9 @@ class TokenCounter:
             return
         self._total_input = int(state.get("total_input_tokens", 0))
         self._total_output = int(state.get("total_output_tokens", 0))
-        self._total_cost = float(state.get("total_cost_usd", 0.0))
+        raw_cost = state.get("known_cost_usd", state.get("total_cost_usd", 0.0))
+        self._total_cost = float(raw_cost or 0.0)
+        self._cost_known = bool(state.get("cost_known", raw_cost is not None))
         self._total_compute = float(state.get("total_compute_sec", 0.0))
 
 
@@ -195,18 +223,32 @@ class BudgetGuard:
         input_tokens: int,
         output_tokens: int,
         compute_sec: float = 0.0,
+        *,
+        cost_usd: float | None = None,
+        cost_known: bool | None = None,
     ) -> UsageRecord:
         """消耗预算."""
-        record = self._counter.record(model, input_tokens, output_tokens, compute_sec)
+        record = self._counter.record(
+            model,
+            input_tokens,
+            output_tokens,
+            compute_sec,
+            cost_usd=cost_usd,
+            cost_known=cost_known,
+        )
 
         self._state.used_tokens += record.input_tokens + record.output_tokens
-        self._state.used_cost_usd += record.cost_usd
+        if record.cost_usd is not None:
+            self._state.used_cost_usd += record.cost_usd
+        if not record.cost_known:
+            self._state.cost_known = False
         self._state.used_compute_sec += record.compute_sec
 
         if self._state.is_exhausted:
             logger.warning(
                 f"Budget exhausted: tokens={self._state.used_tokens}/{self._state.token_budget}, "
-                f"cost=${self._state.used_cost_usd:.2f}/${self._state.cost_budget_usd:.2f}"
+                f"cost=${self._state.used_cost_usd:.2f}/${self._state.cost_budget_usd:.2f}, "
+                f"cost_known={self._state.cost_known}"
             )
 
         return record
@@ -219,7 +261,11 @@ class BudgetGuard:
             "token_remaining": self._state.remaining_tokens,
             "token_ratio": self._state.token_ratio,
             "cost_budget": self._state.cost_budget_usd,
-            "cost_used": self._state.used_cost_usd,
+            "cost_used": (
+                self._state.used_cost_usd if self._state.cost_known else None
+            ),
+            "known_cost_used": self._state.used_cost_usd,
+            "cost_known": self._state.cost_known,
             "cost_remaining": self._state.remaining_cost,
             "is_exhausted": self._state.is_exhausted,
         }
@@ -232,6 +278,7 @@ class BudgetGuard:
             "compute_budget_sec": self._state.compute_budget_sec,
             "used_tokens": self._state.used_tokens,
             "used_cost_usd": self._state.used_cost_usd,
+            "cost_known": self._state.cost_known,
             "used_compute_sec": self._state.used_compute_sec,
             "counter": self._counter.get_stats(),
         }
@@ -259,6 +306,9 @@ class BudgetGuard:
         self._state.used_cost_usd = max(
             self._state.used_cost_usd,
             float(state.get("used_cost_usd", 0.0)),
+        )
+        self._state.cost_known = self._state.cost_known and bool(
+            state.get("cost_known", True)
         )
         self._state.used_compute_sec = max(
             self._state.used_compute_sec,
