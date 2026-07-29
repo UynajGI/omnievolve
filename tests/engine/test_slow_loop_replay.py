@@ -151,6 +151,9 @@ class TestSlowLoopPromotion:
         new_genome, new_id = result
         assert new_id == "challenger-1"
         assert new_genome is not None
+        replay_request = slow_loop._policy_replay_executor.run_paired.call_args.args[0]
+        assert replay_request.token_budget_per_arm == 150_000
+        assert replay_request.token_budget_per_seed == 50_000
         slow_loop._policy_archive.promote_to_champion.assert_called_once_with("challenger-1")
         slow_loop._experiment_repo.set_champion_policy.assert_called_once_with(
             "exp1", "challenger-1"

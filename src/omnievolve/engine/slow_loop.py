@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MIN_CANARY_TOKENS_PER_SEED = 50_000
+
 
 class SlowLoopController:
     """Slow Loop 控制器 — 策略窗口评估与受控元进化.
@@ -227,6 +229,19 @@ class SlowLoopController:
             if experiment is not None and isinstance(experiment.task_name, str)
             else ""
         )
+        requested_token_budget = max(
+            1,
+            int(100_000 * self._replay_evaluator._budget_ratio),
+        )
+        # A canary seed executes both Director and Coder. Their combined input
+        # and output usage can legitimately exceed one model's 16k output cap,
+        # so preserve the configured fraction while guaranteeing an executable
+        # per-seed envelope. Champion and challenger still receive identical
+        # ceilings, and PolicyReplayEvidence enforces the aggregate arm budget.
+        token_budget_per_arm = max(
+            requested_token_budget,
+            _MIN_CANARY_TOKENS_PER_SEED * len(replay_seeds),
+        )
         replay_request = PolicyReplayRequest(
             experiment_id=experiment_id,
             champion_policy_id=champion_policy_id,
@@ -235,7 +250,7 @@ class SlowLoopController:
             challenger=new_genome,
             snapshot_id=snapshot_id,
             seeds=replay_seeds,
-            token_budget_per_arm=max(1, int(100_000 * self._replay_evaluator._budget_ratio)),
+            token_budget_per_arm=token_budget_per_arm,
             wall_budget_sec_per_arm=float(300 * len(replay_seeds)),
             task_name=task_name,
             frontier_refs=frontier_refs,
