@@ -238,6 +238,53 @@ class TestEvolutionEngineE2E:
         graph = gs.load_subgraph(experiment)
         assert graph.number_of_nodes() >= 1
 
+    def test_optional_qd_and_operator_portfolio_change_runtime_state(
+        self, db, tmp_artifact_store, sandbox, experiment
+    ):
+        engine = EvolutionEngine(
+            db,
+            tmp_artifact_store,
+            StubEvaluator(),
+            sandbox,
+            RoleAwareFakeLLM(),
+            experiment_id=experiment,
+            evaluator_version_id=StubEvaluator.version_id,
+            environment_version_id=sandbox.environment_version_id,
+            config=EvolutionConfig(
+                max_generations=2,
+                population_size=2,
+                island_count=1,
+                crossover_rate=0.0,
+                sandbox_timeout=5.0,
+                qd_archive_enabled=True,
+                qd_parent_probability=1.0,
+                operator_portfolio_enabled=True,
+            ),
+            policy_archive=PolicyArchive(db),
+        )
+
+        engine.run("def f():\n    return 0\n", "e2e-task")
+
+        qd_stats = engine._behavior_archive.get_stats()  # noqa: SLF001
+        assert qd_stats["islands"]["island_0"]["occupied_cells"] >= 1
+        operator_stats = engine._operator_portfolio.get_stats()  # noqa: SLF001
+        assert sum(
+            operator["count"]
+            for context in operator_stats["contexts"].values()
+            for operator in context.values()
+        ) >= 1
+
+        engine._select_parents("island_0")  # noqa: SLF001
+        assert engine._last_selection_trace["mechanism"] == "qd_archive"  # noqa: SLF001
+
+        row = db.fetchone(
+            "SELECT checkpoint_data FROM experiment WHERE id = ?",
+            (experiment,),
+        )
+        checkpoint = json.loads(row["checkpoint_data"])
+        assert checkpoint["runtime_state"]["behavior_archive"] is not None
+        assert checkpoint["runtime_state"]["operator_portfolio"] is not None
+
     def test_slow_loop_creates_challenger_policies(
         self, db, tmp_artifact_store, sandbox, experiment
     ):

@@ -825,7 +825,8 @@ def research_benchmark(
     action: str = typer.Argument(
         "plan",
         help=(
-            "calibrate、plan、plan-pilot、plan-reference、execute、analyze 或 replay"
+            "calibrate、plan、plan-pilot、plan-reference、plan-operator、"
+            "plan-qd、execute、analyze 或 replay"
         ),
     ),
     output: str = typer.Option(
@@ -890,7 +891,9 @@ def research_benchmark(
         PILOT_TASK_NAMES,
         PILOT_TASKS,
         build_default_matrix,
+        build_operator_portfolio_matrix,
         build_pilot_matrix,
+        build_qd_archive_matrix,
         build_reference_credit_matrix,
         load_calibration_repetitions,
         summarize_results,
@@ -937,7 +940,13 @@ def research_benchmark(
         )
         return
 
-    if action in {"plan", "plan-pilot", "plan-reference"}:
+    if action in {
+        "plan",
+        "plan-pilot",
+        "plan-reference",
+        "plan-operator",
+        "plan-qd",
+    }:
         try:
             seed_values = tuple(int(value.strip()) for value in seeds.split(",") if value.strip())
             if action == "plan":
@@ -977,8 +986,18 @@ def research_benchmark(
                     seeds=seed_values[:3],
                     eval_repetitions=calibrated_repetitions,
                 )
-            else:
+            elif action == "plan-reference":
                 jobs = build_reference_credit_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
+            elif action == "plan-operator":
+                jobs = build_operator_portfolio_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
+            else:
+                jobs = build_qd_archive_matrix(
                     seeds=seed_values,
                     eval_repetitions=eval_repetitions,
                 )
@@ -1092,8 +1111,8 @@ def research_benchmark(
         return
 
     raise typer.BadParameter(
-        "action must be calibrate, plan, plan-pilot, plan-reference, execute, "
-        "analyze, or replay",
+        "action must be calibrate, plan, plan-pilot, plan-reference, "
+        "plan-operator, plan-qd, execute, analyze, or replay",
         param_hint="ACTION",
     )
 

@@ -249,7 +249,7 @@ class ModelRouter:
         elif algorithm == "thompson":
             self._strategy = ThompsonSampling(slots, **kwargs)
         else:
-            self._strategy = SlidingWindowUCB(slots, **kwargs)
+            raise ValueError(f"unsupported model routing algorithm: {algorithm!r}")
 
     def select(self, ctx: RouteContext) -> str:
         """选择模型."""

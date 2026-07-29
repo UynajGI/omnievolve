@@ -104,6 +104,10 @@ class LLMGateway:
         self._retry_backoff_base = retry_backoff_base
         self._fallback_model = fallback_model
         self._fallback_endpoints = tuple(fallback_endpoints or ())
+        # Avoid paying the same permanent provider/model failure on every role
+        # call. These sets are process-local and intentionally never serialized.
+        self._disabled_credentials: set[tuple[str | None, str | None]] = set()
+        self._disabled_endpoints: set[tuple[str, str | None, str | None]] = set()
         self._total_tokens = 0
         self._total_cost = 0.0
         # P1: 熔断器 + 限流
@@ -174,15 +178,21 @@ class LLMGateway:
         failed_credentials: set[tuple[str | None, str | None]] = set()
         for endpoint_index, endpoint in enumerate(endpoints_to_try):
             credential_id = (endpoint.api_key, endpoint.api_base)
-            if credential_id in failed_credentials:
+            endpoint_id = (endpoint.model, endpoint.api_key, endpoint.api_base)
+            if (
+                credential_id in failed_credentials
+                or credential_id in self._disabled_credentials
+                or endpoint_id in self._disabled_endpoints
+            ):
                 continue
             try_model = endpoint.model
+            provider_model = self._provider_model(try_model, endpoint.api_base)
             for attempt in range(self._max_retries):
                 try:
                     import litellm
 
                     response = litellm.completion(
-                        model=try_model,
+                        model=provider_model,
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
@@ -263,6 +273,7 @@ class LLMGateway:
                         self._circuit_breaker.on_failure(safe_error)
                     if self._is_authentication_error(e):
                         failed_credentials.add(credential_id)
+                        self._disabled_credentials.add(credential_id)
                         has_distinct_fallback = any(
                             (candidate.api_key, candidate.api_base) not in failed_credentials
                             for candidate in endpoints_to_try[endpoint_index + 1 :]
@@ -275,6 +286,7 @@ class LLMGateway:
                             break
                         raise LLMAuthenticationError(safe_error) from e
                     if self._is_permanent_endpoint_error(e):
+                        self._disabled_endpoints.add(endpoint_id)
                         if endpoint_index < len(endpoints_to_try) - 1:
                             logger.warning(
                                 "Permanent provider/model failure for model=%s; "
@@ -293,6 +305,14 @@ class LLMGateway:
         safe_error = self._redact_error(last_error)
         logger.error("All LLM retries exhausted: %s", safe_error)
         raise self._typed_error(last_error, safe_error) from last_error
+
+    @staticmethod
+    def _provider_model(model: str, api_base: str | None) -> str:
+        """Tell LiteLLM to use its OpenAI-compatible adapter for custom bases."""
+
+        if api_base and "/" not in model:
+            return f"openai/{model}"
+        return model
 
     def fork(self, db: Database | None = None) -> LLMGateway:
         """Create an independent accounting/retry context for a canary arm."""

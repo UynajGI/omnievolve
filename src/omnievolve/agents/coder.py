@@ -117,6 +117,15 @@ class Coder:
     @staticmethod
     def _select_mode(ctx: AgentContext) -> GenerationMode:
         """2.3: 根据上下文状态选择生成模式."""
+        requested = {
+            "rewrite": GenerationMode.FULL_REWRITE,
+            "crossover": GenerationMode.FUSION_AWARE,
+            "point": GenerationMode.TARGETED_DIFF,
+            "diff": GenerationMode.TARGETED_DIFF,
+            "repair": GenerationMode.TARGETED_DIFF,
+        }.get(ctx.generation_mode)
+        if requested is not None:
+            return requested
         if ctx.stagnation_level >= 3:
             return GenerationMode.STEPWISE  # Phase 9: 极度停滞时分步生成
         if ctx.stagnation_level >= 2:
@@ -178,6 +187,15 @@ class Coder:
                 " Pay special attention to the previous failure above — "
                 "ensure your edits fix the root cause, not just the symptom."
             )
+        if ctx.generation_mode == "point":
+            instruction += " Make exactly one localized semantic change."
+        elif ctx.generation_mode == "repair":
+            instruction += (
+                " Treat this as a repair operator: preserve working behavior and "
+                "focus on the most likely correctness or execution defect."
+            )
+        elif ctx.generation_mode == "diff":
+            instruction += " Prefer a small atomic SEARCH/REPLACE patch."
         parts.append(instruction)
 
         return "\n".join(parts)

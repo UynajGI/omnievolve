@@ -129,6 +129,9 @@ def _config() -> EvolutionConfig:
         self_evolve_enabled=False,
         compute_budget_sec=0,
         seed=20260729,
+        qd_archive_enabled=True,
+        qd_parent_probability=1.0,
+        operator_portfolio_enabled=True,
     )
 
 
@@ -216,6 +219,10 @@ def _normalized_state(db: Database, experiment_id: str) -> dict[str, Any]:
     )
     checkpoint = json.loads(experiment["checkpoint_data"])
     runtime = checkpoint["runtime_state"]
+    behavior_archive = runtime["behavior_archive"]
+    for cells in behavior_archive.get("cells", {}).values():
+        for payload in cells.values():
+            payload["candidate_id"] = id_to_hash[payload["candidate_id"]]
     stable_checkpoint = {
         "schema_version": checkpoint["schema_version"],
         "generation": checkpoint["generation"],
@@ -227,6 +234,8 @@ def _normalized_state(db: Database, experiment_id: str) -> dict[str, Any]:
         "budget": runtime["budget"],
         "search_policy": runtime["search_policy"],
         "novelty_gate": runtime["novelty_gate"],
+        "behavior_archive": behavior_archive,
+        "operator_portfolio": runtime["operator_portfolio"],
         "selection_mode": runtime["selection_mode"],
         "slow_loop_triggered": runtime["slow_loop_triggered"],
     }

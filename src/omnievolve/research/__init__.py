@@ -7,7 +7,9 @@ from omnievolve.research.matrix import (
     BenchmarkJob,
     BenchmarkTask,
     build_default_matrix,
+    build_operator_portfolio_matrix,
     build_pilot_matrix,
+    build_qd_archive_matrix,
     build_reference_credit_matrix,
     enqueue_matrix,
     load_calibration_repetitions,
@@ -16,6 +18,9 @@ from omnievolve.research.matrix import (
 from omnievolve.research.statistics import (
     assess_pilot_gate,
     calibrate_evaluator_noise,
+    cliffs_delta,
+    holm_adjust,
+    paired_randomization_p_value,
     paired_seed_power_analysis,
 )
 
@@ -26,12 +31,17 @@ __all__ = [
     "PILOT_TASK_NAMES",
     "PILOT_TASKS",
     "build_default_matrix",
+    "build_operator_portfolio_matrix",
     "build_pilot_matrix",
+    "build_qd_archive_matrix",
     "build_reference_credit_matrix",
     "assess_pilot_gate",
     "calibrate_evaluator_noise",
+    "cliffs_delta",
     "enqueue_matrix",
     "load_calibration_repetitions",
+    "holm_adjust",
+    "paired_randomization_p_value",
     "paired_seed_power_analysis",
     "summarize_results",
 ]

@@ -46,6 +46,8 @@ class AgentContext:
     prompt_version_id: str = ""
     system_prompt: str = ""
     model: str = ""
+    # Optional operator-portfolio directive. Empty preserves legacy mode selection.
+    generation_mode: str = ""
     provenance: dict = field(default_factory=dict)
 
 

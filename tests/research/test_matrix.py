@@ -6,7 +6,9 @@ import pytest
 
 from omnievolve.research.matrix import (
     build_default_matrix,
+    build_operator_portfolio_matrix,
     build_pilot_matrix,
+    build_qd_archive_matrix,
     build_reference_credit_matrix,
     load_calibration_repetitions,
     summarize_results,
@@ -103,6 +105,34 @@ def test_reference_credit_ablation_is_separate_and_paired():
     )
 
 
+def test_operator_portfolio_ablation_is_separate_and_paired():
+    jobs = build_operator_portfolio_matrix()
+
+    assert len(jobs) == 9 * 3 * 5
+    assert {job.protocol for job in jobs} == {"operator_portfolio"}
+    assert {job.variant.name for job in jobs} == {
+        "operator_fixed",
+        "operator_ucb",
+        "operator_thompson",
+    }
+    assert all(
+        job.variant.config_overrides["evolution.qd_archive_enabled"] is False
+        for job in jobs
+    )
+
+
+def test_qd_archive_ablation_is_separate_and_does_not_enable_operator_bandit():
+    jobs = build_qd_archive_matrix()
+
+    assert len(jobs) == 9 * 2 * 5
+    assert {job.protocol for job in jobs} == {"qd_archive"}
+    assert {job.variant.name for job in jobs} == {"qd_off", "qd_on"}
+    assert all(
+        job.variant.config_overrides["evolution.operator_portfolio_enabled"] is False
+        for job in jobs
+    )
+
+
 def test_matrix_requires_five_to_ten_unique_seeds():
     with pytest.raises(ValueError, match="5 to 10"):
         build_default_matrix(seeds=(1, 2))
@@ -152,6 +182,41 @@ def test_slow_loop_decision_uses_paired_confidence_interval():
 
     assert decision["decision"] == "keep"
     assert decision["paired_runs"] == 5
+
+
+def test_independent_ablation_summary_is_protocol_scoped_and_holm_corrected():
+    records = []
+    for seed in range(5):
+        for variant, score in (
+            ("operator_fixed", 0.5),
+            ("operator_ucb", 0.7),
+            ("operator_thompson", 0.6),
+        ):
+            records.append(
+                {
+                    "protocol": "operator_portfolio",
+                    "task": "sort",
+                    "variant": variant,
+                    "seed": seed,
+                    "status": "completed",
+                    "score": score,
+                    "frontier_auc": score,
+                }
+            )
+
+    report = summarize_results(records, include_cost_metric=False)
+
+    assert {cell["protocol"] for cell in report["cells"]} == {
+        "operator_portfolio"
+    }
+    assert {comparison["relative_to"] for comparison in report["comparisons"]} == {
+        "operator_fixed"
+    }
+    assert all(
+        0.0 <= comparison["holm_adjusted_p"] <= 1.0
+        for comparison in report["comparisons"]
+    )
+    assert all("cliffs_delta" in comparison for comparison in report["comparisons"])
 
 
 def test_pilot_summary_applies_gate_and_recommends_formal_seed_count():

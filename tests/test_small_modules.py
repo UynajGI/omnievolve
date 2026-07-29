@@ -43,6 +43,14 @@ class TestModelRouter:
         stats = router.get_stats()
         assert "algorithm" in stats
 
+    def test_unknown_algorithm_fails_closed(self):
+        import pytest
+
+        from omnievolve.agents.router import ModelRouter
+
+        with pytest.raises(ValueError, match="unsupported model routing algorithm"):
+            ModelRouter([], algorithm="typo")
+
 
 # --------------------------------------------------------------------------- #
 #  selection.py

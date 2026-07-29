@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import statistics
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -18,6 +19,9 @@ from typing import Any, cast
 from omnievolve.eval.benchmark_stats import detect_regression, summarize_samples
 from omnievolve.research.statistics import (
     assess_pilot_gate,
+    cliffs_delta,
+    holm_adjust,
+    paired_randomization_p_value,
     paired_seed_power_analysis,
 )
 
@@ -171,6 +175,64 @@ REFERENCE_CREDIT_VARIANTS = (
         "reference_credit_off",
         "Paired ablation with graph reference-edge credit disabled.",
         {"evolution.reference_credit_enabled": False},
+    ),
+)
+
+OPERATOR_PORTFOLIO_VARIANTS = (
+    AblationVariant(
+        "operator_fixed",
+        "Existing fixed/deterministic generation-mode mix without an operator bandit.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "evolution.operator_portfolio_enabled": False,
+            "evolution.qd_archive_enabled": False,
+        },
+        ("--no-self-evolve",),
+    ),
+    AblationVariant(
+        "operator_ucb",
+        "Task/stage-conditioned UCB scheduling of point/diff/rewrite/crossover/repair.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "evolution.operator_portfolio_enabled": True,
+            "evolution.operator_portfolio_algorithm": "ucb",
+            "evolution.qd_archive_enabled": False,
+        },
+        ("--no-self-evolve",),
+    ),
+    AblationVariant(
+        "operator_thompson",
+        "Task/stage-conditioned Thompson scheduling of the same operator portfolio.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "evolution.operator_portfolio_enabled": True,
+            "evolution.operator_portfolio_algorithm": "thompson",
+            "evolution.qd_archive_enabled": False,
+        },
+        ("--no-self-evolve",),
+    ),
+)
+
+QD_ARCHIVE_VARIANTS = (
+    AblationVariant(
+        "qd_off",
+        "Existing island elite archive without behavior-cell parent sampling.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "evolution.qd_archive_enabled": False,
+            "evolution.operator_portfolio_enabled": False,
+        },
+        ("--no-self-evolve",),
+    ),
+    AblationVariant(
+        "qd_on",
+        "Minimal island-local behavior-cell archive with bounded parent sampling.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "evolution.qd_archive_enabled": True,
+            "evolution.operator_portfolio_enabled": False,
+        },
+        ("--no-self-evolve",),
     ),
 )
 
@@ -346,6 +408,80 @@ def build_reference_credit_matrix(
     ]
 
 
+def _build_independent_ablation_matrix(
+    *,
+    variants: tuple[AblationVariant, ...],
+    protocol: str,
+    seeds: range | tuple[int, ...],
+    repetitions: int,
+    eval_repetitions: int | Mapping[str, int],
+) -> list[BenchmarkJob]:
+    seed_values = tuple(seeds)
+    if not 5 <= len(seed_values) <= 10:
+        raise ValueError("independent ablation requires 5 to 10 paired seeds")
+    if len(set(seed_values)) != len(seed_values) or any(seed < 0 for seed in seed_values):
+        raise ValueError("seeds must be unique non-negative integers")
+    if repetitions < 1:
+        raise ValueError("repetitions must be positive")
+    return [
+        BenchmarkJob(
+            run_id=_run_id(
+                task.name,
+                variant.name,
+                seed,
+                protocol=protocol,
+                repetitions=repetitions,
+                eval_repetitions=_eval_repetitions_for_task(
+                    task.name, eval_repetitions
+                ),
+            ),
+            task=task,
+            variant=variant,
+            seed=seed,
+            repetitions=repetitions,
+            eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
+            protocol=protocol,
+        )
+        for task in DEFAULT_TASKS
+        for variant in variants
+        for seed in seed_values
+    ]
+
+
+def build_operator_portfolio_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+    eval_repetitions: int | Mapping[str, int] = 3,
+) -> list[BenchmarkJob]:
+    """Build the separate fixed-vs-UCB-vs-Thompson operator experiment."""
+
+    return _build_independent_ablation_matrix(
+        variants=OPERATOR_PORTFOLIO_VARIANTS,
+        protocol="operator_portfolio",
+        seeds=seeds,
+        repetitions=repetitions,
+        eval_repetitions=eval_repetitions,
+    )
+
+
+def build_qd_archive_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+    eval_repetitions: int | Mapping[str, int] = 3,
+) -> list[BenchmarkJob]:
+    """Build the separate minimal behavior-archive ablation."""
+
+    return _build_independent_ablation_matrix(
+        variants=QD_ARCHIVE_VARIANTS,
+        protocol="qd_archive",
+        seeds=seeds,
+        repetitions=repetitions,
+        eval_repetitions=eval_repetitions,
+    )
+
+
 def write_manifest(
     jobs: list[BenchmarkJob],
     output: str | Path,
@@ -405,12 +541,16 @@ def summarize_results(
     deterministic_replay_passed: bool = False,
 ) -> dict[str, Any]:
     """Aggregate paired research results without treating unknown cost as zero."""
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    failures: dict[tuple[str, str], dict[str, int]] = defaultdict(
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    failures: dict[tuple[str, str, str], dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
     for record in records:
-        key = (str(record["task"]), str(record["variant"]))
+        key = (
+            str(record.get("protocol") or "formal"),
+            str(record["task"]),
+            str(record["variant"]),
+        )
         if record.get("status") == "completed" and record.get("score") is not None:
             grouped[key].append(record)
         else:
@@ -436,8 +576,9 @@ def summarize_results(
         ]
         cells.append(
             {
-                "task": key[0],
-                "variant": key[1],
+                "protocol": key[0],
+                "task": key[1],
+                "variant": key[2],
                 "completed": len(completed),
                 "failed": sum(failures[key].values()),
                 "failure_categories": dict(sorted(failures[key].items())),
@@ -456,62 +597,114 @@ def summarize_results(
             }
         )
     comparisons = []
-    tasks = sorted({task for task, _ in grouped})
-    for task in tasks:
-        baseline_records = grouped.get((task, "full"), [])
-        baseline = {
-            int(record["seed"]): float(record.get("frontier_auc", record["score"]))
-            for record in baseline_records
-            if record.get("seed") is not None
-        }
-        if not baseline_records:
-            continue
-        for variant in sorted(name for current_task, name in grouped if current_task == task):
-            if variant == "full":
-                continue
-            current_records = grouped[(task, variant)]
-            current = {
-                int(record["seed"]): float(record.get("frontier_auc", record["score"]))
-                for record in current_records
+    baseline_names = {
+        "operator_portfolio": "operator_fixed",
+        "qd_archive": "qd_off",
+        "reference_credit": "reference_credit_off",
+    }
+    protocols = sorted({protocol for protocol, _, _ in grouped})
+    for protocol in protocols:
+        baseline_name = baseline_names.get(protocol, "full")
+        tasks = sorted(
+            {
+                task
+                for current_protocol, task, _ in grouped
+                if current_protocol == protocol
+            }
+        )
+        for task in tasks:
+            baseline_records = grouped.get((protocol, task, baseline_name), [])
+            baseline = {
+                int(record["seed"]): float(
+                    record.get("frontier_auc", record["score"])
+                )
+                for record in baseline_records
                 if record.get("seed") is not None
             }
-            paired_seeds = sorted(set(baseline) & set(current))
-            if paired_seeds:
-                differences = [baseline[seed] - current[seed] for seed in paired_seeds]
-                effect = summarize_samples(differences, seed=0).to_dict()
-                power = (
-                    paired_seed_power_analysis(differences).to_dict()
-                    if len(differences) >= 2
-                    else None
-                )
-                comparisons.append(
-                    {
+            if not baseline_records:
+                continue
+            variants = sorted(
+                name
+                for current_protocol, current_task, name in grouped
+                if current_protocol == protocol and current_task == task
+            )
+            for variant in variants:
+                if variant == baseline_name:
+                    continue
+                current_records = grouped[(protocol, task, variant)]
+                current = {
+                    int(record["seed"]): float(
+                        record.get("frontier_auc", record["score"])
+                    )
+                    for record in current_records
+                    if record.get("seed") is not None
+                }
+                paired_seeds = sorted(set(baseline) & set(current))
+                if paired_seeds:
+                    baseline_values = [baseline[seed] for seed in paired_seeds]
+                    current_values = [current[seed] for seed in paired_seeds]
+                    differences = [
+                        baseline[seed] - current[seed] for seed in paired_seeds
+                    ]
+                    effect = summarize_samples(differences, seed=0).to_dict()
+                    deviation = (
+                        statistics.stdev(differences)
+                        if len(differences) >= 2
+                        else 0.0
+                    )
+                    comparison_record = {
+                        "protocol": protocol,
                         "task": task,
                         "variant": variant,
-                        "relative_to": "full",
+                        "relative_to": baseline_name,
                         "paired_seeds": paired_seeds,
-                        "effect_full_minus_variant": effect,
-                        "power_analysis": power,
+                        "effect_baseline_minus_variant": effect,
+                        "cliffs_delta": cliffs_delta(
+                            baseline_values,
+                            current_values,
+                        ),
+                        "standardized_effect": (
+                            statistics.fmean(differences) / deviation
+                            if deviation > 0
+                            else None
+                        ),
+                        "p_value": paired_randomization_p_value(differences),
+                        "power_analysis": (
+                            paired_seed_power_analysis(differences).to_dict()
+                            if len(differences) >= 2
+                            else None
+                        ),
                     }
-                )
-            elif not baseline and current_records:
-                # Schema-v1 compatibility only. New research records always
-                # carry seeds and therefore take the paired path above.
-                comparison = detect_regression(
-                    [float(record["score"]) for record in baseline_records],
-                    [float(record["score"]) for record in current_records],
-                    direction="higher",
-                    threshold=0.05,
-                    seed=0,
-                )
-                comparisons.append(
-                    {
-                        "task": task,
-                        "variant": variant,
-                        "relative_to": "full",
-                        **comparison.to_dict(),
-                    }
-                )
+                    if baseline_name == "full":
+                        comparison_record["effect_full_minus_variant"] = effect
+                    comparisons.append(comparison_record)
+                elif not baseline and current_records:
+                    # Schema-v1 compatibility only. New research records carry
+                    # seeds and therefore take the paired path above.
+                    comparison = detect_regression(
+                        [float(record["score"]) for record in baseline_records],
+                        [float(record["score"]) for record in current_records],
+                        direction="higher",
+                        threshold=0.05,
+                        seed=0,
+                    )
+                    comparisons.append(
+                        {
+                            "protocol": protocol,
+                            "task": task,
+                            "variant": variant,
+                            "relative_to": baseline_name,
+                            **comparison.to_dict(),
+                        }
+                    )
+    tested = [
+        (index, comparison)
+        for index, comparison in enumerate(comparisons)
+        if comparison.get("p_value") is not None
+    ]
+    adjusted = holm_adjust([comparison["p_value"] for _, comparison in tested])
+    for (index, _), adjusted_value in zip(tested, adjusted, strict=True):
+        comparisons[index]["holm_adjusted_p"] = adjusted_value
     power_results = [
         comparison["power_analysis"]
         for comparison in comparisons
@@ -537,7 +730,7 @@ def summarize_results(
     )
     pilot_gate = (
         assess_pilot_gate(
-            records,
+            [record for record in records if record.get("protocol") == "pilot"],
             include_cost_metric=include_cost_metric,
             deterministic_replay_passed=deterministic_replay_passed,
         ).to_dict()

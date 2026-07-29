@@ -70,6 +70,10 @@ class TestModelRoutingSettings:
         assert s.algorithm == "sliding_window_ucb"
         assert s.ucb_c == pytest.approx(1.414)
 
+    def test_unknown_algorithm_fails_closed(self):
+        with pytest.raises(ValueError, match="algorithm"):
+            ModelRoutingSettings(algorithm="typo")
+
 
 class TestModelsSettings:
     def test_defaults(self):

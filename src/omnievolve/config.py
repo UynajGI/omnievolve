@@ -43,6 +43,12 @@ class EvolutionSettings(BaseSettings):
     random_search_mode: bool = False
     reference_credit_enabled: bool = True
     reference_credit_weight: float = Field(default=0.25, ge=0.0, le=1.0)
+    qd_archive_enabled: bool = False
+    qd_parent_probability: float = Field(default=0.15, ge=0.0, le=1.0)
+    qd_max_cells_per_island: int = Field(default=128, gt=0)
+    operator_portfolio_enabled: bool = False
+    operator_portfolio_algorithm: Literal["ucb", "thompson"] = "ucb"
+    operator_portfolio_ucb_c: float = Field(default=1.414, ge=0.0)
 
 
 class SelectionSettings(BaseSettings):
@@ -65,7 +71,9 @@ class SelectionSettings(BaseSettings):
 class ModelRoutingSettings(BaseSettings):
     """模型路由配置."""
 
-    algorithm: str = "sliding_window_ucb"
+    algorithm: Literal["sliding_window_ucb", "discounted_ucb", "thompson"] = (
+        "sliding_window_ucb"
+    )
     window_size: int = 50
     ucb_c: float = 1.414
     cost_weight: float = 0.2
@@ -359,6 +367,12 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         random_search_mode=e.random_search_mode,
         reference_credit_enabled=e.reference_credit_enabled,
         reference_credit_weight=e.reference_credit_weight,
+        qd_archive_enabled=e.qd_archive_enabled,
+        qd_parent_probability=e.qd_parent_probability,
+        qd_max_cells_per_island=e.qd_max_cells_per_island,
+        operator_portfolio_enabled=e.operator_portfolio_enabled,
+        operator_portfolio_algorithm=e.operator_portfolio_algorithm,
+        operator_portfolio_ucb_c=e.operator_portfolio_ucb_c,
     )
 
 

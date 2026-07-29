@@ -126,6 +126,55 @@ def paired_seed_power_analysis(
     )
 
 
+def cliffs_delta(left: Sequence[float], right: Sequence[float]) -> float:
+    """Return the rank-based probability-of-superiority effect size."""
+
+    left_values = [float(value) for value in left]
+    right_values = [float(value) for value in right]
+    if not left_values or not right_values:
+        raise ValueError("Cliff's delta requires two non-empty samples")
+    if not all(math.isfinite(value) for value in left_values + right_values):
+        raise ValueError("Cliff's delta requires finite samples")
+    greater = sum(a > b for a in left_values for b in right_values)
+    less = sum(a < b for a in left_values for b in right_values)
+    return (greater - less) / (len(left_values) * len(right_values))
+
+
+def paired_randomization_p_value(differences: Sequence[float]) -> float:
+    """Exact two-sided paired sign-flip test for the 5–10 seed protocol."""
+
+    values = [float(value) for value in differences]
+    if not values or not all(math.isfinite(value) for value in values):
+        raise ValueError("paired randomization requires finite differences")
+    observed = abs(statistics.fmean(values))
+    if observed == 0:
+        return 1.0
+    extreme = 0
+    permutation_count = 1 << len(values)
+    for mask in range(permutation_count):
+        permuted_mean = statistics.fmean(
+            value if mask & (1 << index) else -value
+            for index, value in enumerate(values)
+        )
+        if abs(permuted_mean) >= observed - 1e-15:
+            extreme += 1
+    return extreme / permutation_count
+
+
+def holm_adjust(p_values: Sequence[float]) -> list[float]:
+    """Holm step-down family-wise error correction."""
+
+    values = [float(value) for value in p_values]
+    if not all(0.0 <= value <= 1.0 for value in values):
+        raise ValueError("p-values must be between zero and one")
+    adjusted = [0.0] * len(values)
+    running = 0.0
+    for rank, (index, value) in enumerate(sorted(enumerate(values), key=lambda item: item[1])):
+        running = max(running, min(1.0, (len(values) - rank) * value))
+        adjusted[index] = running
+    return adjusted
+
+
 @dataclass(frozen=True)
 class PilotGate:
     passed: bool

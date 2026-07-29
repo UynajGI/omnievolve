@@ -125,6 +125,12 @@ class EvolutionConfig:
     random_search_mode: bool = False
     reference_credit_enabled: bool = True
     reference_credit_weight: float = 0.25
+    qd_archive_enabled: bool = False
+    qd_parent_probability: float = 0.15
+    qd_max_cells_per_island: int = 128
+    operator_portfolio_enabled: bool = False
+    operator_portfolio_algorithm: str = "ucb"
+    operator_portfolio_ucb_c: float = 1.414
 
 
 @dataclass
@@ -274,6 +280,24 @@ class EvolutionEngine:
         self._selection_injected = parent_selector is not None
         self._selection_mode = "injected" if parent_selector is not None else policy_selector
         self._crossover = crossover or CrossoverOperator()
+
+        # Optional post-baseline experiments.  Both remain off by default and
+        # retain the existing islands/LineageUCB controller as the backbone.
+        self._behavior_archive = None
+        if self._config.qd_archive_enabled:
+            from omnievolve.engine.behavior_archive import BehaviorArchive
+
+            self._behavior_archive = BehaviorArchive(
+                max_cells_per_island=self._config.qd_max_cells_per_island
+            )
+        self._operator_portfolio = None
+        if self._config.operator_portfolio_enabled:
+            from omnievolve.engine.operator_portfolio import OperatorPortfolio
+
+            self._operator_portfolio = OperatorPortfolio(
+                algorithm=self._config.operator_portfolio_algorithm,
+                exploration=self._config.operator_portfolio_ucb_c,
+            )
 
         # 模型路由
         self._model_slots = list(model_slots or [])
@@ -707,7 +731,12 @@ class EvolutionEngine:
             except Exception:
                 logger.debug("Vector index batch processing failed", exc_info=True)
 
-    def _select_parents(self, island_id: str) -> tuple[list[str], str]:
+    def _select_parents(
+        self,
+        island_id: str,
+        *,
+        preferred_operator: str = "",
+    ) -> tuple[list[str], str]:
         """选择父代（步骤 2）：P1-2 软切换 + MCTS 引导 + ParentSelector 兖底.
 
         P1-2: 探索-利用软切换
@@ -737,6 +766,7 @@ class EvolutionEngine:
                 "exploration_weight": w,
                 "parent_ids": list(ids),
                 "relation_type": relation,
+                "preferred_operator": preferred_operator or None,
             }
             logger.info("parent_selection %s", self._last_selection_trace)
             return ids, relation
@@ -750,6 +780,19 @@ class EvolutionEngine:
                 return finish([baseline_id], "mutate", "baseline_bootstrap")
 
         local_candidate_ids = list(island.candidates) if island else []
+        force_crossover = preferred_operator == "crossover"
+        if (
+            self._behavior_archive is not None
+            and local_candidate_ids
+            and not force_crossover
+            and random.random() < self._config.qd_parent_probability
+        ):
+            qd_parent = self._behavior_archive.choose_parent(
+                island_id,
+                allowed_candidate_ids=local_candidate_ids,
+            )
+            if qd_parent is not None:
+                return finish([qd_parent], "mutate", "qd_archive")
         min_parents = getattr(self._crossover, "min_parents", 2)
         if self._selection_mode != "lineage_ucb":
             selected = self._parent_selector.select(
@@ -760,7 +803,9 @@ class EvolutionEngine:
                 island_id=island_id,
                 candidate_ids=local_candidate_ids,
             )
-            if len(selected) >= 2 and random.random() < self._config.crossover_rate:
+            if len(selected) >= 2 and (
+                force_crossover or random.random() < self._config.crossover_rate
+            ):
                 return finish(selected, "crossover", self._selection_mode)
             return finish(selected[:1], "mutate", self._selection_mode)
 
@@ -782,7 +827,7 @@ class EvolutionEngine:
         )
 
         # 3. P1-2: 软切换决策
-        use_exploitation = random.random() > w and scored
+        use_exploitation = not force_crossover and random.random() > w and scored
 
         if use_exploitation:
             # Top-K 利用模式：从全局最高分中加权选择
@@ -801,7 +846,9 @@ class EvolutionEngine:
                 return finish([top_k_id], "mutate", "top_k_exploitation")
 
         # 4. 探索模式（默认）
-        use_crossover = len(scored) >= 2 and random.random() < self._config.crossover_rate
+        use_crossover = len(scored) >= 2 and (
+            force_crossover or random.random() < self._config.crossover_rate
+        )
 
         if use_crossover:
             # Fix 3: crossover 使用 ParentSelector 结果而非 MCTS 路径，回滚虚拟损失
@@ -926,6 +973,16 @@ class EvolutionEngine:
             "champion_policy_id": self._champion_policy_id,
             "best_candidate": list(self._best_candidate) if self._best_candidate else None,
             "novelty_gate": self._novelty_gate.snapshot_state(),
+            "behavior_archive": (
+                self._behavior_archive.snapshot_state()
+                if self._behavior_archive is not None
+                else None
+            ),
+            "operator_portfolio": (
+                self._operator_portfolio.snapshot_state()
+                if self._operator_portfolio is not None
+                else None
+            ),
             "slow_loop_triggered": self._slow_loop_triggered,
             "selection_mode": self._selection_mode,
             "jobs": [dict(row) for row in job_rows],
@@ -967,6 +1024,16 @@ class EvolutionEngine:
                 self._router.restore_state(runtime["router"])
             self._budget_guard.restore_state(runtime.get("budget"))
             self._novelty_gate.restore_state(runtime.get("novelty_gate"))
+            behavior_state = runtime.get("behavior_archive")
+            if behavior_state is not None and self._behavior_archive is None:
+                raise ValueError("checkpoint requires the QD behavior archive")
+            if self._behavior_archive is not None and behavior_state is not None:
+                self._behavior_archive.restore_state(behavior_state)
+            operator_state = runtime.get("operator_portfolio")
+            if operator_state is not None and self._operator_portfolio is None:
+                raise ValueError("checkpoint requires the operator portfolio")
+            if self._operator_portfolio is not None and operator_state is not None:
+                self._operator_portfolio.restore_state(operator_state)
             best = runtime.get("best_candidate")
             if best:
                 self._best_candidate = (str(best[0]), float(best[1]))

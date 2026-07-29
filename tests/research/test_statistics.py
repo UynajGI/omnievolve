@@ -5,6 +5,9 @@ import pytest
 from omnievolve.research.statistics import (
     assess_pilot_gate,
     calibrate_evaluator_noise,
+    cliffs_delta,
+    holm_adjust,
+    paired_randomization_p_value,
     paired_seed_power_analysis,
 )
 
@@ -97,3 +100,10 @@ def test_pilot_gate_requires_replay_pairs_and_known_cost():
 def test_noise_calibration_rejects_too_few_measurements():
     with pytest.raises(ValueError, match="at least 3"):
         calibrate_evaluator_noise([1.0, 1.0])
+
+
+def test_rank_effect_randomization_and_holm_are_deterministic():
+    assert cliffs_delta([3.0, 4.0], [1.0, 2.0]) == 1.0
+    assert paired_randomization_p_value([1.0] * 5) == pytest.approx(2 / 32)
+    adjusted = holm_adjust([0.01, 0.04, 0.03])
+    assert adjusted == pytest.approx([0.03, 0.06, 0.06])

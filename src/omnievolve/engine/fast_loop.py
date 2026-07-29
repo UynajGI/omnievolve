@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
 from omnievolve.engine.novelty import NoveltyDecision, NoveltyResult
+from omnievolve.engine.operator_portfolio import OperatorDecision
 from omnievolve.eval.task_evaluator import (
     CandidateArtifact,
     EvalOutput,
@@ -75,6 +76,7 @@ class PreparedCandidate:
     role_calls: set[str] = field(default_factory=set)
     idea_novelty: NoveltyResult | None = None
     candidate_novelty: NoveltyResult | None = None
+    operator_decision: OperatorDecision | None = None
 
 
 class FastLoopStep:
@@ -125,6 +127,30 @@ class FastLoopStep:
         返回 PreparedCandidate，供 commit_result() 做串行状态合并。
         """
         e = self._e
+        stagnation_level = self._compute_stagnation_level(island_id)
+        operator_decision = None
+        if (
+            e._operator_portfolio is not None  # noqa: SLF001
+            and not e._config.random_search_mode  # noqa: SLF001
+        ):
+            island = e._island_manager.get_island(island_id)  # noqa: SLF001
+            eligible = ["point", "diff", "rewrite"]
+            if island is not None and len(island.elite_archive) >= 2:
+                eligible.append("crossover")
+            if stagnation_level > 0:
+                eligible.append("repair")
+            stage = (
+                "deep_stagnation"
+                if stagnation_level >= 2
+                else "stagnant"
+                if stagnation_level
+                else "normal"
+            )
+            operator_decision = e._operator_portfolio.select(  # noqa: SLF001
+                task=task_name,
+                stage=stage,
+                eligible=eligible,
+            )
 
         # 步骤 2: 选择父代
         with self._prof_step("select_parents", generation):
@@ -137,7 +163,12 @@ class FastLoopStep:
                 parent_ids = [str(baseline_id)] if baseline_id else []
                 relation = "mutate"
             else:
-                parent_ids, relation = e._select_parents(island_id)  # noqa: SLF001
+                parent_ids, relation = e._select_parents(  # noqa: SLF001
+                    island_id,
+                    preferred_operator=(
+                        operator_decision.operator if operator_decision is not None else ""
+                    ),
+                )
 
         # P1-3: 强制反向传播
         if (
@@ -150,7 +181,6 @@ class FastLoopStep:
             return None
 
         parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
-        stagnation_level = self._compute_stagnation_level(island_id)
         director_model = (
             ""
             if e._config.random_search_mode or e._config.single_agent_mode  # noqa: SLF001
@@ -296,6 +326,9 @@ class FastLoopStep:
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
             model=director_model,
+            generation_mode=(
+                operator_decision.operator if operator_decision is not None else ""
+            ),
             prompt_version_id=e._load_champion_prompt("director"),  # noqa: SLF001
         )
 
@@ -487,6 +520,12 @@ class FastLoopStep:
             "relation": relation,
             "model": model,
             "role_models": dict(role_models),
+            "operator": (
+                operator_decision.operator if operator_decision is not None else None
+            ),
+            "operator_stage": (
+                operator_decision.stage if operator_decision is not None else None
+            ),
             **novelty_meta,
         }
 
@@ -570,6 +609,7 @@ class FastLoopStep:
             role_calls=role_calls,
             idea_novelty=idea_novelty,
             candidate_novelty=candidate_novelty,
+            operator_decision=operator_decision,
         )
 
     def commit_result(self, prepared: PreparedCandidate) -> tuple[str | None, str]:
@@ -645,6 +685,22 @@ class FastLoopStep:
                     else 0.5
                 ),
                 critic_passed=prepared.critic_passed,
+            )
+
+        if e._operator_portfolio is not None and prepared.operator_decision is not None:  # noqa: SLF001
+            parent_scores = [
+                e._get_candidate_score(parent_id)  # noqa: SLF001
+                for parent_id in prepared.parent_ids
+            ]
+            parent_best = (
+                max(parent_scores) if parent_scores else e._get_baseline_score()  # noqa: SLF001
+            )
+            passed = prepared.output is not None and prepared.output.passed
+            child_score = prepared.output.score if prepared.output is not None else 0.0
+            e._operator_portfolio.update(  # noqa: SLF001
+                prepared.operator_decision,
+                relative_gain=child_score - parent_best,
+                passed=passed,
             )
 
         return prepared.candidate_id, prepared.artifact_hash
@@ -947,6 +1003,28 @@ class FastLoopStep:
                     output.score,
                     passed=output.passed,
                 )
+                if output.passed and e._behavior_archive is not None:  # noqa: SLF001
+                    try:
+                        code_text = e._artifact_store.load_text(artifact_hash) or ""  # noqa: SLF001
+                        changed = e._behavior_archive.update(  # noqa: SLF001
+                            island_id=island_id,
+                            candidate_id=candidate_id,
+                            score=output.score,
+                            code=code_text,
+                            metrics=output.metrics,
+                        )
+                        logger.info(
+                            "behavior_archive_update candidate=%s island=%s changed=%s",
+                            candidate_id,
+                            island_id,
+                            changed,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Behavior archive update failed for %s",
+                            candidate_id,
+                            exc_info=True,
+                        )
 
         # 搜索状态更新
         e._candidate_repo.update_search_state(  # noqa: SLF001

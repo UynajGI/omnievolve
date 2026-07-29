@@ -16,7 +16,7 @@ def test_authentication_failure_moves_to_distinct_provider(monkeypatch) -> None:
         @staticmethod
         def completion(**kwargs):
             calls.append((kwargs["model"], kwargs["api_base"], kwargs["api_key"]))
-            if kwargs["model"] == "primary":
+            if kwargs["model"] == "openai/primary":
                 raise AuthenticationError("invalid key")
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content="fallback-ok"))],
@@ -44,8 +44,8 @@ def test_authentication_failure_moves_to_distinct_provider(monkeypatch) -> None:
     assert response.model == "fallback"
     assert response.content == "fallback-ok"
     assert calls == [
-        ("primary", "https://primary.invalid/v1", "primary-secret"),
-        ("fallback", "https://fallback.invalid/v1", "fallback-secret"),
+        ("openai/primary", "https://primary.invalid/v1", "primary-secret"),
+        ("openai/fallback", "https://fallback.invalid/v1", "fallback-secret"),
     ]
 
 
@@ -82,4 +82,45 @@ def test_permanent_model_error_skips_retries(monkeypatch) -> None:
     )
 
     assert gateway.chat([{"role": "user", "content": "ping"}]).model == "fallback"
-    assert calls == ["primary", "fallback"]
+    assert calls == ["primary", "openai/fallback"]
+
+
+def test_explicit_provider_prefix_is_preserved() -> None:
+    assert (
+        LLMGateway._provider_model("anthropic/claude-sonnet", "https://custom.invalid")  # noqa: SLF001
+        == "anthropic/claude-sonnet"
+    )
+
+
+def test_permanently_denied_endpoint_is_skipped_on_later_calls(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class ModelDeniedError(Exception):
+        status_code = 403
+
+    class StubLiteLLM(ModuleType):
+        @staticmethod
+        def completion(**kwargs):
+            calls.append(kwargs["model"])
+            if kwargs["model"] == "openai/primary":
+                raise ModelDeniedError("denied")
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                model_dump=lambda: {},
+            )
+
+    monkeypatch.setitem(sys.modules, "litellm", StubLiteLLM("litellm"))
+    gateway = LLMGateway(
+        default_model="primary",
+        api_key="primary-key",
+        api_base="https://primary.invalid/v1",
+        fallback_endpoints=[
+            LLMEndpoint("fallback", "fallback-key", "https://fallback.invalid/v1")
+        ],
+        max_retries=1,
+    )
+
+    assert gateway.chat([{"role": "user", "content": "first"}]).model == "fallback"
+    assert gateway.chat([{"role": "user", "content": "second"}]).model == "fallback"
+    assert calls == ["openai/primary", "openai/fallback", "openai/fallback"]
