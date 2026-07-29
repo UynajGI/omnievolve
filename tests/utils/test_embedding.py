@@ -174,6 +174,11 @@ class TestCreateEmbedder:
         e = create_embedder("local", "bge-m3")
         assert isinstance(e, SentenceTransformerEmbedder)
 
+    def test_create_fake_embedder(self):
+        e = create_embedder("fake", "deterministic-hash", dimension=64)
+        assert isinstance(e, FakeEmbedder)
+        assert e.dimension == 64
+
     def test_create_api_embedder(self):
         e = create_embedder("openai", "text-embedding-3-small", dimension=1536)
         assert isinstance(e, LiteLLMEmbedder)
@@ -187,6 +192,10 @@ class TestCreateEmbedder:
     def test_create_with_device(self):
         e = create_embedder("local", "all-MiniLM-L6-v2", device="cpu")
         assert isinstance(e, SentenceTransformerEmbedder)
+
+    def test_unknown_provider_fails_closed(self):
+        with pytest.raises(ValueError, match="Unsupported embedding provider"):
+            create_embedder("unknown", "model")
 
     def test_embedder_satisfies_protocol(self):
         """所有 embedder 都满足 Embedder Protocol."""

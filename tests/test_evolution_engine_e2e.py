@@ -250,6 +250,7 @@ class TestEvolutionEngineE2E:
             crossover_rate=0.0,
             health_window_gens=1,
             sandbox_timeout=5.0,
+            self_evolve_enabled=True,
         )
 
         aggregator = TelemetryAggregator(db)

@@ -20,7 +20,7 @@ import logging
 import tarfile
 import tempfile
 import time
-import uuid
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -76,12 +76,29 @@ class DockerBackend:
         )
         self._work_dir.mkdir(parents=True, exist_ok=True)
         self._artifact_store = artifact_store
-        self._environment_version_id = f"docker-{uuid.uuid4().hex[:8]}"
+        self._environment_version_id = (
+            f"docker-{sha256(self._image.encode('utf-8')).hexdigest()[:12]}"
+        )
         self._client = None
 
     @property
     def environment_version_id(self) -> str:
         return self._environment_version_id
+
+    def fork(
+        self,
+        *,
+        artifact_store: Any,
+        work_dir: str | Path,
+    ) -> DockerBackend:
+        """Clone the Docker context over an isolated artifact store."""
+        backend = type(self)(
+            self._image,
+            work_dir=work_dir,
+            artifact_store=artifact_store,
+        )
+        backend._environment_version_id = self._environment_version_id
+        return backend
 
     def _get_client(self):
         """获取 Docker 客户端（惰性初始化）."""

@@ -249,7 +249,7 @@ def create_embedder(
     """根据 provider 创建 Embedder.
 
     Args:
-        provider: "local" / "openai" / "voyage" / "litellm"
+        provider: "local" / "fake" / "openai" / "voyage" / "litellm"
         model: 模型名
         dimension: 向量维度（API 模式用作 fallback）
         api_key: API key（API 模式）
@@ -260,6 +260,10 @@ def create_embedder(
     """
     if provider == "local":
         return SentenceTransformerEmbedder(model=model, device=device)
+    if provider == "fake":
+        return FakeEmbedder(dimension=dimension)
 
     # API 模式：统一走 LiteLLM
-    return LiteLLMEmbedder(model=model, dimension=dimension, api_key=api_key)
+    if provider in {"openai", "voyage", "litellm"}:
+        return LiteLLMEmbedder(model=model, dimension=dimension, api_key=api_key)
+    raise ValueError(f"Unsupported embedding provider: {provider}")

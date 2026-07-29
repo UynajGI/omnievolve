@@ -118,6 +118,15 @@ class SandboxBackend(Protocol):
         """
         ...
 
+    def fork(
+        self,
+        *,
+        artifact_store: object,
+        work_dir: str,
+    ) -> SandboxBackend:
+        """Create an isolated execution context over another artifact store."""
+        ...
+
     def healthcheck(self) -> dict:
         """健康检查.
 

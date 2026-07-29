@@ -238,6 +238,7 @@ class ModelRouter:
         **kwargs: Any,
     ) -> None:
         self._slots = slots
+        self._configured_algorithm = algorithm
 
         if algorithm == "sliding_window_ucb":
             self._strategy: SlidingWindowUCB | DiscountedUCB | ThompsonSampling = SlidingWindowUCB(
@@ -261,9 +262,84 @@ class ModelRouter:
     def get_stats(self) -> dict[str, Any]:
         """获取路由统计."""
         return {
-            "algorithm": type(self._strategy).__name__,
+            "algorithm": self._configured_algorithm,
+            "strategy_class": type(self._strategy).__name__,
             "slots": [s.name for s in self._slots],
         }
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize role-conditioned bandit state for deterministic resume."""
+        strategy = self._strategy
+        state: dict[str, Any] = {
+            "algorithm": self._configured_algorithm,
+            "slots": [slot.name for slot in self._slots],
+        }
+        if isinstance(strategy, SlidingWindowUCB):
+            state["rewards"] = {
+                role: {model: list(values) for model, values in models.items()}
+                for role, models in strategy._rewards.items()
+            }
+            state["total_pulls"] = dict(strategy._total_pulls)
+        elif isinstance(strategy, DiscountedUCB):
+            state["discounted_sums"] = {
+                role: dict(models) for role, models in strategy._discounted_sums.items()
+            }
+            state["discounted_counts"] = {
+                role: dict(models) for role, models in strategy._discounted_counts.items()
+            }
+        elif isinstance(strategy, ThompsonSampling):
+            state["alpha"] = {role: dict(models) for role, models in strategy._alpha.items()}
+            state["beta"] = {role: dict(models) for role, models in strategy._beta.items()}
+        return state
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Restore matching slots/algorithm; incompatible snapshots fail closed."""
+        if not state:
+            return
+        if state.get("algorithm") != self._configured_algorithm:
+            raise ValueError("router checkpoint algorithm does not match runtime policy")
+        if list(state.get("slots", [])) != [slot.name for slot in self._slots]:
+            raise ValueError("router checkpoint slots do not match runtime configuration")
+
+        strategy = self._strategy
+        if isinstance(strategy, SlidingWindowUCB):
+            for role, models in state.get("rewards", {}).items():
+                if role not in strategy._rewards:
+                    continue
+                for model, values in models.items():
+                    if model in strategy._rewards[role]:
+                        strategy._rewards[role][model].clear()
+                        strategy._rewards[role][model].extend(float(value) for value in values)
+            strategy._total_pulls = {
+                role: int(value) for role, value in state.get("total_pulls", {}).items()
+            }
+        elif isinstance(strategy, DiscountedUCB):
+            for attr, key in (
+                ("_discounted_sums", "discounted_sums"),
+                ("_discounted_counts", "discounted_counts"),
+            ):
+                target = getattr(strategy, attr)
+                for role, models in state.get(key, {}).items():
+                    if role in target:
+                        target[role].update(
+                            {
+                                model: float(value)
+                                for model, value in models.items()
+                                if model in target[role]
+                            }
+                        )
+        elif isinstance(strategy, ThompsonSampling):
+            for attr, key in (("_alpha", "alpha"), ("_beta", "beta")):
+                target = getattr(strategy, attr)
+                for role, models in state.get(key, {}).items():
+                    if role in target:
+                        target[role].update(
+                            {
+                                model: float(value)
+                                for model, value in models.items()
+                                if model in target[role]
+                            }
+                        )
 
 
 # 角色奖励计算

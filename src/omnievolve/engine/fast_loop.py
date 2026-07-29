@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
-from omnievolve.engine.novelty import NoveltyDecision
+from omnievolve.engine.novelty import NoveltyDecision, NoveltyResult
 from omnievolve.eval.task_evaluator import (
     CandidateArtifact,
     EvalOutput,
@@ -71,6 +71,10 @@ class PreparedCandidate:
     sandbox_result: Any = None
     memory_hits: list = field(default_factory=list)
     reference_ids: list[str] = field(default_factory=list)
+    role_models: dict[str, str] = field(default_factory=dict)
+    role_calls: set[str] = field(default_factory=set)
+    idea_novelty: NoveltyResult | None = None
+    candidate_novelty: NoveltyResult | None = None
 
 
 class FastLoopStep:
@@ -146,12 +150,16 @@ class FastLoopStep:
             return None
 
         parent_codes, parent_thoughts, parent_failures = e._load_parents(parent_ids)  # noqa: SLF001
-        model = (
-            "random-search"
-            if e._config.random_search_mode  # noqa: SLF001
-            else e._select_model(generation)  # noqa: SLF001
-        )
         stagnation_level = self._compute_stagnation_level(island_id)
+        director_model = (
+            ""
+            if e._config.random_search_mode or e._config.single_agent_mode  # noqa: SLF001
+            else e._select_model(  # noqa: SLF001
+                generation,
+                "director",
+                stagnation_level=float(stagnation_level),
+            )
+        )
 
         # 步骤 3/可选 crossover + fusion
         base_code = None
@@ -287,7 +295,7 @@ class FastLoopStep:
             search_policy_id=e._champion_policy_id,  # noqa: SLF001
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
-            model=model,
+            model=director_model,
             prompt_version_id=e._load_champion_prompt("director"),  # noqa: SLF001
         )
 
@@ -312,11 +320,18 @@ class FastLoopStep:
         else:
             with self._prof_step("director", generation):
                 thought = e._director.evolve_thought(ctx)  # noqa: SLF001
+        role_calls: set[str] = set()
+        role_models: dict[str, str] = {}
+        if director_model and not (
+            e._config.random_search_mode or e._config.single_agent_mode  # noqa: SLF001
+        ):
+            role_calls.add("director")
+            role_models["director"] = director_model
 
-        # 步骤 5: NoveltyGate（消融实验可显式关闭）
-        novelty_result = None
+        # 步骤 5a: idea novelty — only the mechanism/thought is checked here.
+        idea_novelty = None
         if e._config.novelty_enabled:  # noqa: SLF001
-            with self._prof_step("novelty_gate", generation):
+            with self._prof_step("idea_novelty", generation):
                 existing_sims = []
                 if e._hybrid_retriever:  # noqa: SLF001
                     try:
@@ -329,16 +344,17 @@ class FastLoopStep:
                             existing_sims = [max_sim]
                     except Exception:
                         logger.debug("Novelty vector check failed", exc_info=True)
-                novelty_result = e._novelty_gate.check(  # noqa: SLF001
-                    thought=thought.thought,
-                    code=base_code,
+                idea_novelty = e._novelty_gate.check_idea(  # noqa: SLF001
+                    thought.thought,
                     existing_similarities=existing_sims or None,
                 )
-        if novelty_result is not None and novelty_result.decision == NoveltyDecision.REJECT:
+        if idea_novelty is not None and idea_novelty.decision == NoveltyDecision.REJECT:
             e._mcts.rollback_last_select()  # noqa: SLF001
             return None
 
         # 步骤 6: Coder + Critic
+        coder_model = ""
+        critic_model = ""
         if e._config.random_search_mode:  # noqa: SLF001
             from omnievolve.engine.random_search import (
                 derive_random_search_seed,
@@ -365,8 +381,24 @@ class FastLoopStep:
             )
             passed = True
         else:
+            coder_model = e._select_model(  # noqa: SLF001
+                generation,
+                "coder",
+                stagnation_level=float(stagnation_level),
+                novelty_deficit=(
+                    idea_novelty.similarity_score if idea_novelty is not None else 0.0
+                ),
+            )
+            coder_ctx = replace(
+                ctx,
+                model=coder_model,
+                prompt_version_id=e._load_champion_prompt("coder"),  # noqa: SLF001
+            )
             with self._prof_step("coder", generation):
-                code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
+                code = e._coder.generate_code(coder_ctx, thought)  # noqa: SLF001
+                if coder_model:
+                    role_calls.add("coder")
+                    role_models["coder"] = coder_model
                 if not code.full_code.strip():
                     if base_code:
                         code = type(code)(
@@ -381,16 +413,82 @@ class FastLoopStep:
 
             with self._prof_step("critic", generation):
                 critic_stderr = ctx.last_eval_failure
-                passed, _ = e._critic.review(  # noqa: SLF001
-                    code, thought, last_eval_stderr=critic_stderr
-                )
+                if getattr(e._critic, "_llm", None) is not None:  # noqa: SLF001
+                    critic_model = e._select_model(  # noqa: SLF001
+                        generation,
+                        "critic",
+                        stagnation_level=float(stagnation_level),
+                    )
+
+                def review_current() -> tuple[bool, str]:
+                    review_with_trace = getattr(e._critic, "review_with_trace", None)  # noqa: SLF001
+                    if review_with_trace is None:
+                        return e._critic.review(  # noqa: SLF001
+                            code, thought, last_eval_stderr=critic_stderr
+                        )
+                    trace = review_with_trace(
+                        code,
+                        thought,
+                        last_eval_stderr=critic_stderr,
+                        model=critic_model or None,
+                    )
+                    if trace.llm_used and trace.model:
+                        role_calls.add("critic")
+                        role_models["critic"] = trace.model
+                    return trace.passed, trace.feedback
+
+                passed, _ = review_current()
                 retries = 0
                 while not passed and retries < e._config.novelty_retry_limit:  # noqa: SLF001
                     retries += 1
-                    code = e._coder.generate_code(ctx, thought)  # noqa: SLF001
-                    passed, _ = e._critic.review(  # noqa: SLF001
-                        code, thought, last_eval_stderr=critic_stderr
-                    )
+                    code = e._coder.generate_code(coder_ctx, thought)  # noqa: SLF001
+                    if coder_model:
+                        role_calls.add("coder")
+                    passed, _ = review_current()
+
+        # 步骤 5b: candidate novelty — final code after all Coder/repair attempts.
+        candidate_novelty = None
+        if e._config.novelty_enabled:  # noqa: SLF001
+            with self._prof_step("candidate_novelty", generation):
+                code_similarities = []
+                if e._hybrid_retriever:  # noqa: SLF001
+                    try:
+                        _, max_code_sim = e._hybrid_retriever.check_novelty(  # noqa: SLF001
+                            code.full_code,
+                            collection="code_default",
+                            threshold=e._config.novelty_threshold,  # noqa: SLF001
+                        )
+                        if max_code_sim > 0:
+                            code_similarities = [max_code_sim]
+                    except Exception:
+                        logger.debug("Candidate novelty vector check failed", exc_info=True)
+                candidate_novelty = e._novelty_gate.check_candidate(  # noqa: SLF001
+                    thought.thought,
+                    code.full_code,
+                    existing_similarities=code_similarities or None,
+                    exact_reference_codes=parent_codes,
+                )
+        if (
+            candidate_novelty is not None
+            and candidate_novelty.decision == NoveltyDecision.REJECT
+        ):
+            e._mcts.rollback_last_select()  # noqa: SLF001
+            return None
+
+        model = "random-search" if e._config.random_search_mode else coder_model  # noqa: SLF001
+
+        novelty_meta: dict[str, object] = {}
+        if idea_novelty is not None:
+            novelty_meta.update(idea_novelty.to_metrics())
+        if candidate_novelty is not None:
+            novelty_meta.update(candidate_novelty.to_metrics())
+        candidate_meta = {
+            "thought": thought.thought[:500],
+            "relation": relation,
+            "model": model,
+            "role_models": dict(role_models),
+            **novelty_meta,
+        }
 
         # 步骤 8: 存储代码 + 创建候选
         # CodeStore: 优先使用 store_snapshot（支持 Git ancestry）
@@ -411,7 +509,7 @@ class FastLoopStep:
                 code.full_code,
                 parents=parent_refs or None,
                 message=thought.thought[:200],
-                meta={"thought": thought.thought[:500], "relation": relation, "model": model},
+                meta=candidate_meta,
             )
             artifact_hash, manifest_hash = resolve_snapshot_refs(  # noqa: SLF001
                 e._artifact_store, snapshot_ref
@@ -428,7 +526,7 @@ class FastLoopStep:
             search_policy_id=e._champion_policy_id,  # noqa: SLF001
             island_id=island_id,
             parents=parents_with_relation or None,
-            meta={"thought": thought.thought[:500], "relation": relation, "model": model},
+            meta=candidate_meta,
         )
         e._enqueue_vector_index("candidate", candidate.id, artifact_hash)  # noqa: SLF001
         thought_record = e._candidate_repo.create_thought(  # noqa: SLF001
@@ -447,7 +545,10 @@ class FastLoopStep:
         # 步骤 9-10: sandbox 执行 + 结果解析（无状态变更）
         with self._prof_step("sandbox_eval", generation):
             output, eval_run, job, sandbox_result = self._execute_sandbox(
-                candidate.id, artifact_hash, manifest_hash
+                candidate.id,
+                artifact_hash,
+                manifest_hash,
+                extra_metrics=novelty_meta,
             )
 
         return PreparedCandidate(
@@ -465,6 +566,10 @@ class FastLoopStep:
             sandbox_result=sandbox_result,
             memory_hits=memory_hits,
             reference_ids=reference_ids,
+            role_models=role_models,
+            role_calls=role_calls,
+            idea_novelty=idea_novelty,
+            candidate_novelty=candidate_novelty,
         )
 
     def commit_result(self, prepared: PreparedCandidate) -> tuple[str | None, str]:
@@ -510,6 +615,8 @@ class FastLoopStep:
                 prepared.job_id,
                 prepared.sandbox_result,
                 prepared.reference_ids,
+                prepared.parent_ids,
+                prepared.candidate_novelty,
                 search_credit_enabled=search_credit_enabled,
             )
 
@@ -524,13 +631,19 @@ class FastLoopStep:
         if (
             search_credit_enabled
             and e._router is not None  # noqa: SLF001
-            and prepared.model
+            and prepared.role_calls
             and prepared.output is not None
         ):
             self._update_router_reward(
-                prepared.model,
+                prepared.role_models,
+                prepared.role_calls,
                 prepared.output,
                 prepared.parent_ids,
+                mechanism_novelty=(
+                    prepared.idea_novelty.objective_score
+                    if prepared.idea_novelty is not None
+                    else 0.5
+                ),
                 critic_passed=prepared.critic_passed,
             )
 
@@ -546,15 +659,7 @@ class FastLoopStep:
 
         Phase 3: 支持渐进式评估（Stage 0→3，任一阶段失败则 early-exit）。
         """
-        e = self._e
-
-        # Phase 3: 渐进式评估路径
-        if e._config.progressive_eval_enabled:  # noqa: SLF001
-            build_stage = getattr(e._task_evaluator, "build_stage_plan", None)  # noqa: SLF001
-            if build_stage is not None:
-                return self._evaluate_progressive(candidate_id, artifact_hash, manifest_hash)
-
-        # 默认全量评估路径
+        # EvaluationService owns fidelity dispatch for every caller.
         return self._evaluate_full(candidate_id, artifact_hash, manifest_hash)
 
     def _evaluate_progressive(
@@ -563,72 +668,8 @@ class FastLoopStep:
         artifact_hash: str,
         manifest_hash: str | None = None,
     ) -> EvalOutput | None:
-        """渐进式评估：Stage 0→3，任一阶段失败则 early-exit."""
-        from omnievolve.eval.plan_validator import EvaluationStage
-
-        e = self._e
-        candidate_artifact = CandidateArtifact(
-            candidate_id=candidate_id,
-            source_hash=artifact_hash,
-            manifest_hash=manifest_hash,
-            language="python",
-        )
-        eval_context = EvaluationContext(
-            experiment_id=e._experiment_id,  # noqa: SLF001
-            evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
-            environment_version_id=e._environment_version_id,  # noqa: SLF001
-            seed=e._config.seed,  # noqa: SLF001
-        )
-        policy = SandboxPolicy(
-            timeout_sec=e._config.sandbox_timeout,  # noqa: SLF001
-            mem_limit_mb=e._config.sandbox_mem_limit_mb,  # noqa: SLF001
-        )
-
-        output: EvalOutput | None = None
-        for stage in EvaluationStage:
-            # 尝试获取阶段特定计划，回退到默认 build_plan
-            build_stage = getattr(e._task_evaluator, "build_stage_plan", None)  # noqa: SLF001
-            plan = (
-                build_stage(candidate_artifact, eval_context, stage.value) if build_stage else None
-            )
-            if plan is None:
-                plan = e._task_evaluator.build_plan(candidate_artifact, eval_context)  # noqa: SLF001
-
-            try:
-                result = e._sandbox.execute(plan, candidate_artifact, policy)  # noqa: SLF001
-            except SandboxError:
-                logger.debug("Progressive eval stage %d failed for %s", stage.value, candidate_id)
-                return EvalOutput(
-                    score=0.0,
-                    metrics={},
-                    passed=False,
-                    failure_reason=f"Stage {stage.value} sandbox error",
-                )
-
-            output = e._task_evaluator.parse_result(result, eval_context)  # noqa: SLF001
-
-            # Early-exit: 非最终阶段失败则提前终止
-            if not output.passed and stage < EvaluationStage.STAGE_3_BENCHMARK:
-                logger.debug(
-                    "Progressive eval early-exit at stage %d for %s",
-                    stage.value,
-                    candidate_id,
-                )
-                break
-
-        # 更新候选状态（复用全量评估的后处理逻辑）
-        if output:
-            e._candidate_repo.update_status(  # noqa: SLF001
-                candidate_id, "evaluated" if output.passed else "failed"
-            )
-            if output.passed:
-                e._update_best(candidate_id, output.score)  # noqa: SLF001
-            e._recent_scores.append(output.score)  # noqa: SLF001
-            if len(e._recent_scores) > 200:  # noqa: SLF001
-                e._recent_scores = e._recent_scores[-100:]  # noqa: SLF001
-            e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
-
-        return output
+        """Compatibility wrapper; EvaluationService now owns progressive fidelity."""
+        return self._evaluate_full(candidate_id, artifact_hash, manifest_hash)
 
     def _evaluate_full(
         self,
@@ -657,6 +698,8 @@ class FastLoopStep:
         candidate_id: str,
         artifact_hash: str,
         manifest_hash: str | None = None,
+        *,
+        extra_metrics: dict[str, object] | None = None,
     ) -> tuple[EvalOutput | None, Any, Any, Any]:
         """Phase 3: 步骤 9-10 — sandbox 执行 + 结果解析（无状态变更）.
 
@@ -707,63 +750,34 @@ class FastLoopStep:
         except Exception:
             logger.debug("Could not create job record", exc_info=True)
 
-        # 步骤 9: build_plan
-        try:
-            plan = e._task_evaluator.build_plan(candidate_artifact, eval_context)  # noqa: SLF001
-        except EvaluatorError:
-            logger.exception("Failed to build plan for %s", candidate_id)
-            if run:
-                e._eval_repo.fail(run.id, "build_plan error")  # noqa: SLF001
-            return None, run, job, None
+        # Unified evaluation entry: validation → anti-cheat → progressive
+        # stages → hidden plans → repeated benchmark → robust aggregation.
+        from omnievolve.eval.evaluation_service import EvaluationService
 
-        # Validate the declarative plan and fail closed on explicit evaluator peeking.
-        try:
-            from omnievolve.eval.anti_cheat import (
-                AntiCheatFinding,
-                scan_candidate_source,
-                verify_hidden_mounts,
-            )
-            from omnievolve.eval.plan_validator import EvaluationPlanValidator
-
-            # Empty plans are supported by in-process/no-op evaluators used for
-            # deterministic framework tests. Executable plans are always validated.
-            if plan.commands:
-                EvaluationPlanValidator().validate(plan)
-            source = e._artifact_store.load_text(artifact_hash) or ""  # noqa: SLF001
-            findings = verify_hidden_mounts(plan) + scan_candidate_source(source)
-        except Exception as exc:
-            findings = [AntiCheatFinding("invalid_evaluation_plan", str(exc))]
-        if findings:
-            reason = "; ".join(f"{item.rule}: {item.detail}" for item in findings[:5])
-            output = EvalOutput(
-                score=0.0,
-                metrics={"anti_cheat_findings": float(len(findings))},
-                passed=False,
-                failure_reason=f"Evaluation integrity check failed: {reason}",
-                confidence=1.0,
-            )
-            if run:
-                try:
-                    e._eval_repo.complete(  # noqa: SLF001
-                        run.id,
-                        passed=False,
-                        primary_score=0.0,
-                        metrics=output.metrics,
-                        execution_time_ms=0.0,
-                        memory_peak_kb=0,
-                        cpu_time_ms=0.0,
-                    )
-                except StorageError:
-                    logger.debug("Could not record integrity failure", exc_info=True)
-            return output, run, job, None
-
-        # 步骤 10: sandbox 执行
         policy = SandboxPolicy(
             timeout_sec=e._config.sandbox_timeout,  # noqa: SLF001
             mem_limit_mb=e._config.sandbox_mem_limit_mb,  # noqa: SLF001
         )
+        service = EvaluationService(
+            e._task_evaluator,  # noqa: SLF001
+            e._sandbox,  # noqa: SLF001
+            e._artifact_store,  # noqa: SLF001
+            progressive=e._config.progressive_eval_enabled,  # noqa: SLF001
+            repetitions=e._config.eval_repetitions,  # noqa: SLF001
+            confidence=e._config.eval_confidence,  # noqa: SLF001
+        )
         try:
-            result = e._sandbox.execute(plan, candidate_artifact, policy)  # noqa: SLF001
+            outcome = service.evaluate(
+                candidate_artifact,
+                eval_context,
+                policy,
+                extra_metrics=extra_metrics,
+            )
+        except EvaluatorError:
+            logger.exception("Failed to build/parse evaluation for %s", candidate_id)
+            if run:
+                e._eval_repo.fail(run.id, "evaluation plan error")  # noqa: SLF001
+            return None, run, job, None
         except SandboxError:
             logger.exception("Sandbox execution failed for %s", candidate_id)
             if run:
@@ -775,8 +789,8 @@ class FastLoopStep:
                     logger.warning("Job fail_job failed for %s", job.id, exc_info=True)
             return None, run, job, None
 
-        # 步骤 11: parse + 更新状态
-        output = e._task_evaluator.parse_result(result, eval_context)  # noqa: SLF001
+        output = outcome.output
+        result = outcome
 
         # Epiplexity 辅助适应度: fitness = f_task + β * S_φ(code)
         # β 来自 SearchPolicyGenome，可被 Slow Loop 自进化
@@ -789,19 +803,26 @@ class FastLoopStep:
                     e._epiplexity_est = EpiplexityEstimator()  # noqa: SLF001
                 code_text = e._artifact_store.load_text(artifact_hash)  # noqa: SLF001
                 epi_score = e._epiplexity_est.score(code_text) if code_text else 0.0  # noqa: SLF001
-                # 混合计分（不超过 1.0）
+                # Keep the evaluator's primary task score immutable.  The
+                # auxiliary objective is consumed by LineageUCB only.
                 blended = min(output.score + beta * epi_score, 1.0)
                 output = EvalOutput(
-                    score=blended,
-                    metrics={**output.metrics, "epiplexity": epi_score, "task_score": output.score},
+                    score=output.score,
+                    metrics={
+                        **output.metrics,
+                        "epiplexity": epi_score,
+                        "task_score": output.score,
+                        "search_score": blended,
+                    },
                     passed=output.passed,
                     failure_reason=output.failure_reason,
+                    confidence=output.confidence,
                 )
             except Exception:
                 logger.debug("Epiplexity scoring failed for %s", artifact_hash, exc_info=True)
 
         # 完成评估运行记录（含 stdout/stderr 存储用于 debug）
-        if run and result:
+        if run:
             try:
                 stdout_hash = None
                 stderr_hash = None
@@ -823,7 +844,7 @@ class FastLoopStep:
             except StorageError:
                 logger.debug("Could not complete evaluation_run record", exc_info=True)
 
-        return output, run, job, result
+        return output, run, job, outcome
 
     def _apply_eval_result(
         self,
@@ -834,6 +855,8 @@ class FastLoopStep:
         job: Any = None,
         result: Any = None,
         reference_ids: list[str] | None = None,
+        parent_ids: list[str] | None = None,
+        candidate_novelty: NoveltyResult | None = None,
         *,
         search_credit_enabled: bool = True,
     ) -> None:
@@ -888,13 +911,21 @@ class FastLoopStep:
             thought_text = cand_meta.meta.get("thought", "")
         e._update_meta_scratchpad(thought_text, output.score)  # noqa: SLF001
 
-        # MCTS/reference 回传（random-search 消融明确关闭）
+        # LineageUCB/reference 回传（relative child-vs-parent gain).
         if search_credit_enabled:
-            e._mcts.backpropagate(candidate_id, output.score)  # noqa: SLF001
+            parent_scores = [
+                e._get_candidate_score(parent_id)  # noqa: SLF001
+                for parent_id in (parent_ids or [])
+            ]
+            parent_best = max(parent_scores) if parent_scores else e._get_baseline_score()  # noqa: SLF001
+            search_score = float(output.metrics.get("search_score", output.score))
+            relative_gain = search_score - parent_best
+            normalized_gain = 0.5 + 0.5 * max(-1.0, min(1.0, relative_gain))
+            e._mcts.backpropagate(candidate_id, normalized_gain)  # noqa: SLF001
             if e._config.reference_credit_enabled and reference_ids:  # noqa: SLF001
                 e._mcts.credit_references(  # noqa: SLF001
                     reference_ids,
-                    output.score,
+                    normalized_gain,
                     weight=e._config.reference_credit_weight,  # noqa: SLF001
                     exclude_ids={candidate_id},
                 )
@@ -905,16 +936,27 @@ class FastLoopStep:
             island = e._island_manager.get_island(island_id)  # noqa: SLF001
             if island:
                 island.update_elite(candidate_id, output.score)
-                if output.passed:
-                    e._island_manager.reset_stagnation(island_id)  # noqa: SLF001
-                else:
-                    e._island_manager.increment_stagnation(island_id)  # noqa: SLF001
+                if candidate_novelty is not None:
+                    island.update_novelty(
+                        candidate_id,
+                        candidate_novelty.objective_score,
+                    )
+                generation = cand_meta.generation if cand_meta is not None else e._current_generation  # noqa: SLF001
+                island.record_generation_score(
+                    generation,
+                    output.score,
+                    passed=output.passed,
+                )
 
         # 搜索状态更新
         e._candidate_repo.update_search_state(  # noqa: SLF001
             candidate_id,
             visit_delta=1,
-            value_delta=output.score,
+            value_delta=(
+                normalized_gain
+                if search_credit_enabled
+                else output.score
+            ),
             frontier_status="elite" if output.passed else "closed",
         )
 
@@ -997,7 +1039,8 @@ class FastLoopStep:
 
     def _update_router_reward(
         self,
-        model: str,
+        role_models: dict[str, str],
+        role_calls: set[str],
         output: EvalOutput,
         parent_ids: list[str],
         thought_adopted: bool = True,
@@ -1038,9 +1081,14 @@ class FastLoopStep:
 
         baseline_score = e._get_baseline_score()  # noqa: SLF001
 
-        # Coder 奖励: Shinka 相对改进
-        coder_reward = compute_shinka_reward(output.score, parent_score, baseline_score)
-        e._router.update(model=model, role="coder", reward=coder_reward)  # noqa: SLF001
+        # Coder reward is assigned only to the model that actually produced code.
+        if "coder" in role_calls and role_models.get("coder"):
+            coder_reward = compute_shinka_reward(output.score, parent_score, baseline_score)
+            e._router.update(  # noqa: SLF001
+                model=role_models["coder"],
+                role="coder",
+                reward=coder_reward,
+            )
 
         # Director 奖励: thought 被采纳 + 机制新颖性 + 前沿贡献
         frontier_contribution = max(output.score - baseline_score, 0.0)
@@ -1049,7 +1097,12 @@ class FastLoopStep:
             mechanism_novelty=mechanism_novelty,
             frontier_contribution=frontier_contribution,
         )
-        e._router.update(model=model, role="director", reward=director_reward)  # noqa: SLF001
+        if "director" in role_calls and role_models.get("director"):
+            e._router.update(  # noqa: SLF001
+                model=role_models["director"],
+                role="director",
+                reward=director_reward,
+            )
 
         # Critic 奖励: 缺陷召回 + 低误拒 + 节省评估成本
         # 交叉引用 output.passed 和 critic_passed:
@@ -1059,12 +1112,17 @@ class FastLoopStep:
         defect_recall = 0.5 if (not output.passed and not critic_passed) else 0.0
         false_rejection = 0.3 if (output.passed and not critic_passed) else 0.0
         cost_saved = 0.3 if (not output.passed and not critic_passed) else 0.0
-        critic_reward = compute_critic_reward(
-            defect_recall=defect_recall,
-            false_rejection_rate=false_rejection,
-            evaluator_cost_saved=cost_saved,
-        )
-        e._router.update(model=model, role="critic", reward=critic_reward)  # noqa: SLF001
+        if "critic" in role_calls and role_models.get("critic"):
+            critic_reward = compute_critic_reward(
+                defect_recall=defect_recall,
+                false_rejection_rate=false_rejection,
+                evaluator_cost_saved=cost_saved,
+            )
+            e._router.update(  # noqa: SLF001
+                model=role_models["critic"],
+                role="critic",
+                reward=critic_reward,
+            )
 
     def _compute_stagnation_level(self, island_id: str) -> int:
         """P2-1: 计算停滞等级.

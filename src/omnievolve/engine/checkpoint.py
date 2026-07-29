@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from omnievolve.storage.db import Database
@@ -29,14 +29,17 @@ class CheckpointManager:
         meta_scratchpad: str,
         failed_directions: list[str],
         recent_scores: list[float],
+        runtime_state: dict[str, Any] | None = None,
     ) -> None:
         """持久化易失状态到 experiment 表（崩溃恢复）."""
         checkpoint = {
+            "schema_version": 2,
             "generation": generation,
             "total_candidates": total_candidates,
             "meta_scratchpad": meta_scratchpad,
             "failed_directions": failed_directions,
             "recent_scores": recent_scores[-20:],
+            "runtime_state": runtime_state or {},
         }
         try:
             self._db.execute(

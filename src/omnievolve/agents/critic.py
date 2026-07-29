@@ -10,11 +10,22 @@ from __future__ import annotations
 import ast
 import json
 import logging
+from dataclasses import dataclass
 
 from omnievolve.agents.base import CodeOutput, ThoughtOutput
 from omnievolve.agents.llm_gateway import LLMGateway
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CriticReviewTrace:
+    """Review result plus whether a routed LLM was actually called."""
+
+    passed: bool
+    feedback: str
+    llm_used: bool
+    model: str | None = None
 
 CRITIC_SYSTEM_PROMPT = """You are the Critic Agent in an evolutionary code optimization system.
 Your role is to review the generated code for correctness and quality.
@@ -76,7 +87,23 @@ class Critic:
         thought: ThoughtOutput,
         last_eval_stderr: str = "",
     ) -> tuple[bool, str]:
-        """审查代码.
+        """Backward-compatible review API."""
+        trace = self.review_with_trace(
+            code,
+            thought,
+            last_eval_stderr=last_eval_stderr,
+        )
+        return trace.passed, trace.feedback
+
+    def review_with_trace(
+        self,
+        code: CodeOutput,
+        thought: ThoughtOutput,
+        last_eval_stderr: str = "",
+        *,
+        model: str | None = None,
+    ) -> CriticReviewTrace:
+        """Review code and report whether the LLM critic actually ran.
 
         Args:
             code: 待审查代码.
@@ -84,8 +111,7 @@ class Critic:
             last_eval_stderr: P0-2 — 上一轮沙箱执行的 stderr/失败信息.
                 非空时启用执行反馈增强审查.
 
-        Returns:
-            (passed, feedback)
+            model: Per-call routed model override.
         """
         issues = []
 
@@ -104,20 +130,35 @@ class Critic:
             issues.append("Patch not applicable: SEARCH/REPLACE blocks do not match parent code")
 
         # 3. LLM 审查（如果可用）
+        llm_used = False
+        selected_model = model or self._model
         if self._llm and not issues:
+            llm_used = True
             if last_eval_stderr:
                 # P0-2: 执行反馈增强审查
                 llm_passed, llm_feedback = self._llm_review_with_execution(
-                    code, thought, last_eval_stderr
+                    code, thought, last_eval_stderr, model=selected_model
                 )
             else:
-                llm_passed, llm_feedback = self._llm_review(code, thought)
+                llm_passed, llm_feedback = self._llm_review(
+                    code, thought, model=selected_model
+                )
             if not llm_passed:
                 issues.append(llm_feedback)
 
         if issues:
-            return False, "; ".join(issues)
-        return True, "Code passed review"
+            return CriticReviewTrace(
+                False,
+                "; ".join(issues),
+                llm_used=llm_used,
+                model=selected_model if llm_used else None,
+            )
+        return CriticReviewTrace(
+            True,
+            "Code passed review",
+            llm_used=llm_used,
+            model=selected_model if llm_used else None,
+        )
 
     def review_with_execution_result(
         self,
@@ -165,7 +206,13 @@ class Critic:
 
         return issues
 
-    def _llm_review(self, code: CodeOutput, thought: ThoughtOutput) -> tuple[bool, str]:
+    def _llm_review(
+        self,
+        code: CodeOutput,
+        thought: ThoughtOutput,
+        *,
+        model: str | None = None,
+    ) -> tuple[bool, str]:
         """LLM 审查."""
         if not self._llm:
             return True, ""
@@ -187,7 +234,7 @@ Review this code for correctness and alignment with the thought."""
 
         response = self._llm.chat(
             messages,
-            model=self._model,
+            model=model or self._model,
             temperature=0.2,
             agent_role="critic",
         )
@@ -203,6 +250,8 @@ Review this code for correctness and alignment with the thought."""
         code: CodeOutput,
         thought: ThoughtOutput,
         last_eval_stderr: str,
+        *,
+        model: str | None = None,
     ) -> tuple[bool, str]:
         """P0-2: 带执行反馈的 LLM 审查.
 
@@ -241,7 +290,7 @@ Be strict — if the error pattern is still present, REJECT."""
 
         response = self._llm.chat(
             messages,
-            model=self._model,
+            model=model or self._model,
             temperature=0.2,
             agent_role="critic",
         )

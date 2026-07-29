@@ -183,7 +183,7 @@ class TestGovernance:
             risk_level=RiskLevel.L0,
         )
         risk = gov.classify_action(action)
-        assert risk == RiskLevel.L0
+        assert risk == RiskLevel.L1
 
     def test_l0_mutator(self):
         gov = GovernancePolicy()

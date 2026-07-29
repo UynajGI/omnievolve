@@ -12,7 +12,7 @@ import io
 import logging
 import tempfile
 import time
-import uuid
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -60,11 +60,26 @@ class MontyBackend:
             Path(work_dir) if work_dir else Path(tempfile.gettempdir()) / "omnievolve_monty"
         )
         self._artifact_store = artifact_store
-        self._environment_version_id = f"monty-{uuid.uuid4().hex[:8]}"
+        try:
+            monty_version = version("pydantic-monty")
+        except PackageNotFoundError:
+            monty_version = "unavailable"
+        self._environment_version_id = f"monty-{monty_version}"
 
     @property
     def environment_version_id(self) -> str:
         return self._environment_version_id
+
+    def fork(
+        self,
+        *,
+        artifact_store: Any,
+        work_dir: str | Path,
+    ) -> MontyBackend:
+        """Clone the interpreter context over an isolated artifact store."""
+        backend = type(self)(work_dir=work_dir, artifact_store=artifact_store)
+        backend._environment_version_id = self._environment_version_id
+        return backend
 
     def _check_installed(self) -> None:
         """检查 pydantic-monty 是否已安装."""

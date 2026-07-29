@@ -50,9 +50,14 @@ def strict_policy():
 
 
 class TestEnvironmentVersionId:
-    def test_unique_per_instance(self):
+    def test_same_image_has_stable_environment_version(self):
         b1 = DockerBackend()
         b2 = DockerBackend()
+        assert b1.environment_version_id == b2.environment_version_id
+
+    def test_different_images_have_different_environment_versions(self):
+        b1 = DockerBackend("python:3.12-slim")
+        b2 = DockerBackend("python:3.13-slim")
         assert b1.environment_version_id != b2.environment_version_id
 
     def test_prefix(self):

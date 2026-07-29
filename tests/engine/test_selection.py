@@ -205,8 +205,7 @@ class TestExplorationSelector:
 
 
 class TestStrategyRouting:
-    def test_unknown_strategy_defaults_to_random(self, seeded_db):
+    def test_unknown_strategy_fails_closed(self, seeded_db):
         db, _ = seeded_db
-        selector = ParentSelector(db, strategy="nonexistent")
-        result = selector.select("exp_test", "ev_v1", "env_v1", count=2)
-        assert len(result) == 2
+        with pytest.raises(ValueError, match="Unknown parent selection strategy"):
+            ParentSelector(db, strategy="nonexistent")

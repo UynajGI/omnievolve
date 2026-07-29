@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_CONNECTION_INIT_LOCK = threading.Lock()
 
 
 class Database:
@@ -55,15 +56,22 @@ class Database:
             str(self._db_path),
             check_same_thread=False,
             isolation_level=None,  # 手动管理事务
+            timeout=max(0.0, self._busy_timeout / 1000),
         )
         conn.row_factory = sqlite3.Row
 
         # 配置 PRAGMA
+        # Configure the wait policy before journal-mode negotiation. Multiple
+        # Database instances may open the same fresh file concurrently; without
+        # this ordering, PRAGMA journal_mode can fail before busy_timeout exists.
+        conn.execute(f"PRAGMA busy_timeout={self._busy_timeout}")
         if self._wal:
-            conn.execute("PRAGMA journal_mode=WAL")
+            with _CONNECTION_INIT_LOCK:
+                current_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+                if current_mode.lower() != "wal":
+                    conn.execute("PRAGMA journal_mode=WAL")
         if self._foreign_keys:
             conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute(f"PRAGMA busy_timeout={self._busy_timeout}")
 
         # 性能优化
         conn.execute("PRAGMA synchronous=NORMAL")

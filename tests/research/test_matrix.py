@@ -6,10 +6,73 @@ import pytest
 
 from omnievolve.research.matrix import (
     build_default_matrix,
+    build_pilot_matrix,
     build_reference_credit_matrix,
+    load_calibration_repetitions,
     summarize_results,
     write_manifest,
 )
+
+
+def test_pilot_matrix_is_fixed_45_run_paired_protocol():
+    jobs = build_pilot_matrix()
+
+    assert len(jobs) == 45
+    assert {job.task.name for job in jobs} == {"sort", "nqueens", "circle_packing"}
+    assert {job.seed for job in jobs} == {0, 1, 2}
+    assert {job.variant.name for job in jobs} == {
+        "full",
+        "random_search",
+        "single_agent",
+        "no_novelty",
+        "no_slow_loop",
+    }
+    full = next(job for job in jobs if job.variant.name == "full")
+    no_slow = next(job for job in jobs if job.variant.name == "no_slow_loop")
+    assert full.variant.config_overrides["evolution.self_evolve_enabled"] is True
+    assert no_slow.variant.config_overrides["evolution.self_evolve_enabled"] is False
+    assert {job.eval_repetitions for job in jobs} == {3}
+
+
+def test_pilot_matrix_uses_per_task_calibrated_evaluator_repetitions():
+    jobs = build_pilot_matrix(
+        eval_repetitions={
+            "sort": 3,
+            "nqueens": 5,
+            "circle_packing": 10,
+        }
+    )
+
+    assert {
+        task: {job.eval_repetitions for job in jobs if job.task.name == task}
+        for task in ("sort", "nqueens", "circle_packing")
+    } == {
+        "sort": {3},
+        "nqueens": {5},
+        "circle_packing": {10},
+    }
+    assert len({job.run_id for job in jobs}) == len(jobs)
+
+
+def test_load_calibration_repetitions_requires_audited_task_entries(tmp_path):
+    path = tmp_path / "calibration.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tasks": {
+                    "sort": {"calibration": {"repeats": 3}},
+                    "nqueens": {"calibration": {"repeats": 5}},
+                    "circle_packing": {"calibration": {"repeats": 10}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_calibration_repetitions(
+        path,
+        required_tasks=("sort", "nqueens", "circle_packing"),
+    ) == {"sort": 3, "nqueens": 5, "circle_packing": 10}
 
 
 def test_default_matrix_has_nine_tasks_five_variants_and_five_seeds(tmp_path):
@@ -20,8 +83,10 @@ def test_default_matrix_has_nine_tasks_five_variants_and_five_seeds(tmp_path):
 
     path = write_manifest(jobs, tmp_path / "matrix.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
     assert payload["task_count"] == 9
     assert payload["run_count"] == 225
+    assert payload["eval_repetitions"]["sort"] == [3]
 
 
 def test_reference_credit_ablation_is_separate_and_paired():
@@ -87,6 +152,42 @@ def test_slow_loop_decision_uses_paired_confidence_interval():
 
     assert decision["decision"] == "keep"
     assert decision["paired_runs"] == 5
+
+
+def test_pilot_summary_applies_gate_and_recommends_formal_seed_count():
+    records = []
+    for variant in (
+        "full",
+        "random_search",
+        "single_agent",
+        "no_novelty",
+        "no_slow_loop",
+    ):
+        for seed in (0, 1, 2):
+            records.append(
+                {
+                    "protocol": "pilot",
+                    "task": "sort",
+                    "variant": variant,
+                    "seed": seed,
+                    "status": "completed",
+                    "score": 0.9 if variant == "full" else 0.5,
+                    "frontier_auc": 0.9 if variant == "full" else 0.5,
+                    "provenance_valid": True,
+                    "cost_known": False,
+                }
+            )
+
+    report = summarize_results(
+        records,
+        include_cost_metric=False,
+        deterministic_replay_passed=True,
+    )
+
+    assert report["pilot_gate"]["passed"] is True
+    assert report["pilot_gate"]["minimum_paired_seeds_per_cell"] == 3
+    assert report["formal_seed_recommendation"]["recommended_seeds"] == 5
+    assert report["formal_seed_recommendation"]["underpowered_at_ten"] is False
 
 
 def test_slow_loop_decision_refuses_unpaired_claim():

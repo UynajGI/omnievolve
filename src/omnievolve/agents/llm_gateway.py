@@ -25,6 +25,19 @@ from omnievolve.utils.hashing import compute_sha256_str
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class LLMEndpoint:
+    """One model plus its provider-specific OpenAI-compatible credentials."""
+
+    model: str
+    api_key: str | None = field(default=None, repr=False)
+    api_base: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.model.strip():
+            raise ValueError("LLM endpoint model must not be empty")
+
+
 @dataclass
 class LLMResponse:
     """LLM 响应."""
@@ -76,6 +89,7 @@ class LLMGateway:
         max_retries: int = 3,
         retry_backoff_base: float = 1.0,
         fallback_model: str | None = None,
+        fallback_endpoints: list[LLMEndpoint] | None = None,
         circuit_breaker: Any | None = None,
         rate_limiter: Any | None = None,
         budget_guard: Any | None = None,
@@ -89,6 +103,7 @@ class LLMGateway:
         self._max_retries = max_retries
         self._retry_backoff_base = retry_backoff_base
         self._fallback_model = fallback_model
+        self._fallback_endpoints = tuple(fallback_endpoints or ())
         self._total_tokens = 0
         self._total_cost = 0.0
         # P1: 熔断器 + 限流
@@ -147,11 +162,21 @@ class LLMGateway:
 
         # S5-10: retry/backoff/fallback
         last_error: Exception | None = None
-        models_to_try = [model]
+        endpoints_to_try = [LLMEndpoint(model, self._api_key, self._api_base)]
         if self._fallback_model and self._fallback_model != model:
-            models_to_try.append(self._fallback_model)
+            endpoints_to_try.append(
+                LLMEndpoint(self._fallback_model, self._api_key, self._api_base)
+            )
+        endpoints_to_try.extend(
+            endpoint for endpoint in self._fallback_endpoints if endpoint.model != model
+        )
 
-        for try_model in models_to_try:
+        failed_credentials: set[tuple[str | None, str | None]] = set()
+        for endpoint_index, endpoint in enumerate(endpoints_to_try):
+            credential_id = (endpoint.api_key, endpoint.api_base)
+            if credential_id in failed_credentials:
+                continue
+            try_model = endpoint.model
             for attempt in range(self._max_retries):
                 try:
                     import litellm
@@ -161,13 +186,17 @@ class LLMGateway:
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        api_key=self._api_key,
-                        api_base=self._api_base,
+                        api_key=endpoint.api_key,
+                        api_base=endpoint.api_base,
                         timeout=self._request_timeout,
                     )
 
                     latency_ms = (time.time() - start_time) * 1000
                     content = response.choices[0].message.content or ""
+                    if not content.strip():
+                        raise RuntimeError(
+                            f"Provider returned an empty final response for model {try_model}"
+                        )
                     usage = response.usage
 
                     llm_response = LLMResponse(
@@ -233,7 +262,27 @@ class LLMGateway:
                     if self._circuit_breaker:
                         self._circuit_breaker.on_failure(safe_error)
                     if self._is_authentication_error(e):
+                        failed_credentials.add(credential_id)
+                        has_distinct_fallback = any(
+                            (candidate.api_key, candidate.api_base) not in failed_credentials
+                            for candidate in endpoints_to_try[endpoint_index + 1 :]
+                        )
+                        if has_distinct_fallback:
+                            logger.warning(
+                                "Authentication failed for model=%s; trying next configured endpoint",
+                                try_model,
+                            )
+                            break
                         raise LLMAuthenticationError(safe_error) from e
+                    if self._is_permanent_endpoint_error(e):
+                        if endpoint_index < len(endpoints_to_try) - 1:
+                            logger.warning(
+                                "Permanent provider/model failure for model=%s; "
+                                "trying next configured endpoint",
+                                try_model,
+                            )
+                            break
+                        raise self._typed_error(e, safe_error) from e
                     if attempt < self._max_retries - 1:
                         backoff = self._retry_backoff_base * (2**attempt)
                         time.sleep(backoff)
@@ -245,11 +294,28 @@ class LLMGateway:
         logger.error("All LLM retries exhausted: %s", safe_error)
         raise self._typed_error(last_error, safe_error) from last_error
 
+    def fork(self, db: Database | None = None) -> LLMGateway:
+        """Create an independent accounting/retry context for a canary arm."""
+        return LLMGateway(
+            db,
+            default_model=self._default_model,
+            api_key=self._api_key,
+            api_base=self._api_base,
+            max_retries=self._max_retries,
+            retry_backoff_base=self._retry_backoff_base,
+            fallback_model=self._fallback_model,
+            fallback_endpoints=list(self._fallback_endpoints),
+            request_timeout=self._request_timeout,
+            default_max_tokens=self._default_max_tokens,
+        )
+
     def _redact_error(self, error: Exception) -> str:
         """Return an error message safe for logs and persisted job diagnostics."""
         message = str(error)
-        if self._api_key:
-            message = message.replace(self._api_key, "[REDACTED]")
+        api_keys = [self._api_key, *(endpoint.api_key for endpoint in self._fallback_endpoints)]
+        for api_key in api_keys:
+            if api_key:
+                message = message.replace(api_key, "[REDACTED]")
         return message
 
     @staticmethod
@@ -274,6 +340,21 @@ class LLMGateway:
                 "invalid api key",
                 "invalid_key",
                 "unauthorized",
+            )
+        )
+
+    @classmethod
+    def _is_permanent_endpoint_error(cls, error: Exception) -> bool:
+        """Errors that retries cannot fix but a distinct provider may."""
+        status = cls._status_code(error)
+        text = f"{type(error).__name__}: {error}".lower()
+        return status in {400, 403, 404} or any(
+            marker in text
+            for marker in (
+                "model access denied",
+                "model not found",
+                "does not exist",
+                "permission denied",
             )
         )
 
@@ -447,3 +528,8 @@ class FakeLLM:
             total_tokens=150,
             latency_ms=1.0,
         )
+
+    def fork(self, db: Database | None = None) -> FakeLLM:
+        """Return a fresh deterministic stream for independent replay arms."""
+        del db
+        return FakeLLM(list(self._responses))

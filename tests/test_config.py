@@ -59,7 +59,7 @@ class TestEvolutionSettings:
 class TestSelectionSettings:
     def test_defaults(self):
         s = SelectionSettings()
-        assert s.parent_selector == "progressive_mcgs"
+        assert s.parent_selector == "lineage_ucb"
         assert s.tournament_size == 3
         assert s.pareto_enabled is True
 
@@ -292,6 +292,14 @@ class TestBuildModelSlots:
         assert len(slots) >= 2
         assert slots[0].tier == "heavy"
         assert slots[1].tier == "light"
+
+    def test_task_configs_do_not_reference_retired_mimo_provider(self):
+        config_dir = Path(__file__).parents[1] / "configs"
+        retired_markers = ("token-plan-cn", "tp-cmd", "mimo-v2.5-pro")
+
+        for config_path in config_dir.glob("*.toml"):
+            content = config_path.read_text(encoding="utf-8")
+            assert not any(marker in content for marker in retired_markers), config_path
 
 
 # --------------------------------------------------------------------------- #

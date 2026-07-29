@@ -25,6 +25,13 @@ class NoveltyDecision(str, Enum):
     REJECT = "reject"
 
 
+class NoveltyStage(str, Enum):
+    """Novelty is measured at two distinct runtime boundaries."""
+
+    IDEA = "idea"
+    CANDIDATE = "candidate"
+
+
 @dataclass
 class NoveltyResult:
     """新颖性检查结果."""
@@ -33,6 +40,23 @@ class NoveltyResult:
     similarity_score: float
     reasons: list[str]
     penalty: float = 0.0
+    stage: NoveltyStage = NoveltyStage.IDEA
+
+    @property
+    def objective_score(self) -> float:
+        """Independent novelty objective; never overwrite the task score."""
+        return max(0.0, min(1.0, 1.0 - self.similarity_score - self.penalty))
+
+    def to_metrics(self, prefix: str | None = None) -> dict[str, object]:
+        """Return auditable metrics suitable for candidate/evaluation metadata."""
+        key = prefix or f"{self.stage.value}_novelty"
+        return {
+            f"{key}_decision": self.decision.value,
+            f"{key}_similarity": self.similarity_score,
+            f"{key}_penalty": self.penalty,
+            f"{key}_objective": self.objective_score,
+            f"{key}_reasons": list(self.reasons),
+        }
 
 
 class NoveltyGate:
@@ -66,6 +90,7 @@ class NoveltyGate:
         self._llm_judge = llm_judge
         # AST 签名缓存（LRU 淘汰，最近 N 个候选的结构签名）
         self._recent_signatures: OrderedDict[str, None] = OrderedDict()
+        self._recent_exact_hashes: OrderedDict[str, None] = OrderedDict()
         self._max_cached_signatures = max_cached_signatures
 
     def check(
@@ -74,16 +99,83 @@ class NoveltyGate:
         code: str | None = None,
         existing_similarities: list[float] | None = None,
     ) -> NoveltyResult:
-        """检查新颖性.
+        """Backward-compatible novelty entry point.
 
-        Args:
-            thought: 思想内容
-            code: 代码内容
-            existing_similarities: 与现有候选的相似度列表
-
-        Returns:
-            NoveltyResult
+        Calls without code are idea-novelty checks. Calls with code are
+        candidate-novelty checks.
         """
+        if code is None:
+            return self.check_idea(thought, existing_similarities=existing_similarities)
+        return self.check_candidate(
+            thought,
+            code,
+            existing_similarities=existing_similarities,
+        )
+
+    def check_idea(
+        self,
+        thought: str,
+        *,
+        existing_similarities: list[float] | None = None,
+    ) -> NoveltyResult:
+        """Check mechanism/idea duplication before invoking the Coder."""
+        return self._check(
+            thought=thought,
+            code=None,
+            existing_similarities=existing_similarities,
+            stage=NoveltyStage.IDEA,
+        )
+
+    def check_candidate(
+        self,
+        thought: str,
+        code: str,
+        *,
+        existing_similarities: list[float] | None = None,
+        exact_reference_codes: list[str] | None = None,
+    ) -> NoveltyResult:
+        """Check the final generated code after Coder/repair has completed."""
+        exact_hash = self._exact_hash(code)
+        reference_hashes = {
+            self._exact_hash(reference)
+            for reference in (exact_reference_codes or [])
+            if reference.strip()
+        }
+        if exact_hash in self._recent_exact_hashes or exact_hash in reference_hashes:
+            return NoveltyResult(
+                decision=NoveltyDecision.REJECT,
+                similarity_score=1.0,
+                reasons=["Exact candidate code duplicate"],
+                stage=NoveltyStage.CANDIDATE,
+            )
+
+        self._recent_exact_hashes[exact_hash] = None
+        if len(self._recent_exact_hashes) > self._max_cached_signatures:
+            self._recent_exact_hashes.popitem(last=False)
+
+        result = self._check(
+            thought=thought,
+            code=code,
+            existing_similarities=existing_similarities,
+            stage=NoveltyStage.CANDIDATE,
+        )
+        if (
+            result.decision == NoveltyDecision.ALLOW
+            and "AST structure identical to recent candidate" in result.reasons
+        ):
+            result.decision = NoveltyDecision.ALLOW_WITH_PENALTY
+            result.penalty = max(result.penalty, 0.25)
+        return result
+
+    def _check(
+        self,
+        *,
+        thought: str,
+        code: str | None,
+        existing_similarities: list[float] | None,
+        stage: NoveltyStage,
+    ) -> NoveltyResult:
+        """Shared decision logic for one explicitly identified novelty stage."""
         reasons = []
 
         # 1. Embedding 相似度检查
@@ -95,6 +187,7 @@ class NoveltyGate:
                 decision=NoveltyDecision.REJECT,
                 similarity_score=max_similarity,
                 reasons=reasons,
+                stage=stage,
             )
 
         # 2. AST 结构检查
@@ -114,6 +207,7 @@ class NoveltyGate:
                     decision=NoveltyDecision.REJECT,
                     similarity_score=max_similarity,
                     reasons=reasons,
+                    stage=stage,
                 )
 
         # 3. 决策
@@ -123,12 +217,14 @@ class NoveltyGate:
                     decision=NoveltyDecision.REJECT,
                     similarity_score=max_similarity,
                     reasons=reasons,
+                    stage=stage,
                 )
             return NoveltyResult(
                 decision=NoveltyDecision.ALLOW_WITH_PENALTY,
                 similarity_score=max_similarity,
                 reasons=["Borderline similarity"],
                 penalty=0.2,
+                stage=stage,
             )
 
         # 3.5 borderline 区域：可选 LLM 判断
@@ -143,6 +239,7 @@ class NoveltyGate:
                         decision=NoveltyDecision.REJECT,
                         similarity_score=max_similarity,
                         reasons=["LLM novelty judge: reject"],
+                        stage=stage,
                     )
                 elif llm_decision == "allow_with_penalty":
                     return NoveltyResult(
@@ -150,6 +247,7 @@ class NoveltyGate:
                         similarity_score=max_similarity,
                         reasons=["LLM novelty judge: borderline"],
                         penalty=0.15,
+                        stage=stage,
                     )
             except Exception:
                 logger.debug("LLM novelty judge failed, falling through", exc_info=True)
@@ -158,6 +256,30 @@ class NoveltyGate:
             decision=NoveltyDecision.ALLOW,
             similarity_score=max_similarity,
             reasons=["Novel contribution"],
+            stage=stage,
+        )
+
+    @staticmethod
+    def _exact_hash(code: str) -> str:
+        normalized = "\n".join(line.rstrip() for line in code.strip().splitlines())
+        return hashlib.sha256(normalized.encode()).hexdigest()
+
+    def snapshot_state(self) -> dict[str, list[str]]:
+        """Serialize caches required for deterministic resume."""
+        return {
+            "ast_signatures": list(self._recent_signatures),
+            "exact_hashes": list(self._recent_exact_hashes),
+        }
+
+    def restore_state(self, state: dict[str, list[str]] | None) -> None:
+        """Restore caches from a checkpoint, tolerating older snapshots."""
+        if not state:
+            return
+        self._recent_signatures = OrderedDict(
+            (value, None) for value in state.get("ast_signatures", [])
+        )
+        self._recent_exact_hashes = OrderedDict(
+            (value, None) for value in state.get("exact_hashes", [])
         )
 
     def _check_ast_novelty(self, code: str) -> bool:

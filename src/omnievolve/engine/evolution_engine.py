@@ -25,8 +25,10 @@ Slow Loop 每 health_window_gens 代：
 from __future__ import annotations
 
 import logging
+import random
 import signal
 import time
+import warnings
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -38,7 +40,7 @@ from omnievolve.agents.llm_gateway import LLMGateway
 from omnievolve.agents.router import ModelRouter, ModelSlot, RouteContext
 from omnievolve.engine.crossover import CrossoverOperator
 from omnievolve.engine.island import IslandManager
-from omnievolve.engine.mcts import ProgressiveMCGS
+from omnievolve.engine.mcts import LineageUCB
 from omnievolve.engine.memory import MemoryStore
 from omnievolve.engine.novelty import NoveltyGate
 from omnievolve.engine.selection import ParentSelector
@@ -77,6 +79,13 @@ from omnievolve.utils.token_counter import BudgetGuard, BudgetState
 logger = logging.getLogger(__name__)
 
 
+def _nested_tuple(value: Any) -> Any:
+    """Convert JSON arrays back to tuples for ``random.setstate``."""
+    if isinstance(value, list):
+        return tuple(_nested_tuple(item) for item in value)
+    return value
+
+
 @dataclass
 class EvolutionConfig:
     """进化配置."""
@@ -95,15 +104,18 @@ class EvolutionConfig:
     sandbox_mem_limit_mb: int = 4096
     health_window_gens: int = 3
     meta_canary_budget_ratio: float = 0.1
+    parent_selector: str = "lineage_ucb"
     tournament_size: int = 3
     island_migration_interval: int = 5
     ucb_c: float = 1.414
     uct_decay_progress: float = 0.5  # P1-1: 探索衰减完成点
     uct_c_min: float = 0.2  # P1-1: 探索常数下限
     progressive_eval_enabled: bool = False  # Phase 3: 渐进式评估
+    eval_repetitions: int = 1
+    eval_confidence: float = 0.95
     fusion_mode: str = "mechanical"  # 2.2: mechanical / llm
     epiplexity_beta: float = 0.0  # 辅助适应度权重（0=关闭）
-    self_evolve_enabled: bool = True
+    self_evolve_enabled: bool = False
     leakage_score_threshold: float = 0.9  # 触发泄漏检测的分数阈值
     leakage_penalty_factor: float = 0.5  # 泄漏嫌疑时的分数惩罚系数
     git_auto_gc_interval: int = 10  # Git 后端周期性 GC 代数间隔
@@ -163,6 +175,7 @@ class EvolutionEngine:
         self_evaluator: SelfEvaluator | None = None,
         meta_planner: MetaPlanner | None = None,
         replay_evaluator: ReplayEvaluator | None = None,
+        policy_replay_executor: Any | None = None,
         graph_store: GraphStore | None = None,
         vector_indexer: VectorIndexer | None = None,
         prompt_repo: PromptVersionRepository | None = None,
@@ -184,7 +197,17 @@ class EvolutionEngine:
             sandbox, "environment_version_id", ""
         )
         self._config = config or EvolutionConfig()
-        self._search_policy = search_policy or SearchPolicyGenome()
+        configured_selector = self._config.parent_selector
+        if configured_selector == "progressive_mcgs":
+            warnings.warn(
+                "progressive_mcgs is deprecated; use lineage_ucb",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            configured_selector = "lineage_ucb"
+        self._search_policy = search_policy or SearchPolicyGenome(
+            parent_selector=configured_selector
+        )
         # 配置中的 epiplexity_beta 覆盖 genome 默认值（允许不开 Slow Loop 也能用）
         if self._config.epiplexity_beta > 0:
             self._search_policy = replace(
@@ -227,7 +250,7 @@ class EvolutionEngine:
         )
 
         # 搜索组件
-        self._mcts = ProgressiveMCGS(
+        self._mcts = LineageUCB(
             exploration=self._config.ucb_c,
             schedule="progressive",
             c_min=self._config.uct_c_min,  # P1-1
@@ -237,14 +260,24 @@ class EvolutionEngine:
             num_islands=self._config.island_count,
             migration_interval=self._config.island_migration_interval,
         )
+        policy_selector = self._search_policy.parent_selector
+        selector_strategy = (
+            "tournament"
+            if policy_selector == "lineage_ucb"
+            else policy_selector
+        )
         self._parent_selector = parent_selector or ParentSelector(
             db,
-            strategy="tournament",
+            strategy=selector_strategy,
             tournament_size=self._config.tournament_size,
         )
+        self._selection_injected = parent_selector is not None
+        self._selection_mode = "injected" if parent_selector is not None else policy_selector
         self._crossover = crossover or CrossoverOperator()
 
         # 模型路由
+        self._model_slots = list(model_slots or [])
+        self._router_injected = router is not None
         self._router = router
         if self._router is None and model_slots:
             self._router = ModelRouter(
@@ -261,6 +294,26 @@ class EvolutionEngine:
             budget_ratio=self._config.meta_canary_budget_ratio,
         )
         self._l0_mutator = L0PolicyMutator(self._governance)
+
+        if (
+            policy_replay_executor is None
+            and self._config.self_evolve_enabled
+            and getattr(artifact_store, "backend_name", None) == "cas"
+            and hasattr(llm, "fork")
+        ):
+            from omnievolve.engine.policy_canary import LocalPolicyArmRunner
+            from omnievolve.meta.policy_replay import PolicyCanaryRunner
+
+            policy_replay_executor = PolicyCanaryRunner(
+                LocalPolicyArmRunner(
+                    source_store=artifact_store,
+                    task_evaluator=task_evaluator,
+                    sandbox=sandbox,
+                    llm=llm,
+                    evolution_config=self._config,
+                    model_slots=self._model_slots,
+                )
+            )
 
         # 插件自动发现 — EvoX evox_ext 模式: 启动时扫描并加载所有已安装插件
         from omnievolve.plugins.discovery import discover_plugins
@@ -311,6 +364,7 @@ class EvolutionEngine:
             experiment_repo=self._experiment_repo,
             prompt_repo=self._prompt_repo,
             artifact_store=artifact_store,
+            policy_replay_executor=policy_replay_executor,
         )
 
         # T1: 提取 CheckpointManager + EngineSetup
@@ -322,12 +376,14 @@ class EvolutionEngine:
 
         # 进化状态
         self._current_generation = 0
+        self._checkpoint_loaded = False
         self._best_candidate: tuple[str, float] | None = None
         self._champion_policy_id = "default"
         self._total_candidates = 0
         self._start_time = 0.0
         self._recent_scores: list[float] = []  # 最近窗口分数（供 Slow Loop 比较）
         self._slow_loop_triggered = False
+        self._last_selection_trace: dict[str, Any] | None = None
         # ShinkaEvolve: meta-scratchpad 跨代累积全局洞察
         self._meta_scratchpad: str = ""
         # 失败方向追踪（用于 meta-scratchpad 更新）
@@ -487,12 +543,22 @@ class EvolutionEngine:
         if hasattr(store, "bind_experiment"):
             store.bind_experiment(experiment_id, task_name=exp.task_name)
 
-        # 找到当前最大 generation
-        row = self._db.fetchone(
-            "SELECT MAX(generation) as max_gen FROM candidate WHERE experiment_id = ?",
-            (experiment_id,),
-        )
-        self._current_generation = row["max_gen"] if row and row["max_gen"] else 0
+        if self._checkpoint_loaded:
+            # The checkpoint generation is the last fully committed boundary.
+            # Rows from a crashed partial next generation remain auditable but
+            # are excluded from future selection/replay.
+            self._db.execute(
+                "UPDATE candidate SET status = 'aborted' "
+                "WHERE experiment_id = ? AND generation > ?",
+                (experiment_id, self._current_generation),
+            )
+        else:
+            # Backward compatibility for schema-v1 experiments.
+            row = self._db.fetchone(
+                "SELECT MAX(generation) as max_gen FROM candidate WHERE experiment_id = ?",
+                (experiment_id,),
+            )
+            self._current_generation = row["max_gen"] if row and row["max_gen"] else 0
 
         # 恢复 best
         bests = self._candidate_repo.get_best_candidates(
@@ -510,6 +576,7 @@ class EvolutionEngine:
         if champ:
             self._champion_policy_id = champ.id
             self._search_policy = champ.genome
+            self._apply_search_policy_runtime()
 
         # 恢复 MCTS 图
         self._rebuild_mcts(experiment_id)
@@ -625,6 +692,14 @@ class EvolutionEngine:
             except (EvolutionError, LLMError, SandboxError, StorageError):
                 logger.exception("Evolution failed for candidate slot %d", i)
 
+        # Stagnation is a generation-level signal, never a per-candidate pass flag.
+        stagnation_updates = self._island_manager.finalize_generation(generation)
+        logger.info(
+            "generation_stagnation generation=%d improvements=%s",
+            generation,
+            {key: value for key, value in stagnation_updates.items() if value},
+        )
+
         # 设计文档 §4.2: 每代后消费向量索引 Outbox
         if self._vector_indexer:
             try:
@@ -652,8 +727,44 @@ class EvolutionEngine:
         # P1-2: 计算探索权重
         w = compute_exploration_weight(self._mcts._progress)  # noqa: SLF001
 
-        # 1. 尝试 MCTS 选择：从该岛屿的最佳候选出发下降到叶节点
+        def finish(ids: list[str], relation: str, mechanism: str) -> tuple[list[str], str]:
+            self._last_selection_trace = {
+                "experiment_id": self._experiment_id,
+                "generation": self._current_generation,
+                "island_id": island_id,
+                "configured_strategy": self._selection_mode,
+                "mechanism": mechanism,
+                "exploration_weight": w,
+                "parent_ids": list(ids),
+                "relation_type": relation,
+            }
+            logger.info("parent_selection %s", self._last_selection_trace)
+            return ids, relation
+
         island = self._island_manager.get_island(island_id)
+        if island is not None and not island.candidates:
+            experiment = self._experiment_repo.get(self._experiment_id)
+            baseline_id = experiment.baseline_candidate_id if experiment else None
+            if baseline_id:
+                island.add_candidate(baseline_id)
+                return finish([baseline_id], "mutate", "baseline_bootstrap")
+
+        local_candidate_ids = list(island.candidates) if island else []
+        min_parents = getattr(self._crossover, "min_parents", 2)
+        if self._selection_mode != "lineage_ucb":
+            selected = self._parent_selector.select(
+                self._experiment_id,
+                self._evaluator_version_id,
+                self._environment_version_id,
+                count=min_parents,
+                island_id=island_id,
+                candidate_ids=local_candidate_ids,
+            )
+            if len(selected) >= 2 and random.random() < self._config.crossover_rate:
+                return finish(selected, "crossover", self._selection_mode)
+            return finish(selected[:1], "mutate", self._selection_mode)
+
+        # 1. 尝试 MCTS 选择：从该岛屿的最佳候选出发下降到叶节点
         mcts_parent: str | None = None
         if island and island.elite_archive:
             root = island.elite_archive[0][0]
@@ -661,12 +772,13 @@ class EvolutionEngine:
                 mcts_parent = self._mcts.select(root)
 
         # 2. ParentSelector 兖底（需要有评估分数的候选）
-        min_parents = getattr(self._crossover, "min_parents", 2)
         scored = self._parent_selector.select(
             self._experiment_id,
             self._evaluator_version_id,
             self._environment_version_id,
             count=min_parents,
+            island_id=island_id,
+            candidate_ids=local_candidate_ids,
         )
 
         # 3. P1-2: 软切换决策
@@ -681,10 +793,12 @@ class EvolutionEngine:
                 self._evaluator_version_id,
                 self._environment_version_id,
                 None,
+                island_id=island_id,
+                candidate_ids=local_candidate_ids,
             )
             top_k_id = select_top_k_exploitation(all_scored, k=5)
             if top_k_id:
-                return [top_k_id], "mutate"
+                return finish([top_k_id], "mutate", "top_k_exploitation")
 
         # 4. 探索模式（默认）
         use_crossover = len(scored) >= 2 and random.random() < self._config.crossover_rate
@@ -692,14 +806,14 @@ class EvolutionEngine:
         if use_crossover:
             # Fix 3: crossover 使用 ParentSelector 结果而非 MCTS 路径，回滚虚拟损失
             self._mcts.rollback_last_select()  # noqa: SLF001
-            return scored, "crossover"
+            return finish(scored, "crossover", "tournament_crossover")
         if mcts_parent:
-            return [mcts_parent], "mutate"
+            return finish([mcts_parent], "mutate", "lineage_ucb")
         if scored:
             # Fix 3: ParentSelector fallback 非 MCTS 路径，回滚虚拟损失
             self._mcts.rollback_last_select()  # noqa: SLF001
-            return scored[:1], "mutate"
-        return [], "mutate"
+            return finish(scored[:1], "mutate", "tournament_fallback")
+        return finish([], "mutate", "empty")
 
     def _evolve_one(
         self,
@@ -745,6 +859,7 @@ class EvolutionEngine:
         if new_policy is not None:
             self._search_policy = new_policy
             self._champion_policy_id = new_id  # type: ignore[assignment]
+            self._apply_search_policy_runtime()
 
     # ------------------------------------------------------------------ #
     #  辅助方法
@@ -756,6 +871,32 @@ class EvolutionEngine:
         self._champion_policy_id, self._search_policy = self._setup.ensure_champion_policy(
             self._experiment_id, self._search_policy
         )
+        self._apply_search_policy_runtime()
+
+    def _apply_search_policy_runtime(self) -> None:
+        """Bind every live genome field to its runtime consumer."""
+        if not self._selection_injected:
+            selector = self._search_policy.parent_selector
+            if selector == "progressive_mcgs":
+                selector = "lineage_ucb"
+            self._selection_mode = selector
+            self._parent_selector._strategy = (  # noqa: SLF001
+                "tournament" if selector == "lineage_ucb" else selector
+            )
+
+        if (
+            not self._router_injected
+            and self._model_slots
+            and (
+                self._router is None
+                or self._router.get_stats().get("algorithm")
+                != self._search_policy.model_routing_policy
+            )
+        ):
+            self._router = ModelRouter(
+                self._model_slots,
+                algorithm=self._search_policy.model_routing_policy,
+            )
 
     def _ensure_version_rows(self) -> None:
         """确保 version 行存在 + L2 验证（T1: 委托给 EngineSetup）."""
@@ -770,6 +911,27 @@ class EvolutionEngine:
 
     def _save_checkpoint(self) -> None:
         """持久化检查点（T1: 委托给 CheckpointManager）."""
+        job_rows = self._db.fetchall(
+            "SELECT id, status, attempt, max_attempts FROM job "
+            "WHERE experiment_id = ? AND status IN ('queued', 'running', 'failed')",
+            (self._experiment_id,),
+        )
+        runtime_state: dict[str, Any] = {
+            "python_random_state": random.getstate(),
+            "lineage_ucb": self._mcts.snapshot_state(),
+            "islands": self._island_manager.snapshot_state(),
+            "router": self._router.snapshot_state() if self._router is not None else None,
+            "budget": self._budget_guard.snapshot_state(),
+            "search_policy": self._search_policy.to_dict(),
+            "champion_policy_id": self._champion_policy_id,
+            "best_candidate": list(self._best_candidate) if self._best_candidate else None,
+            "novelty_gate": self._novelty_gate.snapshot_state(),
+            "slow_loop_triggered": self._slow_loop_triggered,
+            "selection_mode": self._selection_mode,
+            "jobs": [dict(row) for row in job_rows],
+        }
+        if hasattr(self._llm, "_call_count"):
+            runtime_state["llm_call_count"] = int(self._llm._call_count)  # noqa: SLF001
         self._checkpoint.save(
             experiment_id=self._experiment_id,
             generation=self._current_generation,
@@ -777,16 +939,44 @@ class EvolutionEngine:
             meta_scratchpad=self._meta_scratchpad,
             failed_directions=self._failed_directions,
             recent_scores=self._recent_scores,
+            runtime_state=runtime_state,
         )
 
     def _load_checkpoint(self) -> None:
         """恢复检查点（T1: 委托给 CheckpointManager）."""
         checkpoint = self._checkpoint.load(self._experiment_id)
         if checkpoint:
+            self._checkpoint_loaded = True
+            self._current_generation = int(checkpoint.get("generation", 0))
             self._meta_scratchpad = checkpoint.get("meta_scratchpad", "")
             self._failed_directions = checkpoint.get("failed_directions", [])
             self._recent_scores = checkpoint.get("recent_scores", [])
             self._total_candidates = checkpoint.get("total_candidates", self._total_candidates)
+            runtime = checkpoint.get("runtime_state", {})
+            policy_payload = runtime.get("search_policy")
+            if policy_payload:
+                self._search_policy = SearchPolicyGenome.from_dict(policy_payload)
+            self._champion_policy_id = runtime.get(
+                "champion_policy_id",
+                self._champion_policy_id,
+            )
+            self._apply_search_policy_runtime()
+            self._mcts.restore_state(runtime.get("lineage_ucb"))
+            self._island_manager.restore_state(runtime.get("islands"))
+            if self._router is not None and runtime.get("router"):
+                self._router.restore_state(runtime["router"])
+            self._budget_guard.restore_state(runtime.get("budget"))
+            self._novelty_gate.restore_state(runtime.get("novelty_gate"))
+            best = runtime.get("best_candidate")
+            if best:
+                self._best_candidate = (str(best[0]), float(best[1]))
+            self._slow_loop_triggered = bool(
+                runtime.get("slow_loop_triggered", self._slow_loop_triggered)
+            )
+            if "python_random_state" in runtime:
+                random.setstate(_nested_tuple(runtime["python_random_state"]))
+            if "llm_call_count" in runtime and hasattr(self._llm, "_call_count"):
+                self._llm._call_count = int(runtime["llm_call_count"])  # noqa: SLF001
 
     def _batch_load_artifacts(self, artifact_hashes: list[str]) -> list[str]:
         """批量加载 artifact 内容."""
@@ -839,18 +1029,33 @@ class EvolutionEngine:
             return ""
         return prompt_version_id
 
-    def _select_model(self, generation: int) -> str:
-        """Router 选择模型（步骤 1）."""
+    def _select_model(
+        self,
+        generation: int,
+        role: str = "coder",
+        *,
+        stagnation_level: float = 0.0,
+        novelty_deficit: float = 0.0,
+        implementation_difficulty: float = 0.5,
+    ) -> str:
+        """Select a model for one role; rewards are updated per actual call."""
         if self._router is None:
             return ""
+        remaining_compute_ratio = 1.0
+        state = self._budget_guard.state
+        if state.compute_budget_sec:
+            remaining_compute_ratio = max(
+                0.0,
+                1.0 - state.used_compute_sec / state.compute_budget_sec,
+            )
         ctx = RouteContext(
-            role="coder",
+            role=role,
             generation=generation,
-            stagnation_level=0.0,
-            novelty_deficit=0.0,
-            implementation_difficulty=0.5,
-            remaining_token_ratio=1.0 - self._budget_guard.state.token_ratio,
-            remaining_compute_ratio=1.0,
+            stagnation_level=stagnation_level,
+            novelty_deficit=novelty_deficit,
+            implementation_difficulty=implementation_difficulty,
+            remaining_token_ratio=1.0 - state.token_ratio,
+            remaining_compute_ratio=remaining_compute_ratio,
         )
         try:
             return self._router.select(ctx)
@@ -935,8 +1140,9 @@ class EvolutionEngine:
     def _rebuild_mcts(self, experiment_id: str) -> None:
         """从血缘图重建 MCTS 节点（保留父子关系）."""
         rows = self._db.fetchall(
-            "SELECT id FROM candidate WHERE experiment_id = ? ORDER BY generation",
-            (experiment_id,),
+            "SELECT id FROM candidate WHERE experiment_id = ? "
+            "AND generation <= ? AND status != 'aborted' ORDER BY generation",
+            (experiment_id, self._current_generation),
         )
         for row in rows:
             child_id = row["id"]

@@ -63,6 +63,40 @@ class TestIslandState:
         island = IslandState(island_id="i0")
         assert island.stagnation_count == 0
 
+    def test_passed_without_improvement_still_increments_stagnation(self):
+        island = IslandState(island_id="i0")
+        island.record_generation_score(1, 1.0, passed=True)
+        assert island.finalize_generation(1) is True
+        island.record_generation_score(2, 1.0, passed=True)
+
+        assert island.finalize_generation(2) is False
+        assert island.stagnation_count == 1
+        assert island.historical_best_score == 1.0
+
+    def test_generation_best_improvement_is_commit_order_independent(self):
+        first = IslandState(island_id="i0")
+        second = IslandState(island_id="i0")
+        for island in (first, second):
+            island.record_generation_score(1, 1.0, passed=True)
+            island.finalize_generation(1)
+
+        first.record_generation_score(2, 0.8, passed=True)
+        first.record_generation_score(2, 1.2, passed=True)
+        second.record_generation_score(2, 1.2, passed=True)
+        second.record_generation_score(2, 0.8, passed=True)
+
+        assert first.finalize_generation(2) is True
+        assert second.finalize_generation(2) is True
+        assert first.historical_best_score == second.historical_best_score == 1.2
+        assert first.stagnation_count == second.stagnation_count == 0
+
+    def test_failed_generation_increments_stagnation(self):
+        island = IslandState(island_id="i0", historical_best_score=1.0)
+        island.record_generation_score(2, 0.0, passed=False)
+
+        assert island.finalize_generation(2) is False
+        assert island.stagnation_count == 1
+
 
 # --------------------------------------------------------------------------- #
 #  IslandManager
@@ -124,6 +158,26 @@ class TestIslandManager:
         mgr.migrate(current_gen=2)
         for island in mgr.get_all_islands().values():
             assert island.last_migration_gen == 2
+
+    def test_migration_is_the_audited_cross_island_entry(self):
+        mgr = IslandManager(num_islands=2, migration_interval=2, migration_size=1)
+        mgr.assign_candidate("e0", "island_0")
+        mgr.assign_candidate("e1", "island_1")
+        mgr.get_island("island_0").update_elite("e0", 0.9)
+        mgr.get_island("island_1").update_elite("e1", 0.8)
+
+        migrations = mgr.migrate(current_gen=2)
+        snapshot = mgr.snapshot_state()
+
+        assert ("e0", "island_0", "island_1") in migrations
+        assert "e0" in mgr.get_island("island_1").candidates
+        assert {
+            "candidate_id": "e0",
+            "from_island": "island_0",
+            "to_island": "island_1",
+            "generation": 2,
+            "score": 0.9,
+        } in snapshot["migration_events"]
 
     def test_detect_stagnation(self):
         mgr = IslandManager(num_islands=2)

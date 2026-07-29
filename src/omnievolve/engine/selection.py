@@ -13,6 +13,10 @@ from typing import Any
 
 from omnievolve.storage.db import Database
 
+PARENT_SELECTION_STRATEGIES = frozenset(
+    {"best", "tournament", "random", "power_law", "weighted"}
+)
+
 
 class ParentSelector:
     """父代选择器.
@@ -37,6 +41,9 @@ class ParentSelector:
             power_law_alpha: power law 强度（0=uniform, ∞=hill-climb）
             weighted_lambda: weighted 选择压力
         """
+        if strategy not in PARENT_SELECTION_STRATEGIES:
+            allowed = ", ".join(sorted(PARENT_SELECTION_STRATEGIES))
+            raise ValueError(f"Unknown parent selection strategy {strategy!r}; expected one of: {allowed}")
         self._db = db
         self._strategy = strategy
         self._tournament_size = tournament_size
@@ -57,10 +64,24 @@ class ParentSelector:
         environment_version_id: str,
         count: int = 1,
         exclude_ids: list[str] | None = None,
+        *,
+        island_id: str | None = None,
+        candidate_ids: list[str] | None = None,
     ) -> list[str]:
-        """选择父代."""
+        """选择父代.
+
+        ``candidate_ids`` is the authoritative island membership supplied by
+        ``IslandManager``.  It includes explicit migrants and prevents hidden
+        global fallback.  ``island_id`` is retained for callers without an
+        in-memory membership snapshot.
+        """
         candidates = self._get_scored_candidates(
-            experiment_id, evaluator_version_id, environment_version_id, exclude_ids
+            experiment_id,
+            evaluator_version_id,
+            environment_version_id,
+            exclude_ids,
+            island_id=island_id,
+            candidate_ids=candidate_ids,
         )
 
         if not candidates:
@@ -74,8 +95,9 @@ class ParentSelector:
             return self._select_power_law(candidates, count)
         elif self._strategy == "weighted":
             return self._select_weighted(candidates, count)
-        else:  # random
+        elif self._strategy == "random":
             return self._select_random(candidates, count)
+        raise AssertionError(f"Unreachable parent selection strategy: {self._strategy}")
 
     def _get_scored_candidates(
         self,
@@ -83,6 +105,9 @@ class ParentSelector:
         evaluator_version_id: str,
         environment_version_id: str,
         exclude_ids: list[str] | None,
+        *,
+        island_id: str | None = None,
+        candidate_ids: list[str] | None = None,
     ) -> list[tuple[str, float]]:
         """获取有分数的候选."""
         sql = """
@@ -90,12 +115,23 @@ class ParentSelector:
             FROM candidate c
             JOIN evaluation_run er ON c.id = er.candidate_id
             WHERE c.experiment_id = ?
+              AND c.status != 'aborted'
               AND er.evaluator_version_id = ?
               AND er.environment_version_id = ?
               AND er.status = 'completed'
               AND er.passed = 1
         """
         params: list[Any] = [experiment_id, evaluator_version_id, environment_version_id]
+
+        if candidate_ids is not None:
+            if not candidate_ids:
+                return []
+            placeholders = ",".join(["?"] * len(candidate_ids))
+            sql += f" AND c.id IN ({placeholders})"
+            params.extend(candidate_ids)
+        elif island_id is not None:
+            sql += " AND c.island_id = ?"
+            params.append(island_id)
 
         if exclude_ids:
             placeholders = ",".join(["?"] * len(exclude_ids))
@@ -234,10 +270,18 @@ class ExplorationSelector(ParentSelector):
         environment_version_id: str,
         count: int = 1,
         exclude_ids: list[str] | None = None,
+        *,
+        island_id: str | None = None,
+        candidate_ids: list[str] | None = None,
     ) -> list[str]:
         """选择低访问次数的候选."""
         candidates = self._get_scored_candidates(
-            experiment_id, evaluator_version_id, environment_version_id, exclude_ids
+            experiment_id,
+            evaluator_version_id,
+            environment_version_id,
+            exclude_ids,
+            island_id=island_id,
+            candidate_ids=candidate_ids,
         )
 
         if not candidates:

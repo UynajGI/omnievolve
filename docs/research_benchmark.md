@@ -1,8 +1,14 @@
 # Research benchmark protocol
 
-OmniEvolve is scoped as a single-machine research framework. Its canonical
-comparison protocol contains nine heterogeneous executable tasks, five fixed
-random seeds by default, and five variants:
+OmniEvolve is a single-machine research framework. Research data is admissible
+only after enabled runtime mechanisms are live, auditable, independently
+ablatable, and deterministically resumable. The historical v4 pilot is
+engineering calibration data and is invalid for inference.
+
+## Fixed 45-run pilot
+
+The pilot crosses three tasks (`sort`, `nqueens`, and `circle_packing`), five
+variants, and three paired search seeds:
 
 - `full`
 - `random_search`
@@ -10,87 +16,138 @@ random seeds by default, and five variants:
 - `no_novelty`
 - `no_slow_loop`
 
-Generate the 225-run manifest without making model API calls:
+`full` explicitly enables the real paired-arm Slow Loop canary;
+`no_slow_loop` explicitly disables it.
+
+Before generating the pilot manifest, calibrate evaluator noise on each frozen
+initial candidate. Calibration runs with `gens=0`, CAS, fake embeddings, no
+mutation, and no LLM calls. It starts at three measurements and automatically
+stops when the two-sided 95% CI half-width resolves a normalized 5% effect, or
+at ten measurements:
+
+```bash
+omnievolve research calibrate \
+  --calibration .omnievolve/research/calibration.json
+
+omnievolve research plan-pilot \
+  --seeds 11,22,33 \
+  --calibration .omnievolve/research/calibration.json \
+  --output .omnievolve/research/pilot-matrix.json
+```
+
+`plan-pilot` fails closed when the calibration report is absent or incomplete.
+Every job has a stable ID that includes the calibrated evaluator repeat count,
+a `pilot` protocol label, and explicit configuration overrides. The search
+runner passes `evolution.eval_repetitions` through the unified
+`EvaluationService`; this is distinct from rerunning an entire search.
+`random_search` is a genuine LLM-free baseline: every slot applies a
+deterministic, task-agnostic AST mutation. It does not run Director, Coder,
+Critic, novelty, crossover, or the Slow Loop.
+
+```bash
+omnievolve research execute \
+  --output .omnievolve/research/pilot-matrix.json \
+  --workers 2 --gens 5 --population 4 \
+  --max-attempts 3 \
+  --results .omnievolve/research/pilot-results.jsonl
+```
+
+The pilot passes only when:
+
+- provenance/replay pollution is zero;
+- non-algorithmic failures are at most 5%;
+- every cell has at least two valid paired seeds;
+- deterministic replay passes;
+- cost is known or explicitly excluded from comparison.
+
+Paired-seed variance then determines the formal seed count for 80% power at 5%
+significance and a 5% normalized effect. Clamp the answer to 5–10 seeds. If ten
+is still insufficient, report the study as underpowered rather than expanding
+the claim.
+
+## Formal matrix
+
+Only after the pilot gate, generate the existing nine-task, five-variant formal
+matrix with the power-selected seed count:
 
 ```bash
 omnievolve research plan \
   --seeds 0,1,2,3,4 \
-  --output .omnievolve/research/matrix.json
-```
+  --eval-repetitions 3 \
+  --output .omnievolve/research/formal-matrix.json
 
-Each job has a stable ID and explicit configuration overrides. It can therefore
-be idempotently inserted into `JobStore`, drained by `LocalTaskExecutor` with a
-bounded worker count, and retried after transient failure.
-
-`random_search` is a genuine LLM-free baseline: every slot independently applies
-one deterministic, task-agnostic AST mutation to the frozen initial program.
-Its mutation seed is derived from the experiment seed, generation, slot, island,
-and parent source, so replay does not depend on thread scheduling. It does not
-run Director, Coder, Critic, novelty, crossover, or the Slow Loop.
-
-Validate the complete execution chain on `sort` before spending the full matrix
-budget:
-
-```bash
 omnievolve research execute \
-  --output .omnievolve/research/matrix.json \
-  --task sort --seed-limit 2 \
-  --workers 2 --gens 2 --population 2 \
-  --results .omnievolve/research/pilot-results.jsonl
-```
-
-After the pilot is clean, drain all 225 runs. The queue database is persistent,
-so the same command resumes queued work rather than duplicating it:
-
-```bash
-omnievolve research execute \
-  --output .omnievolve/research/matrix.json \
+  --output .omnievolve/research/formal-matrix.json \
   --workers 2 --gens 5 --population 4 \
   --max-attempts 3 \
   --results .omnievolve/research/results.jsonl
 ```
 
-The executor appends one JSON object per completed or terminally failed run.
-Each run uses isolated DB/artifact/vector directories and records a replay
-command, Git commit, token/cost totals, wall time, and raw repetition scores:
+The local queue is persistent. Enqueue is idempotent, leases are recoverable,
+and concurrency is bounded. Permanent configuration, authentication, and
+integrity errors are not retried. Timeouts, rate limits, and transient provider
+failures use bounded exponential backoff. Each attempt retains independent
+provenance and resource usage.
+
+Each isolated run records frontier trajectory, best-of-budget, success,
+repetition statistics, token/cost totals, wall time, strict replay evidence,
+and a failure category:
 
 ```json
-{"run_id":"…","task":"sort","variant":"full","seed":0,
- "status":"completed","score":0.73,"scores":[0.73],
- "cost_usd":0.02,"total_tokens":1432,"llm_calls":6,
- "candidate_counts":[9],"checkpoint_generations":[5],"wall_sec":41.2}
+{"schema_version":2,"run_id":"...","protocol":"pilot","task":"sort",
+ "variant":"full","seed":11,"status":"completed",
+ "frontier_auc":0.71,"best_of_budget":0.73,"success_rate":1.0,
+ "score_ci_low":0.69,"score_ci_high":0.74,
+ "cost_known":true,"cost_usd":0.02,"total_tokens":1432,
+ "wall_sec":41.2,"failure_category":null}
 ```
 
-The executor rejects a superficially completed run if it did not reach the
-requested generation, produced no evolved candidate, or (for an LLM variant)
-recorded no successful LLM call. Such runs go through the bounded retry queue
-and are never included as zero-token benchmark successes.
-
-Aggregate results and calculate deterministic bootstrap confidence intervals
-and confidence-aware regressions against the full variant. The report also makes
-an explicit paired `full - no_slow_loop` decision: simplify only when the entire
-bootstrap interval is below zero; keep when it is above zero; otherwise report
-the result as inconclusive without deleting the feature.
+Unknown model price is represented as `cost_usd = null` and
+`cost_known = false`; it never participates as zero cost.
 
 ```bash
 omnievolve research analyze \
   --results .omnievolve/research/results.jsonl \
+  --deterministic-replay-passed \
   --output .omnievolve/research/report.json
 ```
 
-Evaluation requirements:
+Reports include paired-seed effects for frontier AUC, best-of-budget, success
+rate, measurement confidence intervals, tokens, wall time, known cost, and
+failure classes. Pilot analysis is fail-closed unless the deterministic replay
+invariant is explicitly confirmed. Cost is required by default; use
+`--exclude-cost` only when the protocol explicitly excludes cost before
+analysis. The report includes the pilot gate and the maximum paired-variance
+seed recommendation across comparisons, capped at 5–10 with an explicit
+`underpowered_at_ten` flag.
 
-- Use a fixed candidate, evaluator version, environment version, seed, and split
-  to form the replay identity.
+## Evaluation and replay requirements
+
+- Use candidate, evaluator version, stable environment version, seed, and split
+  as the replay identity.
 - Keep correctness cases and benchmark/reference code in read-only hidden
   mounts with SHA-256 integrity digests.
-- Reject explicit evaluator/test peeking before sandbox execution.
-- Repeat noisy microbenchmarks and rank using a conservative confidence bound.
+- Reject evaluator/test peeking before sandbox execution.
+- Route every fidelity through `EvaluationService`: static validation,
+  anti-cheat, progressive stages, hidden tests, repeated benchmark, robust
+  aggregation, and commit.
+- Require `run(N) == run(K) + resume(N-K)` under fake LLM/embedding for
+  normalized lineage, artifact hashes, scores, router state, budget ledger, and
+  checkpoint state.
 - Report failed seeds and costs alongside scores; never silently drop failures.
 
-Reference-edge graph credit is intentionally not added as a sixth canonical
-variant, so the principal matrix remains exactly 225 runs. Generate its separate
-paired 90-run ablation with:
+## Post-pilot ablations
+
+Run these as two independent experiments after the pilot gate:
+
+1. operator UCB/Thompson versus a fixed mutation mix;
+2. a minimal behavior-cell archive versus the current archive.
+
+Do not enable both together, and do not rewrite the search state as full
+MAP-Elites before their independent evidence is available. True DAG MCGS,
+rollouts, PUCT, and continuous steady-state async also remain out of scope.
+
+Reference-edge graph credit remains a separate paired ablation:
 
 ```bash
 omnievolve research plan-reference \
@@ -98,7 +155,7 @@ omnievolve research plan-reference \
   --output .omnievolve/research/reference-credit-matrix.json
 ```
 
-CAS is the default code backend. Git remains optional for workflows that need
-human-readable lineage, but its text merge is not treated as semantic
-crossover. The default mechanical crossover is AST/semantic; LLM fusion can be
-enabled as the higher-cost fallback.
+CAS is the default code backend. Git remains optional for human-readable
+provenance, but text merge is not treated as semantic crossover. The canonical
+selector is `lineage_ucb`; `progressive_mcgs` is a deprecated compatibility
+alias for one schema cycle.

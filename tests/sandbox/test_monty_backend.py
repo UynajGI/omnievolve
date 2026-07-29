@@ -184,14 +184,14 @@ class TestMontyExecute:
 
 
 class TestMontyEnvironmentVersion:
-    def test_version_id_unique(self, tmp_path):
-        """每次创建生成不同的 environment_version_id."""
+    def test_version_id_stable(self, tmp_path):
+        """相同 Monty runtime 生成相同的 environment_version_id."""
         b1 = MontyBackend(work_dir=tmp_path / "a")
         b2 = MontyBackend(work_dir=tmp_path / "b")
-        assert b1.environment_version_id != b2.environment_version_id
+        assert b1.environment_version_id == b2.environment_version_id
 
     def test_version_id_format(self, monty_backend):
-        """version_id 格式: monty-{hex8}."""
+        """version_id 格式包含 Monty runtime 版本."""
         vid = monty_backend.environment_version_id
         assert vid.startswith("monty-")
         assert len(vid) == 14  # "monty-" + 8 hex chars

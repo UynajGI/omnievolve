@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 import warnings
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -89,11 +92,36 @@ class TrustedSubprocessBackend:
         )
         self._work_dir.mkdir(parents=True, exist_ok=True)
         self._artifact_store = artifact_store
-        self._environment_version_id = f"trusted-{uuid.uuid4().hex[:8]}"
+        environment_fingerprint = "|".join(
+            (
+                sys.executable,
+                sys.version,
+                platform.platform(),
+                platform.machine(),
+            )
+        )
+        self._environment_version_id = (
+            f"trusted-{sha256(environment_fingerprint.encode('utf-8')).hexdigest()[:12]}"
+        )
 
     @property
     def environment_version_id(self) -> str:
         return self._environment_version_id
+
+    def fork(
+        self,
+        *,
+        artifact_store: Any,
+        work_dir: str | Path,
+    ) -> TrustedSubprocessBackend:
+        """Clone the backend while isolating work files and candidate artifacts."""
+        backend = type(self)(
+            work_dir=work_dir,
+            artifact_store=artifact_store,
+            trusted=True,
+        )
+        backend._environment_version_id = self._environment_version_id
+        return backend
 
     def execute(
         self,

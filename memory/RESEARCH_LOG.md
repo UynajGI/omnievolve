@@ -127,3 +127,114 @@ Discovery
   program. A current-code 2-generation `sort/random_search` smoke completed with
   three candidates, checkpoint generation 2, zero LLM calls, and zero tokens.
   Its score is execution-chain evidence only, not a scientific comparison.
+
+## 2026-07-29 — Evolve literature and engineering landscape
+
+### Evolution of Heuristics: Towards Efficient Automatic Algorithm Design Using Large Language Model
+
+- Authors: Fei Liu, Xialiang Tong, Mingxuan Yuan, Xi Lin, Fu Luo, Zhenkun Wang,
+  Zhichao Lu, Qingfu Zhang
+- Published: 2024-01-04
+- Link: https://arxiv.org/abs/2401.02051
+- Relevance: EoH co-evolves natural-language heuristic thoughts and executable
+  code, and includes a code-only ablation. It motivates a direct
+  `thought+code` versus `code-only` experiment for OmniEvolve's Director layer.
+
+### LLaMEA: A Large Language Model Evolutionary Algorithm for Automatically Generating Metaheuristics
+
+- Authors: Niki van Stein, Thomas Bäck
+- Published: 2024-05-30
+- Link: https://arxiv.org/abs/2405.20132
+- Relevance: LLaMEA is a comparatively small generate-execute-feedback-select
+  loop. It is an important minimal baseline for testing whether OmniEvolve's
+  larger search control plane earns its added complexity.
+
+### Scientific Algorithm Discovery by Augmenting AlphaEvolve with Deep Research
+
+- Authors: Gang Liu, Yihan Zhu, Jie Chen, Meng Jiang
+- Published: 2025-10-07
+- Link: https://arxiv.org/abs/2510.06056
+- Relevance: DeepEvolve combines external research, cross-file edits, and
+  systematic debugging with evolutionary evaluation. A future OmniEvolve
+  research operator should preserve retrieved sources and snapshots in the run
+  bundle so results remain auditable and replayable.
+
+### ThetaEvolve: Test-time Learning on Open Problems
+
+- Authors: Yiping Wang et al.
+- Published: 2025-11-28
+- Link: https://arxiv.org/abs/2511.23473
+- Relevance: ThetaEvolve trains the proposal model at test time instead of only
+  accumulating prompt context. It is a future direction for OmniEvolve after a
+  reliable inference-only baseline, not a current single-machine priority.
+
+### Position: Agentic Evolution is the Path to Evolving LLMs
+
+- Authors: Minhua Lin et al.
+- Published: 2026-01-30
+- Link: https://arxiv.org/abs/2602.00359
+- Relevance: The associated A-Evolve project separates Agent,
+  EvolutionEngine, and BenchmarkAdapter interfaces. Those explicit contracts are
+  more immediately useful to OmniEvolve than broad autonomous self-improvement
+  claims.
+
+### Meta-Harness: End-to-End Optimization of Model Harnesses
+
+- Authors: Yoonho Lee, Roshen Nair, Qizheng Zhang, Kangwook Lee, Omar Khattab,
+  Chelsea Finn
+- Published: 2026-03-30
+- Link: https://arxiv.org/abs/2603.28052
+- Relevance: Meta-Harness searches over memory, retrieval, and context-management
+  code while exposing prior source, scores, and traces to an agentic proposer.
+  It suggests a safer long-term design for OmniEvolve's Slow Loop: evolve a
+  versioned, isolated harness object and validate it on held-out tasks.
+
+### Effective Harness Engineering for Algorithm Discovery with Coding Agents
+
+- Authors: Yoichi Ishibashi, Taro Yano, Masafumi Oyamada
+- Published: 2026-05-13
+- Link: https://arxiv.org/abs/2605.15221
+- Relevance: Vesper finds that fewer, deeper coding-agent attempts can be more
+  budget-efficient than many shallow generations and that stronger models
+  produce evaluator hacks more often. It motivates matched-token
+  `many-shallow` versus `few-deep` ablations, isolated workspaces, and evaluator
+  mutation tests in OmniEvolve.
+
+## 2026-07-29 — Runtime closure implementation
+
+- The v4 pilot remains calibration-only and must not be used for inference.
+- Fast Loop now separates idea and final-candidate novelty, keeps novelty
+  penalties outside the primary task score, enforces island-local selection,
+  updates stagnation only from generation-best improvement, and attributes
+  model reward only to successful role-specific calls.
+- `lineage_ucb` is the canonical selector. `progressive_mcgs` is a deprecated
+  compatibility alias; true DAG MCGS, rollout, and PUCT are not implemented.
+- All evaluations pass through the same validation, anti-cheat, progressive,
+  repeated-measurement, confidence-interval, and aggregation service.
+- CAS canary arms now run in fresh databases, CAS stores, LLM contexts, and
+  sandbox workspaces over a frozen frontier with equal paired budgets.
+- The deterministic invariant was verified for a complete 3-generation run
+  versus a generation-1 commit followed by process-style resume. Normalized
+  lineage, artifact hashes, scores, RNG, router state, budget ledger, and final
+  checkpoint state matched. Zero compute budget is serialized as unlimited.
+- The fixed pilot manifest is 3 tasks x 5 variants x 3 paired seeds = 45 runs.
+  Noise calibration, pilot gates, and paired power analysis select 5–10 formal
+  seeds; ten insufficient seeds are reported as underpowered.
+- Frozen-candidate noise calibration is now an executable, fail-closed
+  pre-pilot step. Real `sort`, `nqueens`, and `circle_packing` calibration
+  converged at three evaluator repetitions with stable artifact/environment
+  fingerprints and zero LLM calls. The resulting 45-run pilot manifest carries
+  the per-task repeat counts, calibration digest, current source/runtime
+  provenance, and v3 run identities. Stale calibration evidence fails closed.
+- A calibrated CAS-backed `sort`/`random_search` research cell completed through
+  the leased queue with three raw measurements, confidence intervals, stage
+  evidence, valid replay provenance, and zero LLM calls.
+- Pilot analysis now consumes the upgrade gate and reports the maximum
+  paired-variance formal seed recommendation. Cost is required unless explicitly
+  excluded, and deterministic replay must be positively attested.
+- The complete non-slow suite passed with 965 tests, and ruff passed for `src`
+  and `tests`. SQLite WAL setup now installs `busy_timeout` before serialized
+  journal-mode negotiation; the parallel-writer stress case passed 20
+  consecutive repetitions.
+- Operator bandit and minimal behavior-cell archive remain separate post-pilot
+  ablations. Continuous steady-state async remains out of scope.

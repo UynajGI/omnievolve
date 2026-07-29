@@ -5,7 +5,7 @@ import time
 
 from omnievolve.storage.db import Database
 from omnievolve.storage.job_store import JobStore
-from omnievolve.storage.local_executor import LocalTaskExecutor
+from omnievolve.storage.local_executor import LocalTaskExecutor, PermanentJobError
 from omnievolve.storage.migrations import initialize_database
 from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
 
@@ -75,3 +75,31 @@ def test_executor_never_exceeds_concurrency_limit(tmp_path):
     report = LocalTaskExecutor(store, {"work": handler}, max_concurrency=2).run_until_idle()
     assert report.completed == 6
     assert peak == 2
+
+
+def test_permanent_errors_are_not_retried(tmp_path):
+    db = Database(tmp_path / "permanent.db")
+    initialize_database(db)
+    experiment = ExperimentRepository(db).create(
+        task_id="matrix", task_name="matrix", config_snapshot={}
+    )
+    store = JobStore(db)
+    job = store.create_job(experiment.id, "work", {}, max_attempts=5)
+    attempts = 0
+
+    def handler(_job):
+        nonlocal attempts
+        attempts += 1
+        raise PermanentJobError("invalid authentication")
+
+    report = LocalTaskExecutor(
+        store,
+        {"work": handler},
+        max_concurrency=1,
+        retry_backoff_sec=0,
+    ).run_until_idle()
+
+    assert attempts == 1
+    assert report.failed == 1
+    assert report.retried == 0
+    assert store.get_job(job.id).status == "failed"

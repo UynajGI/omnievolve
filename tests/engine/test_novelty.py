@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from omnievolve.engine.novelty import NoveltyDecision, NoveltyGate, NoveltyResult
+from omnievolve.engine.novelty import (
+    NoveltyDecision,
+    NoveltyGate,
+    NoveltyResult,
+    NoveltyStage,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +41,47 @@ class TestNoveltyResult:
 
 
 class TestNoveltyGate:
+    def test_idea_and_candidate_checks_have_distinct_audit_stages(self):
+        gate = NoveltyGate()
+
+        idea = gate.check_idea("replace comparison sorting with counting buckets")
+        candidate = gate.check_candidate(
+            "replace comparison sorting with counting buckets",
+            "def solve(values):\n    return sorted(values)\n",
+        )
+
+        assert idea.stage == NoveltyStage.IDEA
+        assert candidate.stage == NoveltyStage.CANDIDATE
+        assert "idea_novelty_decision" in idea.to_metrics()
+        assert "candidate_novelty_decision" in candidate.to_metrics()
+
+    def test_final_candidate_exact_duplicate_is_rejected(self):
+        code = "def solve(values):\n    return sorted(values)\n"
+        gate = NoveltyGate()
+
+        result = gate.check_candidate(
+            "a superficially different idea",
+            code,
+            exact_reference_codes=[code],
+        )
+
+        assert result.stage == NoveltyStage.CANDIDATE
+        assert result.decision == NoveltyDecision.REJECT
+        assert result.similarity_score == 1.0
+        assert result.reasons == ["Exact candidate code duplicate"]
+
+    def test_penalty_reduces_only_novelty_objective(self):
+        result = NoveltyResult(
+            decision=NoveltyDecision.ALLOW_WITH_PENALTY,
+            similarity_score=0.2,
+            reasons=["borderline mechanism"],
+            penalty=0.3,
+            stage=NoveltyStage.CANDIDATE,
+        )
+
+        assert result.objective_score == pytest.approx(0.5)
+        assert result.to_metrics()["candidate_novelty_penalty"] == 0.3
+
     def test_high_similarity_rejected(self):
         gate = NoveltyGate(embedding_threshold=0.92)
         result = gate.check("thought", existing_similarities=[0.97])

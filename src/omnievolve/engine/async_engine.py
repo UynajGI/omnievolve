@@ -197,6 +197,8 @@ class AsyncEvolutionEngine:
             for t in pending:
                 t.cancel()
 
+            engine._island_manager.finalize_generation(gen)  # noqa: SLF001
+
             # 岛间迁移
             if engine._island_manager.should_migrate(gen):  # noqa: SLF001
                 engine._island_manager.migrate(gen)  # noqa: SLF001
@@ -393,6 +395,7 @@ class AsyncPipelineEngine:
                     logger.error("Commit failed for %s", result.candidate_id, exc_info=True)  # type: ignore[union-attr]
 
         # Phase C: 后代同步
+        engine._island_manager.finalize_generation(gen)  # noqa: SLF001
         if engine._island_manager.should_migrate(gen):  # noqa: SLF001
             try:
                 await asyncio.to_thread(engine._island_manager.migrate, gen)  # noqa: SLF001

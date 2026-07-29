@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -200,6 +202,28 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
             raise ValueError("OMNIEVOLVE_LLM_MAX_TOKENS must be positive")
         settings.models.max_tokens = max_tokens
 
+    fallback_endpoints = []
+    raw_fallbacks = os.environ.get("OMNIEVOLVE_LLM_FALLBACKS_JSON")
+    if raw_fallbacks:
+        try:
+            fallback_payload = json.loads(raw_fallbacks)
+        except json.JSONDecodeError as exc:
+            raise ValueError("OMNIEVOLVE_LLM_FALLBACKS_JSON must be valid JSON") from exc
+        if not isinstance(fallback_payload, list):
+            raise ValueError("OMNIEVOLVE_LLM_FALLBACKS_JSON must be a JSON list")
+        from omnievolve.agents.llm_gateway import LLMEndpoint
+
+        for index, item in enumerate(fallback_payload):
+            if not isinstance(item, dict) or not isinstance(item.get("model"), str):
+                raise ValueError(f"fallback endpoint {index} requires a string model")
+            fallback_endpoints.append(
+                LLMEndpoint(
+                    model=item["model"],
+                    api_key=item.get("api_key"),
+                    api_base=item.get("api_base"),
+                )
+            )
+
     return {
         "api_key": (
             os.environ.get("OMNIEVOLVE_LLM_API_KEY")
@@ -209,6 +233,7 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
             os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
         ),
         "default_max_tokens": max_tokens,
+        "fallback_endpoints": fallback_endpoints,
     }
 
 
@@ -245,7 +270,7 @@ def _build_engine_components(
         migration_interval=settings.selection.island_migration_interval,
     )
     selection_strategy = settings.selection.parent_selector
-    if selection_strategy == "progressive_mcgs":
+    if selection_strategy in {"lineage_ucb", "progressive_mcgs"}:
         selection_strategy = "tournament"
     parent_selector = ParentSelector(
         db,
@@ -288,22 +313,24 @@ def _build_engine_components(
     try:
         from omnievolve.storage.vector_indexer import VectorIndexer
         from omnievolve.storage.zvec_backend import create_vector_backend
-        from omnievolve.utils.embedding import FakeEmbedder
+        from omnievolve.utils.embedding import create_embedder
 
-        # 尝试加载真实 embedding 模型，失败则用 FakeEmbedder
-        embedder: Any = None
-        try:
-            from omnievolve.utils.embedding import SentenceTransformerEmbedder
-
-            embedder = SentenceTransformerEmbedder(model=settings.embedding.code.model)
-        except Exception:
-            embedder = FakeEmbedder(dimension=128)
+        embedder = create_embedder(
+            provider=settings.embedding.code.provider,
+            model=settings.embedding.code.model,
+            dimension=settings.embedding.code.dimension,
+        )
 
         # 优先 zvec（HNSW ANN），不可用时回退 NumPy
         vector_backend = create_vector_backend(prefer_zvec=True)
         vector_indexer = VectorIndexer(db, vector_backend, embedder)
+    except ValueError:
+        raise
     except Exception:
-        pass  # core 模式无向量也可运行
+        logging.getLogger(__name__).warning(
+            "Vector subsystem unavailable; continuing without vector retrieval",
+            exc_info=True,
+        )
 
     return {
         "router": router,
@@ -796,7 +823,10 @@ def migrate(
 @app.command("research")
 def research_benchmark(
     action: str = typer.Argument(
-        "plan", help="plan、plan-reference、execute 或 analyze"
+        "plan",
+        help=(
+            "calibrate、plan、plan-pilot、plan-reference、execute、analyze 或 replay"
+        ),
     ),
     output: str = typer.Option(
         ".omnievolve/research/matrix.json", "--output", "-o", help="输出 JSON 路径"
@@ -804,6 +834,11 @@ def research_benchmark(
     seeds: str = typer.Option("0,1,2,3,4", "--seeds", help="5–10 个逗号分隔随机种子"),
     results: str = typer.Option(
         ".omnievolve/research/results.jsonl", "--results", help="analyze 输入 JSONL"
+    ),
+    calibration: str = typer.Option(
+        ".omnievolve/research/calibration.json",
+        "--calibration",
+        help="冻结候选 evaluator noise calibration JSON",
     ),
     queue_db: str = typer.Option(
         ".omnievolve/research/queue.db", "--queue-db", help="可恢复任务队列数据库"
@@ -815,37 +850,158 @@ def research_benchmark(
     max_attempts: int = typer.Option(3, "--max-attempts", min=1, help="失败重试上限"),
     generations: int = typer.Option(5, "--gens", min=1, help="每个 run 的进化代数"),
     population: int = typer.Option(4, "--population", min=1, help="每代候选数量"),
+    eval_repetitions: int = typer.Option(
+        3,
+        "--eval-repetitions",
+        min=3,
+        max=10,
+        help="无任务校准数据时，每个候选的 evaluator 重复次数",
+    ),
     timeout_sec: float = typer.Option(3600.0, "--timeout", min=1.0, help="单 run 超时秒数"),
-    task_filter: str | None = typer.Option(None, "--task", help="execute 时仅运行指定任务"),
+    task_filter: str | None = typer.Option(
+        None,
+        "--task",
+        help="calibrate/execute 时仅运行指定任务",
+    ),
     variant_filter: str | None = typer.Option(
         None, "--variant", help="execute 时仅运行指定变体"
     ),
     seed_limit: int | None = typer.Option(
         None, "--seed-limit", min=1, help="execute 时每个 cell 仅取前 N 个种子"
     ),
+    run_id: str | None = typer.Option(None, "--run-id", help="replay 的 research run ID"),
+    repetition: int = typer.Option(0, "--repetition", min=0, help="replay 的重复编号"),
+    execute_replay: bool = typer.Option(
+        False, "--execute-replay", help="通过严格校验后在新隔离目录实际重跑"
+    ),
+    include_cost_metric: bool = typer.Option(
+        True,
+        "--include-cost/--exclude-cost",
+        help="analyze 时是否把已知成本作为 pilot gate 必需指标",
+    ),
+    deterministic_replay_passed: bool = typer.Option(
+        False,
+        "--deterministic-replay-passed",
+        help="analyze 时确认 FakeLLM deterministic resume 不变量已通过",
+    ),
 ) -> None:
     """建立研究矩阵，或聚合已完成运行并计算置信区间."""
     from omnievolve.research.matrix import (
+        PILOT_TASK_NAMES,
+        PILOT_TASKS,
         build_default_matrix,
+        build_pilot_matrix,
         build_reference_credit_matrix,
+        load_calibration_repetitions,
         summarize_results,
         write_manifest,
     )
 
-    if action in {"plan", "plan-reference"}:
+    if action == "calibrate":
+        from omnievolve.research.runner import (
+            CalibrationRunSettings,
+            EvaluatorNoiseCalibrator,
+        )
+
+        calibration_tasks = PILOT_TASKS
+        if task_filter:
+            calibration_tasks = tuple(
+                task for task in PILOT_TASKS if task.name == task_filter
+            )
+            if not calibration_tasks:
+                raise typer.BadParameter(
+                    f"pilot calibration task not found: {task_filter}",
+                    param_hint="--task",
+                )
+        calibrator = EvaluatorNoiseCalibrator(
+            CalibrationRunSettings(
+                repo_root=Path.cwd(),
+                runs_dir=Path(runs_dir),
+                timeout_sec=timeout_sec,
+                trusted=True,
+            )
+        )
+        try:
+            calibration_report = calibrator.run(tasks=calibration_tasks)
+        except (RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="calibrate") from exc
+        calibration_path = Path(calibration)
+        calibration_path.parent.mkdir(parents=True, exist_ok=True)
+        calibration_path.write_text(
+            json.dumps(calibration_report, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        console.print(
+            f"[green]Evaluator calibration complete: "
+            f"{len(calibration_tasks)} tasks → {calibration_path}[/green]"
+        )
+        return
+
+    if action in {"plan", "plan-pilot", "plan-reference"}:
         try:
             seed_values = tuple(int(value.strip()) for value in seeds.split(",") if value.strip())
-            jobs = (
-                build_default_matrix(seeds=seed_values)
-                if action == "plan"
-                else build_reference_credit_matrix(seeds=seed_values)
-            )
+            if action == "plan":
+                jobs = build_default_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
+            elif action == "plan-pilot":
+                if len(seed_values) < 3:
+                    raise ValueError("pilot requires at least three seeds")
+                calibration_path = Path(calibration)
+                if not calibration_path.exists():
+                    raise ValueError(
+                        "pilot requires evaluator calibration; run "
+                        "`omnievolve research calibrate` first"
+                    )
+                calibration_bytes = calibration_path.read_bytes()
+                calibration_payload = json.loads(calibration_bytes)
+                from omnievolve.research.runner import (
+                    validate_calibration_report,
+                )
+
+                calibration_issues = validate_calibration_report(
+                    calibration_payload,
+                    Path.cwd(),
+                )
+                if calibration_issues:
+                    raise ValueError(
+                        "pilot calibration provenance is stale or incomplete: "
+                        + "; ".join(calibration_issues)
+                    )
+                calibrated_repetitions = load_calibration_repetitions(
+                    calibration_path,
+                    required_tasks=PILOT_TASK_NAMES,
+                )
+                jobs = build_pilot_matrix(
+                    seeds=seed_values[:3],
+                    eval_repetitions=calibrated_repetitions,
+                )
+            else:
+                jobs = build_reference_credit_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
         except ValueError as exc:
             raise typer.BadParameter(str(exc), param_hint="--seeds") from exc
-        path = write_manifest(jobs, output)
+        metadata = {}
+        if action == "plan-pilot":
+            metadata = {
+                "calibration_path": str(Path(calibration).resolve()),
+                "calibration_sha256": hashlib.sha256(calibration_bytes).hexdigest(),
+                "calibration_required": True,
+                "calibration_all_converged": bool(
+                    calibration_payload.get("all_converged")
+                ),
+                "calibration_minimum_effect": calibration_payload.get(
+                    "minimum_effect"
+                ),
+            }
+        path = write_manifest(jobs, output, metadata=metadata)
         variant_count = len({job.variant.name for job in jobs})
+        task_count = len({job.task.name for job in jobs})
         console.print(
-            f"[green]Research matrix: 9 tasks × {variant_count} variants × "
+            f"[green]Research matrix: {task_count} tasks × {variant_count} variants × "
             f"{len(seed_values)} seeds = {len(jobs)} runs → {path}[/green]"
         )
         return
@@ -903,7 +1059,11 @@ def research_benchmark(
             for line in result_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        analysis_report = summarize_results(records)
+        analysis_report = summarize_results(
+            records,
+            include_cost_metric=include_cost_metric,
+            deterministic_replay_passed=deterministic_replay_passed,
+        )
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
@@ -913,8 +1073,27 @@ def research_benchmark(
         console.print(f"[green]Aggregated {len(records)} records → {output_path}[/green]")
         return
 
+    if action == "replay":
+        if not run_id:
+            raise typer.BadParameter("replay requires --run-id", param_hint="--run-id")
+        from omnievolve.research.runner import strict_replay
+
+        try:
+            replay_result = strict_replay(
+                runs_dir,
+                run_id,
+                repetition=repetition,
+                execute=execute_replay,
+                timeout_sec=timeout_sec,
+            )
+        except (FileNotFoundError, RuntimeError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="--run-id") from exc
+        console.print_json(json.dumps(replay_result, ensure_ascii=False))
+        return
+
     raise typer.BadParameter(
-        "action must be plan, plan-reference, execute, or analyze",
+        "action must be calibrate, plan, plan-pilot, plan-reference, execute, "
+        "analyze, or replay",
         param_hint="ACTION",
     )
 

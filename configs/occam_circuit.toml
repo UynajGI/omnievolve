@@ -22,14 +22,14 @@ health_window_gens = 5
 self_evolve_enabled = false    # 先关 Slow Loop，纯测 Fast Loop
 
 [selection]
-parent_selector = "progressive_mcgs"
+parent_selector = "lineage_ucb"
 tournament_size = 3
 pareto_enabled = true
 island_migration_interval = 5
 
 [models]
-heavy = ["openai/mimo-v2.5-pro"]
-light = ["openai/mimo-v2.5-pro"]
+heavy = ["deepseek/deepseek-v4-flash"]
+light = ["deepseek/deepseek-v4-flash"]
 max_tokens = 16384            # 推理模型需充足生成预算
 
 [models.routing]

@@ -18,7 +18,7 @@ health_window_gens = 5
 self_evolve_enabled = false
 
 [selection]
-parent_selector = "progressive_mcgs"
+parent_selector = "lineage_ucb"
 tournament_size = 3
 pareto_enabled = true
 island_migration_interval = 5

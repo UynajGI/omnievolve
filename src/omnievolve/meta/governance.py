@@ -123,6 +123,11 @@ class L0PolicyMutator:
         Returns:
             (new_genome, reason) 或 (None, rejection_reason)
         """
+        from omnievolve.meta.policy_runtime import active_policy_fields
+
+        if field_name not in active_policy_fields():
+            return None, f"Policy field {field_name!r} is inactive and frozen"
+
         action = MetaAction(
             action_type="modify_field",
             target=field_name,
@@ -168,31 +173,6 @@ class L0PolicyMutator:
                 )
             )
 
-        # 高污染度时调整记忆权重
-        if health_indicators.get("pollution_ratio", 0.0) > 0.3:
-            new_weights = genome.memory_scope_weights.copy()
-            new_weights["L3"] = max(new_weights.get("L3", 0.4) * 0.8, 0.1)
-            new_weights["L4"] = max(new_weights.get("L4", 0.2) * 0.8, 0.05)
-            suggestions.append(
-                (
-                    "memory_scope_weights",
-                    new_weights,
-                    "Reduce broad scope weights to decrease pollution",
-                )
-            )
-
-        # 低 ROI 时增加探索
-        if health_indicators.get("roi_score", 1.0) < 0.01:
-            new_mix = genome.mutation_mix.copy()
-            new_mix["rewrite"] = min(new_mix.get("rewrite", 0.2) + 0.1, 0.5)
-            suggestions.append(
-                (
-                    "mutation_mix",
-                    new_mix,
-                    "Increase rewrite mutations for more exploration",
-                )
-            )
-
         return suggestions
 
 
@@ -206,7 +186,7 @@ class ReplayEvaluator:
         self,
         *,
         budget_ratio: float = 0.1,
-        min_gain_threshold: float = 0.02,
+        min_gain_threshold: float = 0.0,
         max_regression: float = 0.005,
     ) -> None:
         self._budget_ratio = budget_ratio
@@ -227,51 +207,50 @@ class ReplayEvaluator:
         Returns:
             比较结果
         """
-        import numpy as np
+        import statistics
 
-        from omnievolve.eval.benchmark_stats import summarize_samples
+        from omnievolve.eval.benchmark_stats import bootstrap_confidence_interval
 
-        if not champion_scores or not challenger_scores:
+        if (
+            len(champion_scores) < 3
+            or len(challenger_scores) < 3
+            or len(champion_scores) != len(challenger_scores)
+        ):
             return {
                 "decision": "inconclusive",
-                "reason": "Insufficient data",
+                "reason": "At least three paired seeds are required",
             }
 
-        champ_mean = float(np.mean(champion_scores))
-        chall_mean = float(np.mean(challenger_scores))
-        gain = chall_mean - champ_mean
-        champ_summary = summarize_samples(champion_scores, seed=0)
-        chall_summary = summarize_samples(challenger_scores, seed=1)
-        conservative_gain = chall_summary.ci_low - champ_summary.ci_high
-        conservative_regression = champ_summary.ci_low - chall_summary.ci_high
+        differences = [
+            float(challenger - champion)
+            for champion, challenger in zip(champion_scores, challenger_scores, strict=True)
+        ]
+        champ_mean = float(statistics.fmean(champion_scores))
+        chall_mean = float(statistics.fmean(challenger_scores))
+        gain = float(statistics.fmean(differences))
+        # A two-sided 90% interval has the same lower/upper quantiles as
+        # one-sided 95% bounds.
+        ci_low, ci_high = bootstrap_confidence_interval(
+            differences,
+            confidence=0.90,
+            seed=0,
+            statistic=statistics.fmean,
+        )
+        diff_std = statistics.stdev(differences) if len(differences) > 1 else 0.0
+        effect_size = gain / max(diff_std, 0.001)
 
-        # 统计显著性（简化）
-        if len(champion_scores) > 1 and len(challenger_scores) > 1:
-            champ_std = float(np.std(champion_scores))
-            chall_std = float(np.std(challenger_scores))
-            pooled_std = (champ_std + chall_std) / 2
-            effect_size = gain / max(pooled_std, 0.001)
-        else:
-            effect_size = gain
-
-        decision = "reject"
-        reason = ""
-
-        if conservative_gain >= self._min_gain and effect_size > 0.5:
+        if ci_low > self._min_gain:
             decision = "promote"
             reason = (
-                "Challenger confidence interval shows improvement "
-                f"(conservative_gain={conservative_gain:.4f})"
+                "Paired one-sided 95% lower bound is positive "
+                f"(lower={ci_low:.4f})"
             )
-        elif gain >= 0 and abs(gain) < self._min_gain:
-            decision = "hold"
-            reason = f"Challenger shows marginal change (gain={gain:.4f})"
-        elif conservative_regression > self._max_regression:
+        elif ci_high < 0:
             decision = "reject"
-            reason = f"Challenger shows significant regression (gain={gain:.4f})"
+            reason = f"Paired one-sided 95% upper bound is negative ({ci_high:.4f})"
         else:
             decision = "hold"
-            reason = f"Challenger within acceptable range (gain={gain:.4f})"
+            reason = f"Paired interval is inconclusive [{ci_low:.4f}, {ci_high:.4f}]"
 
         return {
             "decision": decision,
@@ -280,9 +259,9 @@ class ReplayEvaluator:
             "challenger_mean": chall_mean,
             "gain": gain,
             "effect_size": effect_size,
-            "conservative_gain": conservative_gain,
-            "champion_ci": [champ_summary.ci_low, champ_summary.ci_high],
-            "challenger_ci": [chall_summary.ci_low, chall_summary.ci_high],
+            "paired_differences": differences,
+            "paired_ci": [ci_low, ci_high],
+            "conservative_gain": ci_low,
         }
 
     def compare_equal_budget(
@@ -290,10 +269,15 @@ class ReplayEvaluator:
         champion_scores: list[float],
         challenger_scores: list[float],
         *,
-        champion_cost_usd: float = 0.0,
-        challenger_cost_usd: float = 0.0,
+        champion_cost_usd: float | None = None,
+        challenger_cost_usd: float | None = None,
         champion_wall_sec: float = 0.0,
         challenger_wall_sec: float = 0.0,
+        champion_best_scores: list[float] | None = None,
+        challenger_best_scores: list[float] | None = None,
+        champion_success_rates: list[float] | None = None,
+        challenger_success_rates: list[float] | None = None,
+        require_known_cost: bool = False,
     ) -> dict[str, Any]:
         """设计文档 §6.2: 等预算比较.
 
@@ -305,7 +289,7 @@ class ReplayEvaluator:
         - 时间回归: Challenger 墙钟时间不得超过 Champion 的 2 倍
         - 稳定性: 标准差不得显著增大
         """
-        import numpy as np
+        import statistics
 
         base = self.compare(champion_scores, challenger_scores)
 
@@ -316,11 +300,52 @@ class ReplayEvaluator:
             base["budget_equal"] = True
             return base
 
+        cost_known = champion_cost_usd is not None and challenger_cost_usd is not None
+        base["cost_known"] = cost_known
+        if require_known_cost and not cost_known:
+            base["decision"] = "hold"
+            base["reason"] = "Cost-aware policy comparison has unknown arm cost"
+            return base
+
         # 成本约束
-        if champion_cost_usd > 0 and challenger_cost_usd > champion_cost_usd * 1.5:
+        if (
+            champion_cost_usd is not None
+            and challenger_cost_usd is not None
+            and champion_cost_usd > 0
+            and challenger_cost_usd > champion_cost_usd * 1.5
+        ):
             base["decision"] = "reject"
             reason = f"Cost regression: {challenger_cost_usd:.4f} > 1.5x champion"
             base["reason"] = f"{base['reason']} | {reason}" if base["reason"] else reason
+            return base
+
+        def mean_or_none(values: list[float] | None) -> float | None:
+            return float(statistics.fmean(values)) if values else None
+
+        champion_best = mean_or_none(champion_best_scores)
+        challenger_best = mean_or_none(challenger_best_scores)
+        if (
+            champion_best is not None
+            and challenger_best is not None
+            and challenger_best < champion_best - self._max_regression
+        ):
+            base["decision"] = "reject"
+            base["reason"] = (
+                f"Best-of-budget regression: {challenger_best:.4f} < {champion_best:.4f}"
+            )
+            return base
+
+        champion_success = mean_or_none(champion_success_rates)
+        challenger_success = mean_or_none(challenger_success_rates)
+        if (
+            champion_success is not None
+            and challenger_success is not None
+            and challenger_success < champion_success - self._max_regression
+        ):
+            base["decision"] = "reject"
+            base["reason"] = (
+                f"Success-rate regression: {challenger_success:.4f} < {champion_success:.4f}"
+            )
             return base
 
         # 时间约束
@@ -332,8 +357,8 @@ class ReplayEvaluator:
 
         # 稳定性约束
         if len(champion_scores) > 2 and len(challenger_scores) > 2:
-            champ_std = float(np.std(champion_scores))
-            chall_std = float(np.std(challenger_scores))
+            champ_std = float(statistics.stdev(champion_scores))
+            chall_std = float(statistics.stdev(challenger_scores))
             if chall_std > champ_std * 2.0 and champ_std > 0:
                 reason = f"Stability warning: std {chall_std:.4f} > 2x champion {champ_std:.4f}"
                 base["reason"] = f"{base['reason']} | {reason}" if base["reason"] else reason

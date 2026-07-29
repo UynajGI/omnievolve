@@ -1,6 +1,10 @@
-"""渐进式 MCGS (Monte-Carlo Graph Search).
+"""Lineage-aware UCB search.
 
-S7-15: 实现轻量 Progressive MCGS
+This implementation follows one primary-parent lineage and performs no
+rollout over a general DAG.  ``LineageUCB`` is therefore the canonical,
+research-honest name.  ``ProgressiveMCGS`` remains a compatibility alias.
+
+S7-15: 实现轻量 lineage UCB
 - UCB / PUCT 选择
 - Beta 回传（Bayesian value estimation）
 - 虚拟损失
@@ -23,6 +27,7 @@ import logging
 import math
 import random
 import threading
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -110,8 +115,8 @@ class MCTSNode:
         return q_value + u_value - self.virtual_loss
 
 
-class ProgressiveMCGS:
-    """渐进式 Monte-Carlo Graph Search.
+class LineageUCB:
+    """Progressive UCB over a primary-parent lineage.
 
     在候选图上进行搜索，而非固定的树结构。
     支持多父代 DAG 和虚拟损失。
@@ -375,6 +380,7 @@ class ProgressiveMCGS:
         """获取统计."""
         total_visits = sum(n.visit_count for n in self._nodes.values())
         return {
+            "algorithm": "lineage_ucb",
             "nodes": len(self._nodes),
             "total_visits": total_visits,
             "avg_value": (
@@ -383,6 +389,49 @@ class ProgressiveMCGS:
                 else 0.0
             ),
         }
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize adaptive search state for deterministic resume."""
+        return {
+            "algorithm": "lineage_ucb",
+            "progress": self._progress,
+            "nodes_since_backprop": self._nodes_since_backprop,
+            "nodes": {
+                candidate_id: {
+                    "parent": node.parent,
+                    "children": list(node.children),
+                    "visit_count": node.visit_count,
+                    "value_sum": node.value_sum,
+                    "prior": node.prior,
+                    # Virtual loss is transient and must not survive a completed generation.
+                    "alpha": node.alpha,
+                    "beta": node.beta,
+                }
+                for candidate_id, node in self._nodes.items()
+            },
+        }
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Restore state while accepting checkpoints created before this schema."""
+        if not state:
+            return
+        self._progress = float(state.get("progress", self._progress))
+        self._nodes_since_backprop = int(state.get("nodes_since_backprop", 0))
+        restored: dict[str, MCTSNode] = {}
+        for candidate_id, payload in state.get("nodes", {}).items():
+            restored[candidate_id] = MCTSNode(
+                candidate_id=candidate_id,
+                parent=payload.get("parent"),
+                children=list(payload.get("children", [])),
+                visit_count=int(payload.get("visit_count", 0)),
+                value_sum=float(payload.get("value_sum", 0.0)),
+                prior=float(payload.get("prior", 0.0)),
+                virtual_loss=0.0,
+                alpha=float(payload.get("alpha", 1.0)),
+                beta=float(payload.get("beta", 1.0)),
+            )
+        if restored:
+            self._nodes = restored
 
     def rollback_last_select(self) -> None:
         """回滚上次 select() 路径上的虚拟损失.
@@ -460,3 +509,15 @@ class ProgressiveMCGS:
         after = len(self._nodes)
         logger.info("MCTS pruned: %d → %d nodes (%d removed)", before, after, before - after)
         return {"before": before, "after": after, "pruned": before - after}
+
+
+class ProgressiveMCGS(LineageUCB):
+    """Deprecated compatibility name for :class:`LineageUCB`."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        warnings.warn(
+            "ProgressiveMCGS is a compatibility name; use LineageUCB",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

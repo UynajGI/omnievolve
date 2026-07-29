@@ -9,7 +9,7 @@ S1-16: pydantic-settings 配置
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,10 +31,14 @@ class EvolutionSettings(BaseSettings):
     sandbox_timeout: float = Field(default=30.0, gt=0)
     sandbox_mem_limit_mb: int = Field(default=4096, gt=0)
     health_window_gens: int = Field(default=3, gt=0)
-    self_evolve_enabled: bool = True
+    # Fail closed until an independent equal-budget PolicyReplayExecutor is configured.
+    self_evolve_enabled: bool = False
     async_pipeline_enabled: bool = False  # Phase 4: 原生异步流水线
     seed: int = Field(default=42, ge=0)
     novelty_enabled: bool = True
+    progressive_eval_enabled: bool = False
+    eval_repetitions: int = Field(default=1, ge=1, le=100)
+    eval_confidence: float = Field(default=0.95, gt=0.0, lt=1.0)
     single_agent_mode: bool = False
     random_search_mode: bool = False
     reference_credit_enabled: bool = True
@@ -44,7 +48,15 @@ class EvolutionSettings(BaseSettings):
 class SelectionSettings(BaseSettings):
     """选择策略配置."""
 
-    parent_selector: str = "progressive_mcgs"
+    parent_selector: Literal[
+        "lineage_ucb",
+        "progressive_mcgs",
+        "best",
+        "tournament",
+        "random",
+        "power_law",
+        "weighted",
+    ] = "lineage_ucb"
     tournament_size: int = 3
     pareto_enabled: bool = True
     island_migration_interval: int = 5
@@ -333,12 +345,16 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         sandbox_mem_limit_mb=e.sandbox_mem_limit_mb,
         health_window_gens=e.health_window_gens,
         meta_canary_budget_ratio=settings.meta_evolution.meta_canary_budget_ratio,
+        parent_selector=settings.selection.parent_selector,
         tournament_size=settings.selection.tournament_size,
         island_migration_interval=settings.selection.island_migration_interval,
         ucb_c=settings.models.routing.ucb_c,
         self_evolve_enabled=e.self_evolve_enabled,
         seed=e.seed,
         novelty_enabled=e.novelty_enabled,
+        progressive_eval_enabled=e.progressive_eval_enabled,
+        eval_repetitions=e.eval_repetitions,
+        eval_confidence=e.eval_confidence,
         single_agent_mode=e.single_agent_mode,
         random_search_mode=e.random_search_mode,
         reference_credit_enabled=e.reference_credit_enabled,

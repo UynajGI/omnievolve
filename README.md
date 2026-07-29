@@ -398,7 +398,7 @@ health_window_gens = 3        # Slow Loop 评估窗口（代）
 async_pipeline_enabled = false # 异步流水线引擎（实验性）
 
 [selection]
-parent_selector = "progressive_mcgs"
+parent_selector = "lineage_ucb"
 tournament_size = 3
 island_migration_interval = 5
 

@@ -220,19 +220,27 @@ class JobStore:
         )
         return cursor.rowcount > 0
 
-    def fail_job(self, job_id: str, error: str) -> bool:
-        """标记任务失败."""
+    def fail_job(self, job_id: str, error: str, *, permanent: bool = False) -> bool:
+        """标记任务失败.
+
+        Permanent configuration, authentication, and integrity errors are
+        terminal immediately. Transient failures are returned to the queue
+        until ``max_attempts`` is reached.
+        """
         cursor = self._db.execute(
             """
             UPDATE job
-            SET status = CASE WHEN attempt >= max_attempts THEN 'failed' ELSE 'queued' END,
+            SET status = CASE
+                    WHEN ? OR attempt >= max_attempts THEN 'failed'
+                    ELSE 'queued'
+                END,
                 last_error = ?,
                 lease_owner = NULL,
                 lease_expires_at = NULL,
                 updated_at = ?
             WHERE id = ? AND lease_owner = ? AND status = 'running'
             """,
-            (error, now_iso(), job_id, self._worker_id),
+            (int(permanent), error, now_iso(), job_id, self._worker_id),
         )
         return cursor.rowcount > 0
 

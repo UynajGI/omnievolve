@@ -12,6 +12,10 @@ from omnievolve.storage.job_store import Job, JobStore
 JobHandler = Callable[[Job], str | None]
 
 
+class PermanentJobError(RuntimeError):
+    """A non-retryable configuration, auth, or integrity failure."""
+
+
 @dataclass(frozen=True)
 class ExecutorReport:
     completed: int
@@ -58,7 +62,11 @@ class LocalTaskExecutor:
                         break
                     handler = self._handlers.get(job.job_type)
                     if handler is None:
-                        self._store.fail_job(job.id, f"No handler for job type {job.job_type!r}")
+                        self._store.fail_job(
+                            job.id,
+                            f"No handler for job type {job.job_type!r}",
+                            permanent=True,
+                        )
                         failed += 1
                         continue
                     pending[pool.submit(handler, job)] = job
@@ -84,6 +92,13 @@ class LocalTaskExecutor:
                     job = pending.pop(future)
                     try:
                         result_ref = future.result()
+                    except PermanentJobError as exc:
+                        self._store.fail_job(
+                            job.id,
+                            f"{type(exc).__name__}: {exc}",
+                            permanent=True,
+                        )
+                        failed += 1
                     except Exception as exc:
                         self._store.fail_job(job.id, f"{type(exc).__name__}: {exc}")
                         current = self._store.get_job(job.id)

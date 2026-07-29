@@ -5,6 +5,7 @@ S9-01: 冻结 SearchPolicyGenome schema
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 
@@ -38,9 +39,20 @@ class SearchPolicyGenome:
     # 默认 0.0（关闭），由 Meta Evolution 根据效果自动调整
     epiplexity_beta: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Canonicalize the legacy selector name without breaking old snapshots."""
+        if self.parent_selector == "progressive_mcgs":
+            warnings.warn(
+                "progressive_mcgs is deprecated; use lineage_ucb",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            object.__setattr__(self, "parent_selector", "lineage_ucb")
+
     def to_dict(self) -> dict:
         """转换为字典."""
         return {
+            "schema_version": 2,
             "parent_selector": self.parent_selector,
             "mutation_mix": self.mutation_mix,
             "crossover_policy": self.crossover_policy,
@@ -67,21 +79,15 @@ class SearchPolicyGenome:
 # L0 可自动调整的参数
 L0_MUTABLE_FIELDS = {
     "parent_selector",
-    "mutation_mix",
     "retrieval_budget",
-    "memory_scope_weights",
-    "temperature_schedule",
-    "island_migration_policy",
 }
 
 # L1 需要 Replay/Canary 的参数
 L1_FIELDS = {
     "director_prompt_version",
     "coder_prompt_version",
-    "critic_prompt_version",
-    "context_pruning_policy",
-    "crossover_policy",
-    "backtracking_policy",
+    "model_routing_policy",
+    "epiplexity_beta",
 }
 
 # L2 默认禁止修改

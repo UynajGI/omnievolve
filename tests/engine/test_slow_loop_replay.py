@@ -8,15 +8,17 @@ import pytest
 
 from omnievolve.engine.slow_loop import SlowLoopController
 from omnievolve.meta.governance import MetaAction, RiskLevel
+from omnievolve.meta.policy_genome import SearchPolicyGenome
+from omnievolve.meta.policy_replay import PolicyReplayEvidence
 
 
 def _make_action(**kwargs):
     """创建 MetaAction 辅助函数."""
     defaults = dict(
         action_type="modify_field",
-        target="mutation_rate",
-        old_value=0.2,
-        new_value=0.3,
+        target="retrieval_budget",
+        old_value=8,
+        new_value=10,
         risk_level=RiskLevel.L0,
     )
     defaults.update(kwargs)
@@ -45,12 +47,25 @@ def slow_loop():
     governance.classify_action.return_value = MagicMock(value="L0")
 
     l0_mutator = MagicMock()
-    genome = MagicMock()
-    genome.to_dict.return_value = {"mutation_rate": 0.3}
+    genome = SearchPolicyGenome(retrieval_budget=10)
     l0_mutator.mutate.return_value = (genome, "ok")
 
     replay_eval = MagicMock()
-    replay_eval.compare.return_value = {"decision": "promote", "gain": 0.1, "reason": "better"}
+    replay_eval._budget_ratio = 0.1
+    replay_eval.compare_equal_budget.return_value = {
+        "decision": "promote",
+        "gain": 0.1,
+        "reason": "better",
+    }
+    replay_executor = MagicMock()
+    replay_executor.run_paired.return_value = PolicyReplayEvidence(
+        snapshot_id="exp1:generation:5",
+        seeds=(0, 1, 2),
+        champion_scores=(0.4, 0.5, 0.6),
+        challenger_scores=(0.7, 0.8, 0.9),
+        champion_tokens=100,
+        challenger_tokens=100,
+    )
 
     policy_archive = MagicMock()
     challenger = MagicMock()
@@ -72,6 +87,7 @@ def slow_loop():
         experiment_repo=exp_repo,
         prompt_repo=prompt_repo,
         artifact_store=MagicMock(),
+        policy_replay_executor=replay_executor,
     )
 
 
@@ -121,7 +137,7 @@ class TestSlowLoopPromotion:
 
     def test_promotion(self, slow_loop):
         """Replay 决策 promote → 返回 new_genome + new_id."""
-        search_policy = MagicMock()
+        search_policy = SearchPolicyGenome()
         result = slow_loop._apply_meta_action(
             _make_action(),
             current_gen=5,
@@ -142,7 +158,7 @@ class TestSlowLoopPromotion:
 
     def test_rejection(self, slow_loop):
         """Replay 决策 reject → 返回 (None, None)."""
-        slow_loop._replay_evaluator.compare.return_value = {
+        slow_loop._replay_evaluator.compare_equal_budget.return_value = {
             "decision": "reject",
             "gain": -0.05,
             "reason": "worse",
@@ -151,7 +167,7 @@ class TestSlowLoopPromotion:
             _make_action(),
             current_gen=5,
             experiment_id="exp1",
-            search_policy=MagicMock(),
+            search_policy=SearchPolicyGenome(),
             champion_policy_id="champ-1",
             recent_scores=[0.4, 0.5],
             health_window_gens=3,

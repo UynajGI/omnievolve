@@ -397,6 +397,7 @@ class CandidateRepository:
             FROM candidate c
             JOIN evaluation_run er ON c.id = er.candidate_id
             WHERE c.experiment_id = ?
+              AND c.status != 'aborted'
               AND er.evaluator_version_id = ?
               AND er.environment_version_id = ?
               AND er.status = 'completed'

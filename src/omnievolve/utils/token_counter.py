@@ -156,6 +156,15 @@ class TokenCounter:
             "total_compute_sec": self._total_compute,
         }
 
+    def restore_stats(self, state: dict[str, Any] | None) -> None:
+        """Restore aggregate counters from a completed-generation checkpoint."""
+        if not state:
+            return
+        self._total_input = int(state.get("total_input_tokens", 0))
+        self._total_output = int(state.get("total_output_tokens", 0))
+        self._total_cost = float(state.get("total_cost_usd", 0.0))
+        self._total_compute = float(state.get("total_compute_sec", 0.0))
+
 
 class BudgetGuard:
     """预算硬门 - 阻止超预算的操作."""
@@ -214,6 +223,48 @@ class BudgetGuard:
             "cost_remaining": self._state.remaining_cost,
             "is_exhausted": self._state.is_exhausted,
         }
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize hard-budget and aggregate usage state."""
+        return {
+            "token_budget": self._state.token_budget,
+            "cost_budget_usd": self._state.cost_budget_usd,
+            "compute_budget_sec": self._state.compute_budget_sec,
+            "used_tokens": self._state.used_tokens,
+            "used_cost_usd": self._state.used_cost_usd,
+            "used_compute_sec": self._state.used_compute_sec,
+            "counter": self._counter.get_stats(),
+        }
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Restore usage while rejecting incompatible budget ceilings."""
+        if not state:
+            return
+        expected = (
+            self._state.token_budget,
+            self._state.cost_budget_usd,
+            self._state.compute_budget_sec,
+        )
+        actual = (
+            int(state.get("token_budget", expected[0])),
+            float(state.get("cost_budget_usd", expected[1])),
+            state.get("compute_budget_sec", expected[2]),
+        )
+        if actual != expected:
+            raise ValueError("checkpoint budget ceilings do not match runtime configuration")
+        self._state.used_tokens = max(
+            self._state.used_tokens,
+            int(state.get("used_tokens", 0)),
+        )
+        self._state.used_cost_usd = max(
+            self._state.used_cost_usd,
+            float(state.get("used_cost_usd", 0.0)),
+        )
+        self._state.used_compute_sec = max(
+            self._state.used_compute_sec,
+            float(state.get("used_compute_sec", 0.0)),
+        )
+        self._counter.restore_stats(state.get("counter"))
 
 
 def estimate_tokens(text: str) -> int:

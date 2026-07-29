@@ -75,12 +75,17 @@ class IslandState:
     island_id: str
     candidates: list[str] = field(default_factory=list)
     elite_archive: list[tuple[str, float]] = field(default_factory=list)
+    novelty_archive: list[tuple[str, float]] = field(default_factory=list)
     last_migration_gen: int = 0
     stagnation_count: int = 0
+    historical_best_score: float | None = None
+    _generation_best: dict[int, float] = field(default_factory=dict, repr=False)
+    _generation_seen: set[int] = field(default_factory=set, repr=False)
 
     def add_candidate(self, candidate_id: str) -> None:
         """添加候选."""
-        self.candidates.append(candidate_id)
+        if candidate_id not in self.candidates:
+            self.candidates.append(candidate_id)
 
     def update_elite(self, candidate_id: str, score: float) -> None:
         """更新精英档案."""
@@ -108,6 +113,45 @@ class IslandState:
         """获取精英."""
         return self.elite_archive[:top_k]
 
+    def update_novelty(self, candidate_id: str, novelty_score: float) -> None:
+        """Maintain a task-score-independent novelty archive."""
+        novelty = max(0.0, min(1.0, float(novelty_score)))
+        self.novelty_archive = [
+            (cid, score) for cid, score in self.novelty_archive if cid != candidate_id
+        ]
+        self.novelty_archive.append((candidate_id, novelty))
+        self.novelty_archive.sort(key=lambda item: item[1], reverse=True)
+        self.novelty_archive = self.novelty_archive[:20]
+
+    def record_generation_score(self, generation: int, score: float, *, passed: bool) -> None:
+        """Record one committed result without mutating stagnation yet."""
+        self._generation_seen.add(generation)
+        if not passed:
+            return
+        current = self._generation_best.get(generation)
+        if current is None or score > current:
+            self._generation_best[generation] = float(score)
+
+    def finalize_generation(self, generation: int, *, tolerance: float = 1e-12) -> bool:
+        """Update stagnation once from the generation-best score.
+
+        Returns True only when this generation genuinely improved the island.
+        """
+        if generation not in self._generation_seen:
+            return False
+        self._generation_seen.discard(generation)
+        generation_best = self._generation_best.pop(generation, None)
+        improved = generation_best is not None and (
+            self.historical_best_score is None
+            or generation_best > self.historical_best_score + tolerance
+        )
+        if improved:
+            self.historical_best_score = generation_best
+            self.stagnation_count = 0
+        else:
+            self.stagnation_count += 1
+        return improved
+
 
 class IslandManager:
     """岛屿管理器.
@@ -128,6 +172,7 @@ class IslandManager:
         self._migration_interval = migration_interval
         self._migration_size = migration_size
         self._islands: dict[str, IslandState] = {}
+        self._migration_events: list[dict[str, Any]] = []
 
         # 初始化岛屿
         for i in range(num_islands):
@@ -197,6 +242,15 @@ class IslandManager:
                 self._islands[target_id].update_elite(cand_id, score)
 
                 migrations.append((cand_id, source_id, target_id))
+                self._migration_events.append(
+                    {
+                        "candidate_id": cand_id,
+                        "from_island": source_id,
+                        "to_island": target_id,
+                        "generation": current_gen,
+                        "score": score,
+                    }
+                )
 
         # 更新迁移时间
         for island in self._islands.values():
@@ -232,6 +286,65 @@ class IslandManager:
         if island_id in self._islands:
             self._islands[island_id].stagnation_count = 0
 
+    def finalize_generation(self, generation: int, *, tolerance: float = 1e-12) -> dict[str, bool]:
+        """Finalize generation-level stagnation for every island."""
+        return {
+            island_id: island.finalize_generation(generation, tolerance=tolerance)
+            for island_id, island in self._islands.items()
+        }
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize island archives, stagnation and migration audit state."""
+        return {
+            "islands": {
+                island_id: {
+                    "candidates": list(island.candidates),
+                    "elite_archive": [list(item) for item in island.elite_archive],
+                    "novelty_archive": [list(item) for item in island.novelty_archive],
+                    "last_migration_gen": island.last_migration_gen,
+                    "stagnation_count": island.stagnation_count,
+                    "historical_best_score": island.historical_best_score,
+                    "generation_best": {
+                        str(generation): score
+                        for generation, score in island._generation_best.items()
+                    },
+                    "generation_seen": sorted(island._generation_seen),
+                }
+                for island_id, island in self._islands.items()
+            },
+            "migration_events": list(self._migration_events[-200:]),
+        }
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Restore a checkpoint while accepting pre-state checkpoints."""
+        if not state:
+            return
+        for island_id, payload in state.get("islands", {}).items():
+            island = self._islands.get(island_id)
+            if island is None:
+                continue
+            island.candidates = list(dict.fromkeys(payload.get("candidates", [])))
+            island.elite_archive = [
+                (str(candidate_id), float(score))
+                for candidate_id, score in payload.get("elite_archive", [])
+            ]
+            island.novelty_archive = [
+                (str(candidate_id), float(score))
+                for candidate_id, score in payload.get("novelty_archive", [])
+            ]
+            island.last_migration_gen = int(payload.get("last_migration_gen", 0))
+            island.stagnation_count = int(payload.get("stagnation_count", 0))
+            historical = payload.get("historical_best_score")
+            island.historical_best_score = float(historical) if historical is not None else None
+            island._generation_best = {
+                int(generation): float(score)
+                for generation, score in payload.get("generation_best", {}).items()
+            }
+            island._generation_seen = {
+                int(generation) for generation in payload.get("generation_seen", [])
+            }
+        self._migration_events = list(state.get("migration_events", []))[-200:]
+
     def get_stats(self) -> dict[str, Any]:
         """获取统计."""
         stats = {}
@@ -240,6 +353,7 @@ class IslandManager:
             stats[island_id] = {
                 "candidates": len(island.candidates),
                 "elite_size": len(island.elite_archive),
+                "novelty_size": len(island.novelty_archive),
                 "best_score": best[1] if best else None,
                 "stagnation": island.stagnation_count,
             }

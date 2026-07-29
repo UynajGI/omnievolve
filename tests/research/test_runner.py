@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from omnievolve.research import runner as runner_module
 from omnievolve.research.matrix import build_default_matrix
 from omnievolve.research.runner import (
+    CalibrationRunSettings,
+    EvaluatorNoiseCalibrator,
     ResearchBenchmarkRunner,
     ResearchRunSettings,
     benchmark_job_from_dict,
+    build_replay_record,
+    validate_calibration_report,
+    validate_replay_record,
 )
 
 pytestmark = pytest.mark.unit
@@ -25,6 +32,19 @@ def test_benchmark_job_payload_roundtrip():
     restored = benchmark_job_from_dict(original.to_dict())
 
     assert restored == original
+
+
+def test_git_provenance_forces_utf8(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(stdout="abc\n")
+
+    monkeypatch.setattr(runner_module.subprocess, "run", fake_run)
+    assert runner_module._git_value(tmp_path, "rev-parse", "HEAD") == "abc"  # noqa: SLF001
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
 
 
 def test_run_repetition_records_replay_and_applies_variant(monkeypatch, tmp_path):
@@ -66,17 +86,110 @@ def test_run_repetition_records_replay_and_applies_variant(monkeypatch, tmp_path
 
     assert measurement["score"] == 0.75
     assert measurement["cost_usd"] == 0.1
+    benchmark_call = next(call for call in calls if "omnievolve.cli" in call)
+    assert any(arg == "evolution.self_evolve_enabled=false" for arg in benchmark_call)
+    assert any(arg == "evolution.population_size=3" for arg in benchmark_call)
     assert any(
-        arg == "evolution.self_evolve_enabled=false" for arg in calls[0]
+        arg == f"evolution.eval_repetitions={job.eval_repetitions}"
+        for arg in benchmark_call
     )
-    assert any(arg == "evolution.population_size=3" for arg in calls[0])
     replay = json.loads(
         (tmp_path / "runs" / job.run_id / "rep-0" / "replay.json").read_text(
             encoding="utf-8"
         )
     )
-    assert replay["git_commit"] == "deadbeef"
+    assert replay["schema_version"] == 2
+    assert replay["git"]["commit"] == "ok"
     assert replay["pythonhashseed"] == str(job.seed)
+    assert replay["replay_class"] == "stochastic_llm"
+    assert "observed" in replay
+
+
+def test_evaluator_calibrator_stops_at_first_converged_prefix(monkeypatch, tmp_path):
+    calibrator = EvaluatorNoiseCalibrator(
+        CalibrationRunSettings(
+            repo_root=tmp_path,
+            runs_dir=tmp_path / "runs",
+        )
+    )
+    calls: list[tuple[str, int]] = []
+
+    def fake_measure(task, *, seed, repetition):
+        calls.append((task.name, repetition))
+        return {
+            "score": 0.5,
+            "artifact_hash": f"frozen-{task.name}",
+            "environment_version_id": "trusted:test",
+            "provenance": {"schema_version": 2, "task": task.name},
+        }
+
+    monkeypatch.setattr(calibrator, "_measure", fake_measure)
+
+    report = calibrator.run()
+
+    assert report["all_converged"] is True
+    assert report["reference_scale"] == 1.0
+    assert all(
+        task_result["calibration"]["repeats"] == 3
+        for task_result in report["tasks"].values()
+    )
+    assert len(calls) == 9
+
+
+def test_replay_provenance_detects_changed_inputs(monkeypatch, tmp_path):
+    job = next(
+        job
+        for job in build_default_matrix()
+        if job.task.name == "sort" and job.variant.name == "random_search"
+    )
+    initial = tmp_path / job.task.initial_code
+    initial.parent.mkdir(parents=True)
+    initial.write_text("def sort_items(xs): return sorted(xs)\n", encoding="utf-8")
+    config = tmp_path / "configs" / "sort_optimization.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text("[evolution]\nmax_generations=2\n", encoding="utf-8")
+    evaluator = tmp_path / "examples" / "python_optimization" / "evaluator.py"
+    evaluator.parent.mkdir(parents=True, exist_ok=True)
+    evaluator.write_text("class SortEvaluator: pass\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    monkeypatch.setattr("omnievolve.research.runner._git_value", lambda *args: "deadbeef")
+    monkeypatch.setattr("omnievolve.research.runner._git_diff_hash", lambda *args: "clean")
+
+    record = build_replay_record(
+        repo_root=tmp_path,
+        job=job,
+        repetition=0,
+        argv=["python", "-m", "omnievolve.cli"],
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+        config_path="configs/sort_optimization.toml",
+        generations=2,
+        population_size=3,
+    )
+
+    assert record["replay_class"] == "deterministic"
+    assert validate_replay_record(record, tmp_path) == []
+    stable_provenance = {
+        key: record[key]
+        for key in (
+            "schema_version",
+            "cwd",
+            "git",
+            "runtime",
+            "inputs",
+            "safe_environment",
+        )
+    }
+    calibration_report = {
+        "tasks": {"sort": {"provenance": stable_provenance}}
+    }
+    assert validate_calibration_report(calibration_report, tmp_path) == []
+    initial.write_text("def sort_items(xs): return xs\n", encoding="utf-8")
+    assert validate_replay_record(record, tmp_path) == [
+        "input fingerprint mismatch: initial_code"
+    ]
+    assert validate_calibration_report(calibration_report, tmp_path) == [
+        "sort: input fingerprint mismatch: initial_code"
+    ]
 
 
 def test_result_append_is_idempotent(tmp_path: Path):

@@ -16,7 +16,7 @@ health_window_gens = 3      # 健康评估窗口（每 N 代）
 fusion_mode = "mechanical"  # mechanical / llm（停滞时融合策略）
 
 [selection]
-parent_selector = "progressive_mcgs"
+parent_selector = "lineage_ucb"
 tournament_size = 3
 island_migration_interval = 5
 
