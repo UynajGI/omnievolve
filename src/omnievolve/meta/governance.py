@@ -433,10 +433,16 @@ class MetaPlanner:
         champion_genome: SearchPolicyGenome,
     ) -> list[MetaAction]:
         """规则引擎提议（原有逻辑）."""
+        from omnievolve.meta.policy_runtime import active_policy_fields
+
         actions = []
+        active_fields = active_policy_fields()
         suggestions = self._mutator.suggest_mutations(champion_genome, health)
 
         for field_name, new_value, rationale in suggestions[: self._max_actions]:
+            if field_name not in active_fields:
+                logger.info("Ignoring inactive rule-based policy suggestion: %s", field_name)
+                continue
             action = MetaAction(
                 action_type="modify_field",
                 target=field_name,
@@ -455,14 +461,20 @@ class MetaPlanner:
         champion_genome: SearchPolicyGenome,
     ) -> list[MetaAction]:
         """贝叶斯优化提议."""
+        from omnievolve.meta.policy_runtime import active_policy_fields
+
         # suggest 下一组参数
         suggested_params = self._tuner.suggest()
 
         # → genome 更新字典
         updates = self._tuner.params_to_genome_updates(suggested_params)
+        active_fields = active_policy_fields()
 
         actions = []
-        for field_name, new_value in list(updates.items())[: self._max_actions]:
+        for field_name, new_value in updates.items():
+            if field_name not in active_fields:
+                logger.info("Ignoring inactive Bayesian policy suggestion: %s", field_name)
+                continue
             old_value = getattr(champion_genome, field_name, None)
             rationale = f"Bayesian optimization: {field_name} = {new_value}"
 
@@ -475,6 +487,8 @@ class MetaPlanner:
                 rationale=rationale,
             )
             actions.append(action)
+            if len(actions) >= self._max_actions:
+                break
 
         if not actions:
             logger.info("BayesianTuner produced no actionable suggestions")

@@ -228,7 +228,7 @@ class TestMetaPlannerWithTuner:
             },
         )()
         actions = planner.propose({}, genome, [])
-        assert len(actions) >= 1
+        assert [action.target for action in actions] == ["retrieval_budget"]
 
     def test_meta_planner_falls_back_without_tuner(self):
         from omnievolve.meta.governance import (
