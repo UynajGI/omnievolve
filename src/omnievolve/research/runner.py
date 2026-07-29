@@ -261,6 +261,28 @@ def _deterministic_outcome(db_path: Path) -> dict[str, Any]:
         # Job lease identifiers and wall/compute timings are operational
         # provenance, not deterministic search state.
         runtime.pop("jobs", None)
+    normalized_lineage = [
+        (
+            id_map.get(row["child_id"], row["child_id"]),
+            id_map.get(row["parent_id"], row["parent_id"]),
+            row["relation_type"],
+            row["parent_order"],
+            normalize(json.loads(row["op_detail"] or "{}")),
+        )
+        for row in lineage
+    ]
+    # The SQL query is ordered by random database IDs. Canonicalize only after
+    # replacing those IDs with semantic candidate identities, otherwise two
+    # isomorphic replay graphs can hash differently solely due to UUID order.
+    normalized_lineage.sort(
+        key=lambda edge: (
+            edge[0],
+            edge[3],
+            edge[1],
+            edge[2],
+            json.dumps(edge[4], sort_keys=True, separators=(",", ":")),
+        )
+    )
     outcome = {
         "candidates": [
             (
@@ -271,16 +293,7 @@ def _deterministic_outcome(db_path: Path) -> dict[str, Any]:
             )
             for row in candidates
         ],
-        "lineage": [
-            (
-                id_map.get(row["child_id"], row["child_id"]),
-                id_map.get(row["parent_id"], row["parent_id"]),
-                row["relation_type"],
-                row["parent_order"],
-                normalize(json.loads(row["op_detail"] or "{}")),
-            )
-            for row in lineage
-        ],
+        "lineage": normalized_lineage,
         "evaluations": [
             (
                 id_map.get(row["candidate_id"], row["candidate_id"]),

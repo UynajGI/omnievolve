@@ -94,17 +94,60 @@ def _write_deterministic_replay_db(
         )
 
 
+def _add_replay_lineage(
+    path: Path,
+    *,
+    parent_id: str,
+    first_child_id: str,
+    second_child_id: str,
+) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO candidate VALUES (?, 0, 'baseline', NULL, 'evaluated')",
+            (parent_id,),
+        )
+        connection.execute(
+            "INSERT INTO candidate VALUES (?, 2, 'artifact-2', NULL, 'evaluated')",
+            (second_child_id,),
+        )
+        connection.executemany(
+            "INSERT INTO candidate_lineage VALUES (?, ?, 'mutate', 0, '{}')",
+            (
+                (first_child_id, parent_id),
+                (second_child_id, parent_id),
+            ),
+        )
+
+
 def test_deterministic_outcome_normalizes_ids_and_timings(tmp_path):
     first = tmp_path / "first.db"
     second = tmp_path / "second.db"
     changed = tmp_path / "changed.db"
     _write_deterministic_replay_db(
-        first, candidate_id="candidate-a", compute_sec=0.1
+        first, candidate_id="z-child-1", compute_sec=0.1
     )
     _write_deterministic_replay_db(
-        second, candidate_id="candidate-b", compute_sec=9.9
+        second, candidate_id="a-child-1", compute_sec=9.9
     )
     _write_deterministic_replay_db(changed, candidate_id="candidate-c", score=0.5)
+    _add_replay_lineage(
+        first,
+        parent_id="parent-a",
+        first_child_id="z-child-1",
+        second_child_id="a-child-2",
+    )
+    _add_replay_lineage(
+        second,
+        parent_id="parent-b",
+        first_child_id="a-child-1",
+        second_child_id="z-child-2",
+    )
+    _add_replay_lineage(
+        changed,
+        parent_id="parent-c",
+        first_child_id="candidate-c",
+        second_child_id="child-c-2",
+    )
 
     first_outcome = runner_module._deterministic_outcome(first)
     second_outcome = runner_module._deterministic_outcome(second)
