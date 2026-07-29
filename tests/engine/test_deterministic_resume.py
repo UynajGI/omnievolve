@@ -336,7 +336,7 @@ def test_local_policy_arm_uses_isolated_cas_sandbox(tmp_path: Path) -> None:
     assert result.success_rate == 1.0
     assert len(llm.fork_kwargs) == 1
     assert llm.fork_kwargs[0]["max_retries"] == 1
-    assert llm.fork_kwargs[0]["request_timeout"] == 7.5
+    assert llm.fork_kwargs[0]["request_timeout"] == 15.0
     assert llm.fork_kwargs[0]["deadline_monotonic"] > 0
     db.close_all()
 

@@ -89,10 +89,13 @@ class LocalPolicyArmRunner:
                 if wall_budget is not None:
                     # Retry the complete research job instead of letting one provider
                     # consume an arm's entire ceiling through nested endpoint retries.
+                    # Coding/reasoning endpoints commonly need the gateway's normal
+                    # 120-second ceiling; the monotonic arm deadline remains the hard
+                    # aggregate guard across roles and fallbacks.
                     fork_kwargs = {
                         "deadline_monotonic": deadline,
                         "max_retries": 1,
-                        "request_timeout": min(60.0, max(1.0, wall_budget / 4.0)),
+                        "request_timeout": min(120.0, max(1.0, wall_budget / 2.0)),
                     }
                 arm_llm = self._llm.fork(db, **fork_kwargs)
                 arm_sandbox = self._sandbox.fork(

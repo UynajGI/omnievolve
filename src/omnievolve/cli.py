@@ -352,6 +352,12 @@ def _build_engine_components(
 # --------------------------------------------------------------------------- #
 
 
+def _load_environment_files() -> None:
+    """Load local defaults without overriding explicitly supplied process values."""
+    load_dotenv(".local.env", override=False)
+    load_dotenv(".env", override=False)
+
+
 @app.command()
 def run(
     task: str | None = typer.Argument(None, help="任务描述或初始代码文件路径；--resume 时可省略"),
@@ -378,9 +384,10 @@ def run(
     """启动候选进化；按健康窗口自动运行受控策略进化."""
     from omnievolve.utils.logging import setup_logging
 
-    # 自动加载 .env / .local.env → os.environ（优先级: .local.env > .env > 环境变量）
-    load_dotenv(".env", override=False)
-    load_dotenv(".local.env", override=True)
+    # 自动加载 .env / .local.env → os.environ。
+    # 显式进程环境必须具有最高优先级，便于研究 runner 安全选择模型；
+    # 本地私有配置其次，仓库级默认配置最后。
+    _load_environment_files()
 
     setup_logging()
     console.print("[bold green]OmniEvolve[/bold green] - Starting evolution")

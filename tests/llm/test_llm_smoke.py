@@ -28,9 +28,9 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-# 与 CLI 保持相同优先级；真实凭据只放在 gitignored .local.env。
+# 与 CLI 保持相同优先级；显式进程环境 > gitignored .local.env > .env。
+load_dotenv(".local.env", override=False)
 load_dotenv(".env", override=False)
-load_dotenv(".local.env", override=True)
 
 # 自动跳过条件：无 API key 或无 litellm
 pytestmark = [

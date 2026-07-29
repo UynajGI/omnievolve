@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from typer.testing import CliRunner
 
 from omnievolve.cli import (
     _apply_llm_env_overrides,
     _apply_setting_overrides,
+    _load_environment_files,
     _load_project_snapshot,
     app,
 )
@@ -16,6 +19,30 @@ from omnievolve.config import OmniEvolveSettings
 pytestmark = pytest.mark.unit
 
 runner = CliRunner()
+
+
+def test_environment_files_preserve_process_env_and_prefer_local(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text(
+        "OMNIEVOLVE_TEST_EXPLICIT=repo\n"
+        "OMNIEVOLVE_TEST_LAYER=repo\n"
+        "OMNIEVOLVE_TEST_REPO_ONLY=repo\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".local.env").write_text(
+        "OMNIEVOLVE_TEST_EXPLICIT=local\n"
+        "OMNIEVOLVE_TEST_LAYER=local\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OMNIEVOLVE_TEST_EXPLICIT", "process")
+    monkeypatch.delenv("OMNIEVOLVE_TEST_LAYER", raising=False)
+    monkeypatch.delenv("OMNIEVOLVE_TEST_REPO_ONLY", raising=False)
+
+    _load_environment_files()
+
+    assert os.environ["OMNIEVOLVE_TEST_EXPLICIT"] == "process"
+    assert os.environ["OMNIEVOLVE_TEST_LAYER"] == "local"
+    assert os.environ["OMNIEVOLVE_TEST_REPO_ONLY"] == "repo"
 
 
 def test_llm_env_overrides(monkeypatch):
