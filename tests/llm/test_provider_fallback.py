@@ -3,7 +3,10 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 
+import pytest
+
 from omnievolve.agents.llm_gateway import LLMEndpoint, LLMGateway
+from omnievolve.exceptions import LLMTimeoutError
 from omnievolve.utils.token_counter import BudgetGuard, BudgetState
 
 
@@ -157,3 +160,36 @@ def test_unknown_provider_price_propagates_to_budget_without_imputation(monkeypa
     assert gateway.get_stats()["cost_known"] is False
     assert gateway.get_stats()["total_cost"] is None
     assert guard.counter.get_stats()["cost_known"] is False
+
+
+def test_canary_fork_deadline_caps_request_and_stops_nested_retries(monkeypatch) -> None:
+    clock = [0.0]
+    observed_timeouts: list[float] = []
+
+    class StubLiteLLM(ModuleType):
+        @staticmethod
+        def completion(**kwargs):
+            observed_timeouts.append(float(kwargs["timeout"]))
+            clock[0] += float(kwargs["timeout"])
+            raise TimeoutError("provider exceeded the arm deadline")
+
+    monkeypatch.setitem(sys.modules, "litellm", StubLiteLLM("litellm"))
+    monkeypatch.setattr(
+        "omnievolve.agents.llm_gateway.time.monotonic",
+        lambda: clock[0],
+    )
+    parent = LLMGateway(
+        default_model="slow-model",
+        max_retries=3,
+        request_timeout=120.0,
+    )
+    gateway = parent.fork(
+        deadline_monotonic=5.0,
+        max_retries=1,
+        request_timeout=60.0,
+    )
+
+    with pytest.raises(LLMTimeoutError, match="hard deadline"):
+        gateway.chat([{"role": "user", "content": "ping"}])
+
+    assert observed_timeouts == [5.0]

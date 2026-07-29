@@ -95,6 +95,7 @@ class LLMGateway:
         budget_guard: Any | None = None,
         request_timeout: float = 120.0,
         default_max_tokens: int = 16384,
+        deadline_monotonic: float | None = None,
     ) -> None:
         self._db = db
         self._default_model = default_model
@@ -120,6 +121,9 @@ class LLMGateway:
         self._request_timeout = request_timeout
         # 默认最大输出 token 数（可被 chat() 调用方覆盖）
         self._default_max_tokens = default_max_tokens
+        # Optional hard wall deadline used by isolated policy-canary arms.
+        # Unlike BudgetGuard, this is consumed while an HTTP request is active.
+        self._deadline_monotonic = deadline_monotonic
 
     def chat(
         self,
@@ -164,6 +168,7 @@ class LLMGateway:
             waited = self._rate_limiter.acquire()
             if waited > 0:
                 logger.debug("Rate limiter waited %.1fs", waited)
+        self._remaining_deadline(raise_if_expired=True)
 
         # S5-10: retry/backoff/fallback
         last_error: Exception | None = None
@@ -192,6 +197,12 @@ class LLMGateway:
                 try:
                     import litellm
 
+                    remaining = self._remaining_deadline(raise_if_expired=True)
+                    request_timeout = (
+                        self._request_timeout
+                        if remaining is None
+                        else min(self._request_timeout, max(0.001, remaining))
+                    )
                     response = litellm.completion(
                         model=provider_model,
                         messages=messages,
@@ -199,7 +210,7 @@ class LLMGateway:
                         max_tokens=max_tokens,
                         api_key=endpoint.api_key,
                         api_base=endpoint.api_base,
-                        timeout=self._request_timeout,
+                        timeout=request_timeout,
                     )
 
                     latency_ms = (time.time() - start_time) * 1000
@@ -263,6 +274,8 @@ class LLMGateway:
                     raise LLMError(
                         "litellm is not installed; use FakeLLM explicitly for tests"
                     ) from exc
+                except LLMTimeoutError:
+                    raise
                 except Exception as e:
                     last_error = e
                     safe_error = self._redact_error(e)
@@ -300,8 +313,12 @@ class LLMGateway:
                             )
                             break
                         raise self._typed_error(e, safe_error) from e
+                    self._remaining_deadline(raise_if_expired=True, cause=e)
                     if attempt < self._max_retries - 1:
                         backoff = self._retry_backoff_base * (2**attempt)
+                        remaining = self._remaining_deadline(raise_if_expired=True)
+                        if remaining is not None:
+                            backoff = min(backoff, remaining)
                         time.sleep(backoff)
 
         # All retries exhausted
@@ -319,20 +336,46 @@ class LLMGateway:
             return f"openai/{model}"
         return model
 
-    def fork(self, db: Database | None = None) -> LLMGateway:
+    def fork(
+        self,
+        db: Database | None = None,
+        *,
+        deadline_monotonic: float | None = None,
+        max_retries: int | None = None,
+        request_timeout: float | None = None,
+    ) -> LLMGateway:
         """Create an independent accounting/retry context for a canary arm."""
         return LLMGateway(
             db,
             default_model=self._default_model,
             api_key=self._api_key,
             api_base=self._api_base,
-            max_retries=self._max_retries,
+            max_retries=self._max_retries if max_retries is None else max_retries,
             retry_backoff_base=self._retry_backoff_base,
             fallback_model=self._fallback_model,
             fallback_endpoints=list(self._fallback_endpoints),
-            request_timeout=self._request_timeout,
+            request_timeout=(
+                self._request_timeout if request_timeout is None else request_timeout
+            ),
             default_max_tokens=self._default_max_tokens,
+            deadline_monotonic=deadline_monotonic,
         )
+
+    def _remaining_deadline(
+        self,
+        *,
+        raise_if_expired: bool = False,
+        cause: Exception | None = None,
+    ) -> float | None:
+        if self._deadline_monotonic is None:
+            return None
+        remaining = self._deadline_monotonic - time.monotonic()
+        if raise_if_expired and remaining <= 0:
+            error = LLMTimeoutError("LLM gateway hard deadline exceeded")
+            if cause is not None:
+                raise error from cause
+            raise error
+        return remaining
 
     def _redact_error(self, error: Exception) -> str:
         """Return an error message safe for logs and persisted job diagnostics."""
@@ -574,7 +617,11 @@ class FakeLLM:
             latency_ms=1.0,
         )
 
-    def fork(self, db: Database | None = None) -> FakeLLM:
+    def fork(
+        self,
+        db: Database | None = None,
+        **_: Any,
+    ) -> FakeLLM:
         """Return a fresh deterministic stream for independent replay arms."""
         del db
         return FakeLLM(list(self._responses))

@@ -76,58 +76,73 @@ class LocalPolicyArmRunner:
             initial_code = self._source_store.load_text(frontier_ref)
 
         started = time.monotonic()
+        wall_budget = request.wall_budget_sec_per_seed
+        deadline = started + wall_budget if wall_budget is not None else None
         with tempfile.TemporaryDirectory(prefix="omnievolve-canary-") as temporary:
             root = Path(temporary)
             db = Database(root / "arm.db")
-            initialize_database(db)
-            local_artifacts = ArtifactStore(root / "artifacts", db)
-            local_store = CASCodeStore(local_artifacts, root / "work")
-            arm_llm = self._llm.fork(db)
-            arm_sandbox = self._sandbox.fork(
-                artifact_store=local_store,
-                work_dir=root / "sandbox",
-            )
-            experiment = ExperimentRepository(db).create(
-                task_id=request.task_name,
-                task_name=request.task_name,
-                config_snapshot={
-                    "policy_canary": True,
-                    "snapshot_id": request.snapshot_id,
-                    "policy_id": policy_id,
-                    "seed": seed,
-                },
-            )
-            arm_config = replace(
-                self._config,
-                max_generations=request.generations_per_seed,
-                self_evolve_enabled=False,
-                token_budget=request.token_budget_per_seed,
-                compute_budget_sec=request.wall_budget_sec_per_seed,
-                seed=seed,
-            )
-            from omnievolve.engine.evolution_engine import EvolutionEngine
+            try:
+                initialize_database(db)
+                local_artifacts = ArtifactStore(root / "artifacts", db)
+                local_store = CASCodeStore(local_artifacts, root / "work")
+                fork_kwargs: dict[str, Any] = {}
+                if wall_budget is not None:
+                    # Retry the complete research job instead of letting one provider
+                    # consume an arm's entire ceiling through nested endpoint retries.
+                    fork_kwargs = {
+                        "deadline_monotonic": deadline,
+                        "max_retries": 1,
+                        "request_timeout": min(60.0, max(1.0, wall_budget / 4.0)),
+                    }
+                arm_llm = self._llm.fork(db, **fork_kwargs)
+                arm_sandbox = self._sandbox.fork(
+                    artifact_store=local_store,
+                    work_dir=root / "sandbox",
+                )
+                experiment = ExperimentRepository(db).create(
+                    task_id=request.task_name,
+                    task_name=request.task_name,
+                    config_snapshot={
+                        "policy_canary": True,
+                        "snapshot_id": request.snapshot_id,
+                        "policy_id": policy_id,
+                        "seed": seed,
+                    },
+                )
+                arm_config = replace(
+                    self._config,
+                    max_generations=request.generations_per_seed,
+                    self_evolve_enabled=False,
+                    token_budget=request.token_budget_per_seed,
+                    compute_budget_sec=request.wall_budget_sec_per_seed,
+                    seed=seed,
+                )
+                from omnievolve.engine.evolution_engine import EvolutionEngine
 
-            engine = EvolutionEngine(
-                db,
-                local_store,
-                self._task_evaluator,
-                arm_sandbox,
-                arm_llm,
-                experiment_id=experiment.id,
-                evaluator_version_id=getattr(self._task_evaluator, "version_id", ""),
-                environment_version_id=getattr(arm_sandbox, "environment_version_id", ""),
-                config=arm_config,
-                search_policy=policy,
-                model_slots=self._model_slots,
-                policy_replay_executor=None,
-            )
-            engine.run(initial_code, request.task_name)
-            result = self._measure_arm(
-                db,
-                experiment.id,
-                requested_generations=request.generations_per_seed,
-            )
-            db.close()
+                engine = EvolutionEngine(
+                    db,
+                    local_store,
+                    self._task_evaluator,
+                    arm_sandbox,
+                    arm_llm,
+                    experiment_id=experiment.id,
+                    evaluator_version_id=getattr(self._task_evaluator, "version_id", ""),
+                    environment_version_id=getattr(
+                        arm_sandbox, "environment_version_id", ""
+                    ),
+                    config=arm_config,
+                    search_policy=policy,
+                    model_slots=self._model_slots,
+                    policy_replay_executor=None,
+                )
+                engine.run(initial_code, request.task_name)
+                result = self._measure_arm(
+                    db,
+                    experiment.id,
+                    requested_generations=request.generations_per_seed,
+                )
+            finally:
+                db.close_all()
         return replace(result, wall_sec=time.monotonic() - started)
 
     @staticmethod
@@ -171,10 +186,21 @@ class LocalPolicyArmRunner:
             (experiment_id,),
         )
         checkpoint = json.loads(experiment["checkpoint_data"] or "{}") if experiment else {}
+        candidate_count = int(
+            db.fetchone(
+                """
+                SELECT COUNT(*) AS count
+                FROM candidate
+                WHERE experiment_id = ? AND status != 'aborted'
+                """,
+                (experiment_id,),
+            )["count"]
+        )
         integrity = bool(
             experiment
             and experiment["status"] == "completed"
             and int(checkpoint.get("generation", -1)) >= requested_generations
+            and candidate_count > 1
         )
         ledger = db.fetchone(
             """

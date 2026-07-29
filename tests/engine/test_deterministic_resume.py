@@ -30,9 +30,11 @@ class _DeterministicLLM:
 
     def __init__(self) -> None:
         self._call_count = 0
+        self.fork_kwargs: list[dict[str, Any]] = []
 
-    def fork(self, db: Database):
+    def fork(self, db: Database, **kwargs: Any):
         del db
+        self.fork_kwargs.append(kwargs)
         return type(self)()
 
     def chat(
@@ -72,6 +74,17 @@ class _DeterministicLLM:
             total_tokens=18,
             latency_ms=1.0,
         )
+
+
+class _FailingLLM(_DeterministicLLM):
+    def fork(self, db: Database, **kwargs: Any):
+        del db
+        self.fork_kwargs.append(kwargs)
+        return type(self)()
+
+    def chat(self, *args: Any, **kwargs: Any) -> LLMResponse:
+        del args, kwargs
+        raise RuntimeError("provider unavailable")
 
 
 class _DeterministicSandbox:
@@ -284,11 +297,12 @@ def test_local_policy_arm_uses_isolated_cas_sandbox(tmp_path: Path) -> None:
     artifacts = ArtifactStore(tmp_path / "source-artifacts", db)
     store = CASCodeStore(artifacts, tmp_path / "source-work")
     frontier_ref = store.store_snapshot("VALUE = 0\n", message="frozen frontier")
+    llm = _DeterministicLLM()
     runner = LocalPolicyArmRunner(
         source_store=store,
         task_evaluator=_DeterministicEvaluator(),
         sandbox=_DeterministicSandbox(store),
-        llm=_DeterministicLLM(),
+        llm=llm,
         evolution_config=_config(),
         model_slots=[],
     )
@@ -302,6 +316,7 @@ def test_local_policy_arm_uses_isolated_cas_sandbox(tmp_path: Path) -> None:
         snapshot_id="frozen-frontier-sha256",
         seeds=(3, 5, 7),
         token_budget_per_arm=3_000,
+        wall_budget_sec_per_arm=90.0,
         task_name="sort",
         frontier_refs=(frontier_ref,),
         generations_per_seed=1,
@@ -319,4 +334,50 @@ def test_local_policy_arm_uses_isolated_cas_sandbox(tmp_path: Path) -> None:
     assert result.anti_cheat_passed is True
     assert result.frontier_auc >= 0.0
     assert result.success_rate == 1.0
+    assert len(llm.fork_kwargs) == 1
+    assert llm.fork_kwargs[0]["max_retries"] == 1
+    assert llm.fork_kwargs[0]["request_timeout"] == 7.5
+    assert llm.fork_kwargs[0]["deadline_monotonic"] > 0
+    db.close_all()
+
+
+def test_local_policy_arm_closes_database_when_provider_fails(tmp_path: Path) -> None:
+    db = Database(tmp_path / "source.db")
+    initialize_database(db)
+    artifacts = ArtifactStore(tmp_path / "source-artifacts", db)
+    store = CASCodeStore(artifacts, tmp_path / "source-work")
+    frontier_ref = store.store_snapshot("VALUE = 0\n", message="frozen frontier")
+    runner = LocalPolicyArmRunner(
+        source_store=store,
+        task_evaluator=_DeterministicEvaluator(),
+        sandbox=_DeterministicSandbox(store),
+        llm=_FailingLLM(),
+        evolution_config=_config(),
+        model_slots=[],
+    )
+    policy = SearchPolicyGenome()
+    request = PolicyReplayRequest(
+        experiment_id="source-experiment",
+        champion_policy_id="champion",
+        challenger_policy_id="challenger",
+        champion=policy,
+        challenger=policy,
+        snapshot_id="frozen-frontier-sha256",
+        seeds=(3, 5, 7),
+        token_budget_per_arm=3_000,
+        wall_budget_sec_per_arm=90.0,
+        task_name="sort",
+        frontier_refs=(frontier_ref,),
+        generations_per_seed=1,
+    )
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        runner.run_arm(
+            request=request,
+            policy=policy,
+            policy_id="champion",
+            seed=3,
+            arm="champion",
+        )
+
     db.close_all()
