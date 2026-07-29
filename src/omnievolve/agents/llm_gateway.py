@@ -211,6 +211,10 @@ class LLMGateway:
                         api_key=endpoint.api_key,
                         api_base=endpoint.api_base,
                         timeout=request_timeout,
+                        # OmniEvolve owns retries, backoff, fallback, deadlines,
+                        # and attempt provenance. Hidden SDK retries would make
+                        # one recorded attempt exceed its wall-clock budget.
+                        num_retries=0,
                     )
 
                     latency_ms = (time.time() - start_time) * 1000

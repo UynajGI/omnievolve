@@ -165,11 +165,13 @@ def test_unknown_provider_price_propagates_to_budget_without_imputation(monkeypa
 def test_canary_fork_deadline_caps_request_and_stops_nested_retries(monkeypatch) -> None:
     clock = [0.0]
     observed_timeouts: list[float] = []
+    observed_sdk_retries: list[int] = []
 
     class StubLiteLLM(ModuleType):
         @staticmethod
         def completion(**kwargs):
             observed_timeouts.append(float(kwargs["timeout"]))
+            observed_sdk_retries.append(int(kwargs["num_retries"]))
             clock[0] += float(kwargs["timeout"])
             raise TimeoutError("provider exceeded the arm deadline")
 
@@ -193,3 +195,4 @@ def test_canary_fork_deadline_caps_request_and_stops_nested_retries(monkeypatch)
         gateway.chat([{"role": "user", "content": "ping"}])
 
     assert observed_timeouts == [5.0]
+    assert observed_sdk_retries == [0]
