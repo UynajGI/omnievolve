@@ -3768,7 +3768,7 @@
         <div class="pulse-dot"></div>
         <h1>OmniEvolve 系统架构</h1>
       </div>
-      <p class="subtitle">LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + MCTS 树搜索 + 受控元进化</p>
+      <p class="subtitle">LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + LineageUCB 血缘搜索 + 受控元进化</p>
     </div>
 
     <script id="archify-guided-views-data" type="application/json">[{"id":"fast-loop-path","label":"Fast Loop 主路径","focus":["cli","engine","fastloop","agents","gateway","storage","evaluator","sandbox"],"note":"单候选的完整进化链：选父 → Director → Coder → 存储 → 评估 → 沙箱执行 → 提交状态"},{"id":"meta-evolution","label":"Slow Loop 元进化","focus":["engine","slowloop","telemetry","meta"],"note":"每 N 代聚合遥测 → 健康策略 → 元规划 → 治理分级 (L0/L1/L2) → Champion/Challenger"},{"id":"llm-path","label":"LLM 调用链","focus":["agents","gateway","llm"],"note":"Director/Coder/Critic 通过 LLMGateway + CircuitBreaker 访问外部 LLM"}]</script>
@@ -3815,7 +3815,7 @@
     <div class="diagram-container" data-detail-level="map">
       <svg viewBox="0 0 1240 680" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="standard">
         <title id="archify-diagram-title">OmniEvolve 系统架构</title>
-        <desc id="archify-diagram-description">LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + MCTS 树搜索 + 受控元进化</desc>
+        <desc id="archify-diagram-description">LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + LineageUCB 血缘搜索 + 受控元进化</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -3959,26 +3959,26 @@
         <text data-detail="fine" x="1140" y="386" class="t-database" font-size="7" text-anchor="middle">SHA-256 内容寻址</text>
         </g>
 
-        <g id="node-mcts" data-node-id="mcts" data-node-label="ProgressiveMCGS" tabindex="0" role="button" aria-label="Focus ProgressiveMCGS, UCB1 + Beta backprop, engine/ — 进化引擎" aria-pressed="false" data-node-kind="backend" data-node-sublabel="UCB1 + Beta backprop" data-node-tag="树边搜索" data-node-context="engine/ — 进化引擎">
-          <title>ProgressiveMCGS · UCB1 + Beta backprop · engine/ — 进化引擎 · 树边搜索</title>
+        <g id="node-mcts" data-node-id="mcts" data-node-label="LineageUCB" tabindex="0" role="button" aria-label="Focus LineageUCB, relative-parent gain, engine/ — 进化引擎" aria-pressed="false" data-node-kind="backend" data-node-sublabel="relative-parent gain" data-node-tag="血缘信用" data-node-context="engine/ — 进化引擎">
+          <title>LineageUCB · relative-parent gain · engine/ — 进化引擎 · 血缘信用</title>
           <rect x="220" y="370" width="150" height="56" rx="6" class="c-mask"/>
           <rect x="220" y="370" width="150" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(226 376) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="295" y="396" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ProgressiveMCGS</text>
+          <text data-detail-anchor x="295" y="396" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">LineageUCB</text>
         <text data-detail="context" x="295" y="412" class="t-muted" font-size="9" text-anchor="middle">UCB1 + Beta backprop</text>
         <text data-detail="fine" x="295" y="418" class="t-backend" font-size="7" text-anchor="middle">树边搜索</text>
         </g>
 
-        <g id="node-evaluator" data-node-id="evaluator" data-node-label="TaskEvaluator" tabindex="0" role="button" aria-label="Focus TaskEvaluator, Protocol · build_plan, 隔离执行" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Protocol · build_plan" data-node-context="隔离执行">
-          <title>TaskEvaluator · Protocol · build_plan · 隔离执行</title>
+        <g id="node-evaluator" data-node-id="evaluator" data-node-label="EvaluationService" tabindex="0" role="button" aria-label="Focus EvaluationService, 统一评估入口, 隔离执行" aria-pressed="false" data-node-kind="backend" data-node-sublabel="统一评估入口" data-node-context="隔离执行">
+          <title>EvaluationService · 统一评估入口 · 隔离执行</title>
           <rect x="680" y="370" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="680" y="370" width="140" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(686 376) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="750" y="396" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">TaskEvaluator</text>
+          <text data-detail-anchor x="750" y="396" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">EvaluationService</text>
         <text data-detail="context" x="750" y="412" class="t-muted" font-size="9" text-anchor="middle">Protocol · build_plan</text>
         </g>
 
@@ -4282,7 +4282,7 @@
           <h3>Fast Loop（快速循环）</h3>
         </div>
         <ul>
-          <li>&bull; 每候选 11 步：选父 → Director → NoveltyGate → Coder → Critic 重试</li>
+          <li>&bull; 岛内选父 → Director → idea novelty → Coder/Critic → candidate novelty</li>
           <li>&bull; prepare/commit 拆分支持异步并行流水线</li>
           <li>&bull; P0-1: 评估失败反馈回流 Coder（通过率 19%→57%）</li>
         </ul>
@@ -4291,10 +4291,10 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>MCTS 树搜索</h3>
+          <h3>LineageUCB 血缘搜索</h3>
         </div>
         <ul>
-          <li>&bull; ProgressiveMCGS: UCB1 + Beta 贝叶斯回传</li>
+          <li>&bull; 按相对父代增益回传；progressive_mcgs 仅为兼容别名</li>
           <li>&bull; 渐进式探索衰减（UCT→Elite 软切换）</li>
           <li>&bull; 虚拟损失 + 回滚防止并行泄漏</li>
         </ul>

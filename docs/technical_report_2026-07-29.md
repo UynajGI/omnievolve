@@ -1,6 +1,8 @@
 # OmniEvolve 运行时闭环、功能验证与研究校准报告
 
-日期：2026-07-29
+初始日期：2026-07-29
+
+最后同步：2026-07-31
 
 ## 执行结论
 
@@ -17,10 +19,10 @@ OmniEvolve 已具备“单机、可恢复、可审计、可消融的代码进化
 - 研究 runner 已有幂等队列、租约、并发上限、错误分类、重试、原始尝试 provenance、
   配对统计和 strict replay。
 
-当前不能宣称“正式基准已经证明 OmniEvolve 优于全部基线”。冻结 evaluator 校准和部分
-工程 pilot 已完成，但三任务、五变体、三种子的 45-run pilot 尚未通过升级门，因而
-operator/QD 正式消融清单只生成、不执行。这个 fail-closed 结果比在 provider 波动下
-产生一批不可解释数字更可信。
+当前不能宣称“正式基准已经证明 OmniEvolve 优于全部基线”。冻结 evaluator 校准已完成，
+三任务、五变体、三种子的 v10 45-run pilot 也已执行完毕，但它以 32 completed、13 failed
+结束，非算法性失败率 28.9%，没有通过不高于 5% 的升级门。因此 operator/QD 正式消融
+清单只生成、不执行。这个 fail-closed 结果比在 provider 波动下产生一批不可解释数字更可信。
 
 ## 对改进报告的落实
 
@@ -74,7 +76,7 @@ operator/QD 正式消融清单只生成、不执行。这个 fail-closed 结果�
 
 - 针对成本、provider fallback 和 E2E 的回归：52 passed；
 - research runner/replay 定向测试：10 passed；
-- 完整非 slow suite：987 passed、4 skipped、7 deselected；
+- 完整非 slow suite：992 passed、7 skipped、2 deselected；
 - 全仓 Ruff：通过；
 - deterministic resume invariant：包含 QD/operator adaptive state，已通过；
 - CAS `sort` CLI：1 代、1 个 evolved candidate、3 次 evaluator repetition，
@@ -89,13 +91,12 @@ operator/QD 正式消融清单只生成、不执行。这个 fail-closed 结果�
 
 | 路径 | 模型 | 观测 |
 |---|---|---|
-| DashScope primary | `qwen3.7-flash` | API 可达，但当前账号返回 model access denied |
-| BigModel fallback | `glm-5.2` | 多次成功；过小输出预算或 provider 波动时可能只有 reasoning、无 final |
-| Beijing Aliyun fallback | `qwen3.8-max-preview` | 单次探针成功；一次 60 秒 bounded smoke 超时 |
+| BigModel primary | `glm-5.2` | 多次成功；被选为当前工程校准的 primary |
+| Beijing Aliyun fallback | `qwen3.8-max-preview` | 探针成功，但 Coder 尾延迟和超时高于 primary |
 
 网关修复了自定义 OpenAI-compatible base 缺少 provider prefix 的问题；永久鉴权/
-模型错误会禁用对应 credential 或 endpoint，后续角色调用不重复无效重试。真实单次
-fallback smoke 在约 21 秒内通过。
+模型错误会禁用对应 credential 或 endpoint，后续角色调用不重复无效重试。旧
+`qwen3.7-flash` 已退出测试配置，不再作为可用路径描述。
 
 一次 bounded Heilbronn 完整 smoke 正确失败：primary 无权限、GLM 返回空 final、
 Beijing Qwen 超时，最终没有伪造 evolved candidate。此前 CAS `sort` 完整 E2E
@@ -112,7 +113,7 @@ Beijing Qwen 超时，最终没有伪造 evolved candidate。此前 CAS `sort` �
 | nqueens | 3 | 1.0 | 0 | 是 |
 | circle_packing | 3 | -0.15 | 0 | 是 |
 
-校准产物位于 `.omnievolve/research/calibration.json`。45-run pilot manifest 已生成，
+v10 校准产物位于 `.omnievolve/research/calibration-v10-20260730.json`。45-run pilot manifest 已生成，
 包含校准文件绝对路径和 SHA-256，缺失或变更时 `plan-pilot` fail closed。
 
 ## 工程 pilot 结果
@@ -155,15 +156,29 @@ Beijing Qwen 超时，最终没有伪造 evolved candidate。此前 CAS `sort` �
 - `no_slow_loop` 只有 1 代，本来就不能测量 Slow Loop 的价值；
 - provider 输出随机且价格未知，因此不能做 cost-improvement 结论。
 
-pilot gate 仍为失败：只有部分 sort cells 和 random baseline 有数据，完整矩阵中
-至少一个 cell 的有效配对 seeds 少于 2。正式 operator 135-run 与 QD 90-run
-manifest 已生成，但按照协议没有越过门禁执行。
+### v10 45-run pilot 最终状态（2026-07-31）
+
+| 状态 | runs |
+|---|---:|
+| completed | 32 |
+| failed | 13 |
+
+- `random_search`、`single_agent`、`no_slow_loop` 各完成 9/9；
+- `full` 完成 2/9，7 次因没有完成独立 policy canary 而 fail closed；
+- `no_novelty` 完成 3/9，5 次因没有完成独立 policy canary 而 fail closed，1 次因没有 evolved candidate 记为 infrastructure failure；
+- 12 次失败归类为永久配置/鉴权/完整性，1 次归类为 infrastructure；
+- 32 个完成结果的 provenance 污染为零。
+
+pilot gate 仍为失败：13/45 的失败率为 28.9%，显著高于协议允许的 5%，并且多个
+`full`/`no_novelty` cell 没有至少两个有效配对 seeds。正式 operator 135-run 与 QD
+90-run manifest 已生成，但按照协议没有越过门禁执行。v10 数据只用于工程诊断，
+不得进入正式算法结论。
 
 ## 当前差距与下一步门槛
 
-1. 取得可稳定调用 primary 的模型权限，或冻结一个稳定 provider/model 组合；
-2. 完成 `full` 的真实 3 代以上 canary smoke，证明有独立、等预算 policy replay；
-3. 完成三任务 × 五变体 × 三 seeds pilot，并满足：
+1. 稳定 `full` 与 `no_novelty` 的 canary 触发/完成率，避免运行结束时两者退化为 `no_slow_loop`；
+2. 对 Coder 尾延迟设置可执行的 arm wall/token 预算，并保持 provider fallback 可审计；
+3. 重跑三任务 × 五变体 × 三 seeds pilot，并满足：
    provenance 污染为零、非算法失败率不高于 5%、每 cell 至少两个有效配对 seeds；
 4. 用 paired variance 做功效分析，正式 seeds 限制为 5–10；
 5. pilot 通过后，先独立跑 operator，再独立跑 QD；不同时打开；

@@ -1,6 +1,6 @@
 # OmniEvolve — Agent Guide
 
-> 受控元进化框架 (Controlled Meta-Evolution Framework). LLM-driven code optimization with MCTS search, hierarchical memory, multi-stage novelty gates, and controlled meta-evolution.
+> 受控元进化框架 (Controlled Meta-Evolution Framework). LLM-driven population search with lineage-aware selection, hierarchical memory, two-stage novelty, and controlled meta-evolution.
 
 ## Quick commands
 
@@ -13,7 +13,7 @@ make test-slow             # 慢速/集成测试（Docker, soak）
 make test-all              # 全量（不含 LLM）
 
 # 等效 pytest 命令（Windows: .venv/Scripts/python）
-.venv/bin/python -m pytest -q -m "not slow and not llm and not benchmark"   # ~838 tests
+.venv/bin/python -m pytest -q -m "not slow and not llm and not benchmark"
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
@@ -38,11 +38,11 @@ Python 3.12+ (dev env: 3.13). Virtualenv at `.venv/` (Windows: `.venv/Scripts/`,
 
 ```
 src/omnievolve/
-  engine/     EvolutionEngine (797行,编排), FastLoopStep (prepare/commit), AsyncPipelineEngine, SlowLoopController, InspirationCollector, CheckpointManager, EngineSetup, MCTS, selection, mutation, crossover, novelty, memory, island, scheduler, diff
+  engine/     EvolutionEngine, FastLoopStep (prepare/commit), SlowLoopController, LineageUCB selection, mutation, crossover, novelty, memory, island, checkpoint, queue
   agents/     Director, Coder, Critic, LLMGateway (+CircuitBreaker+RateLimiter), ModelRouter, ContextBuilder
   eval/       TaskEvaluator (Protocol), EvaluatorRegistry, EvaluationRun, Telemetry, HealthPolicy, Metrics
   meta/       PolicyGenome, PolicyArchive, Governance (L0/L1/L2), BayesianTuner (GP+EI), InfraAdapter, AuditReport, PromptEvolver
-  sandbox/    TrustedSubprocessBackend（默认，本地）, DockerBackend, MontyBackend, HardenedBackend (Protocol: SandboxBackend)
+  sandbox/    DockerBackend（安全默认）, TrustedSubprocessBackend（仅显式本地开发）, MontyBackend, HardenedBackend (Protocol: SandboxBackend)
   storage/    SQLite DB, AsyncDatabase, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, HybridRetriever, ZvecBackend (HNSW), JobStore, UnitOfWork
   plugins/    BasePlugin, QuantPlugin, GeoPlugin, PluginDiscovery (namespace autoload)
   utils/      Embedding (SentenceTransformerEmbedder + LiteLLMEmbedder + FakeEmbedder, create_embedder factory, HF→hf-mirror→ModelScope auto-fallback), TokenCounter, SeedManager, ConfigSnapshot, Hashing, Profiling (PipelineProfiler + StepTimer + @profile_step)
@@ -52,8 +52,8 @@ src/omnievolve/
 docs/         User-facing docs (health_metrics, evaluator_guide, prompt_agent_guide, storage_adr, etc.)
 docs/architecture/  Interactive HTML architecture diagrams (system-overview, fast-loop, slow-loop, storage)
 examples/     python_optimization + circle_packing + heilbronn + matmul demo projects
-tests/        ~838 tests (pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark)
-uv.lock       Deterministic dependency lock (163 packages)
+tests/        pytest markers: unit/integration/llm/llm_smoke/slow/e2e/benchmark
+uv.lock       Deterministic dependency lock
 Dockerfile    Sandbox image (python:3.12-slim, non-root user)
 .github/      CI (ruff + mypy + pytest --cov + docker + integration, 3.12+3.13 matrix)
 scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
@@ -61,7 +61,7 @@ scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
 
 ## Design red-lines (do not cross)
 
-- **MCTS tree-edge search only.** All exploration moves (parameter/orchestration/component/paradigm) are tree edges — never greedy/sequential "converge then swap". Combinations can produce 1+1>2 effects; UCT + Beta backpropagation handles this.
+- **Name search honestly.** `lineage_ucb` is the canonical selector and receives relative-parent-gain credit. `progressive_mcgs` is only a deprecated compatibility alias; do not describe it as DAG MCGS, rollout, PUCT, or MCTS.
 - **Evaluator semantic immutability (L2).** Task semantics, correctness tests, hidden data, metric definitions, score formulas are permanently forbidden from auto-modification. See `meta/governance.py` GovernancePolicy.
 - **Sandbox default-deny.** DockerBackend defaults: network=none, read-only root, run-as-non-root, drop capabilities, no-new-privileges. `--trusted` flag bypasses for dev only.
 - **Artifact content-addressed.** All code stored via ArtifactStore with SHA-256 hashing. Never write candidate code to ad-hoc paths.
@@ -70,8 +70,9 @@ scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
 
 ## Key architecture decisions
 
-- **Fast Loop** (11 steps per candidate): Router → MCTS parent selection → crossover/mutation → Director → NoveltyGate → Coder → Critic retry → ArtifactStore → TaskEvaluator → Sandbox → state update. **P0-1**: Evaluator stderr/failure_reason flows back to Coder via `AgentContext.last_eval_failure` (pass rate 19%→57%).
-- **Slow Loop** (every `health_window_gens`): TelemetryAggregator → HealthPolicy → MetaPlanner → Governance L0/L1/L2 → Challenger policy → Replay comparison → promote/reject
+- **Fast Loop**: island-local LineageUCB parent selection → crossover/mutation → Director → idea novelty → Coder/Critic → final-candidate novelty → unified EvaluationService → commit. Model routing and reward attribution are role-specific; only successful calls receive reward.
+- **Slow Loop** (explicitly enabled; default fail closed): every `health_window_gens`, TelemetryAggregator → HealthPolicy → MetaPlanner → liveness/governance checks → Challenger policy → `PolicyCanaryRunner` over a frozen frontier with paired seeds and equal budgets → promote/hold/reject. Missing or unequal evidence fails closed.
+- **Resume**: `compute_budget_sec = 0` means unlimited. Checkpoints advance only after a complete commit and persist RNG, islands, adaptive selectors/router, policies, budget ledger, and idempotent job state.
 - **Protocols are duck-typed** (`@runtime_checkable`): TaskEvaluator, SandboxBackend, VectorBackend, Repository, Embedder, Plugin, DirectorAgent, CoderAgent, CriticAgent. Concrete classes use different names (e.g. `Director` implements `DirectorAgent`).
 - **`docs/project-design/`** has been archived to `.archive/` (not git-tracked). The frozen spec lives at `.archive/project-design/reference/OmniEvolve_v0.2_设计文档.md`.
 

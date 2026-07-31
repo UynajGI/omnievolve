@@ -1,5 +1,9 @@
 # Evolve 文献与开源工程对标
 
+> 本文的“当前差距”是 2026-07-29 的代码快照。运行时闭环、真实 canary、
+> deterministic resume 和研究 runner 的后续落地状态，以
+> [运行时闭环与研究校准报告](technical_report_2026-07-29.md) 为准；文献判断保留为历史研究依据。
+
 > 调研日期：2026-07-29  
 > OmniEvolve 基线：`7cf4dded6bed5b109e55032d7611cd0a0454b7a7`  
 > 定位约束：单机研究框架；CAS 为默认代码后端；Git 仅作为可选谱系后端

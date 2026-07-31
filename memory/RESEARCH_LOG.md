@@ -238,3 +238,16 @@ Discovery
   consecutive repetitions.
 - Operator bandit and minimal behavior-cell archive remain separate post-pilot
   ablations. Continuous steady-state async remains out of scope.
+
+## 2026-07-31 — v10 pilot gate result
+
+- The fixed 45-run v10 pilot finished with 32 completed and 13 failed runs.
+- Completed results had zero provenance pollution, but the 28.9% failure rate
+  exceeded the 5% upgrade threshold; the dataset is engineering calibration,
+  not evidence for algorithmic superiority.
+- All `random_search`, `single_agent`, and `no_slow_loop` cells completed.
+  Most `full` and `no_novelty` failures were fail-closed because no independent
+  policy canary completed; one run produced no evolved candidate.
+- Operator and QD manifests remain unexecuted until a new pilot passes the gate.
+- The latest complete non-slow validation was 992 passed, 7 skipped, and
+  2 deselected, with Ruff clean.

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-07-31 — 运行时闭环与研究门禁
+
+### 运行时语义
+
+- 将 `lineage_ucb` 设为 canonical selector；`progressive_mcgs` 仅保留为弃用兼容别名，不再宣称实现 DAG MCGS、rollout 或 PUCT。
+- novelty 拆为 Coder 前的 idea novelty 与最终代码上的 candidate novelty；penalty 只影响 novelty/归档，不污染任务 primary score。
+- 父代选择、Top-K 与 fallback 严格 island-local；跨岛候选只能通过有审计事件的 migration 进入。
+- 统一 EvaluationService 执行静态校验、反作弊、progressive stages、hidden tests、重复 benchmark、置信区间与 commit。
+- `compute_budget_sec = 0` 统一表示不限时；checkpoint 只在完整 commit 后推进，并恢复 RNG、岛屿、路由、策略、预算和自适应搜索状态。
+
+### Slow Loop 与执行基础设施
+
+- 接入真实 `PolicyCanaryRunner`：冻结 frontier、配对 seeds、两臂独立运行且 token/compute 等预算；证据缺失、预算不等或完整性失败时 fail closed。
+- policy liveness 阻止 inactive/deprecated genome 字段被 mutation 或 canary 修改。
+- 本地研究队列支持幂等入队、租约恢复、并发限流、错误分类和有界指数退避；永久配置/鉴权/完整性错误不重试。
+- 显式进程环境优先于 `.local.env` 和 `.env`，使研究 runner 的模型选择不会被 dotenv 静默覆盖；provider 内部隐藏重试已关闭。
+
+### 研究验证
+
+- 固定 3 tasks × 5 variants × 3 paired seeds 的 45-run pilot，并增加 evaluator 噪声校准、strict replay、paired power analysis 与 unknown-cost fail-closed 语义。
+- v10 执行于 2026-07-31 完成：32/45 completed、13/45 failed，完成结果 provenance 污染为零；失败率 28.9% 超过 5% 门槛，因此不得用于正式算法结论，也不触发 operator/QD 后续消融。
+- 最新完整非 slow suite：992 passed、7 skipped、2 deselected；Ruff 通过。
+
 ## [Unreleased] — 2026-07-27
 
 ### Windows 平台兼容

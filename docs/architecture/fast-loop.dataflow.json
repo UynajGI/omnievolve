@@ -32,19 +32,19 @@
   ],
   "nodes": [
     { "id": "router", "type": "backend", "label": "Router", "sublabel": "角色→模型", "stage": 0, "row": 0 },
-    { "id": "mcts", "type": "backend", "label": "ParentSelector", "sublabel": "MCTS UCB1", "stage": 0, "row": 2, "tag": "Beta 回传" },
+    { "id": "mcts", "type": "backend", "label": "ParentSelector", "sublabel": "LineageUCB", "stage": 0, "row": 2, "tag": "相对父代增益" },
 
     { "id": "director", "type": "backend", "label": "Director", "sublabel": "进化思想", "stage": 1, "row": 0 },
-    { "id": "novelty", "type": "backend", "label": "NoveltyGate", "sublabel": "L0-L4 多级", "stage": 1, "row": 2 },
+    { "id": "novelty", "type": "backend", "label": "Idea + Candidate Novelty", "sublabel": "生成前后两级", "stage": 1, "row": 2 },
 
     { "id": "coder", "type": "backend", "label": "Coder", "sublabel": "SEARCH/REPLACE", "stage": 2, "row": 0, "tag": "EVOLVE-BLOCK" },
     { "id": "critic", "type": "backend", "label": "Critic", "sublabel": "审查+重试门", "stage": 2, "row": 2 },
 
     { "id": "artifact", "type": "database", "label": "ArtifactStore", "sublabel": "SHA-256 CAS", "stage": 3, "row": 0, "tag": "vector_index_job" },
-    { "id": "evaluator", "type": "backend", "label": "TaskEvaluator", "sublabel": "build_plan", "stage": 3, "row": 2 },
+    { "id": "evaluator", "type": "backend", "label": "EvaluationService", "sublabel": "统一可信评估", "stage": 3, "row": 2 },
 
     { "id": "sandbox", "type": "backend", "label": "Sandbox", "sublabel": "隔离执行", "stage": 4, "row": 0, "tag": "default-deny" },
-    { "id": "commit", "type": "backend", "label": "commit_result", "sublabel": "MCTS+best+island", "stage": 4, "row": 2 }
+    { "id": "commit", "type": "backend", "label": "commit_result", "sublabel": "LineageUCB+best+island", "stage": 4, "row": 2 }
   ],
   "flows": [
     { "id": "f1", "from": "router", "to": "mcts", "label": "route", "variant": "emphasis" },
@@ -61,7 +61,7 @@
   ],
   "cards": [
     { "dot": "cyan", "title": "prepare() — 步骤 1-10", "items": ["无共享状态变更，可并行执行", "包含 LLM 调用 + 沙箱执行（IO 密集）", "返回 PreparedCandidate（含所有评估产物）"] },
-    { "dot": "emerald", "title": "commit_result() — 步骤 11", "items": ["串行执行所有共享状态更新", "MCTS 回传 + best 更新 + island 迁移", "memory 入库 + router 奖励 + budget 扣减"] },
+    { "dot": "emerald", "title": "commit_result() — 串行提交", "items": ["串行执行所有共享状态更新", "LineageUCB 回传 + generation-best stagnation + island 迁移", "memory 入库 + 成功角色 router 奖励 + budget 扣减"] },
     { "dot": "rose", "title": "P0-1 反馈闭环", "items": ["评估失败 (stderr/failure_reason) 回流 Coder", "通过 AgentContext.last_eval_failure 传递", "通过率从 19% 提升到 57%"] }
   ]
 }

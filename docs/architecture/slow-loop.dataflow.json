@@ -42,7 +42,7 @@
     { "id": "governance", "type": "security", "label": "Governance", "sublabel": "L0 auto / L1 replay / L2 forbid", "stage": 3, "row": 0, "tag": "不可变边界" },
 
     { "id": "experiment", "type": "backend", "label": "PolicyExperiment", "sublabel": "Champion vs Challenger", "stage": 4, "row": 0 },
-    { "id": "replay", "type": "backend", "label": "ReplayEvaluator", "sublabel": "等预算比较", "stage": 4, "row": 2 },
+    { "id": "replay", "type": "backend", "label": "PolicyCanaryRunner", "sublabel": "独立配对等预算", "stage": 4, "row": 2 },
     { "id": "decision", "type": "backend", "label": "Promote / Reject", "sublabel": "策略提升或回滚", "stage": 4, "row": 4, "tag": "审计日志" }
   ],
   "flows": [

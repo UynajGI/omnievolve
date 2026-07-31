@@ -25,9 +25,9 @@ python -c "from omnievolve.storage.db import Database; d=Database(':memory:'); p
 |---|--------|-----------|
 | 1 | Python 3.12+ | `python --version` |
 | 2 | SQLite FTS5 | `sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(x)'` |
-| 3 | API key 配置 | `export DEEPSEEK_API_KEY="sk-..."` 或 `.env` |
+| 3 | API key 配置 | 显式进程环境或 gitignored `.local.env`（不要提交真实 key） |
 | 4 | 配置文件 | `cp configs/omnievolve.toml.example omnievolve.toml` |
-| 5 | 沙箱后端 | 本地: `trusted_subprocess`（默认）/ Docker: `docker` |
+| 5 | 沙箱后端 | 安全默认: `docker` / 显式本地开发: `trusted_subprocess` |
 | 6 | 迁移执行 | `omnievolve migrate`（自动 v001→v002） |
 | 7 | 快速冒烟 | `make test` (735 tests, ~36s) |
 | 8 | LLM 连通性 | `make test-llm`（需 API key） |

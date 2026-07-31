@@ -3,7 +3,7 @@
   "diagram_type": "architecture",
   "meta": {
     "title": "OmniEvolve 系统架构",
-    "subtitle": "LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + MCTS 树搜索 + 受控元进化",
+    "subtitle": "LLM 驱动的代码优化框架 — 双循环 (Fast/Slow Loop) + LineageUCB 血缘搜索 + 受控元进化",
     "quality_profile": "standard",
     "views": [
       {
@@ -38,8 +38,8 @@
     { "id": "gateway", "type": "backend", "label": "LLMGateway", "sublabel": "Router + CircuitBreaker", "pos": [910, 210], "size": [140, 56] },
     { "id": "storage", "type": "database", "label": "Storage Layer", "sublabel": "SQLite + CAS + Vector + Graph + Git", "pos": [1060, 330], "size": [160, 64], "tag": "SHA-256 内容寻址" },
 
-    { "id": "mcts", "type": "backend", "label": "ProgressiveMCGS", "sublabel": "UCB1 + Beta backprop", "pos": [220, 370], "size": [150, 56], "tag": "树边搜索" },
-    { "id": "evaluator", "type": "backend", "label": "TaskEvaluator", "sublabel": "Protocol · build_plan", "pos": [680, 370], "size": [140, 56] },
+    { "id": "mcts", "type": "backend", "label": "LineageUCB", "sublabel": "relative-parent gain", "pos": [220, 370], "size": [150, 56], "tag": "血缘信用" },
+    { "id": "evaluator", "type": "backend", "label": "EvaluationService", "sublabel": "统一评估入口", "pos": [680, 370], "size": [140, 56] },
     { "id": "sandbox", "type": "backend", "label": "Sandbox", "sublabel": "Subprocess / Docker / Hardened", "pos": [910, 370], "size": [140, 56], "tag": "default-deny" },
 
     { "id": "slowloop", "type": "backend", "label": "SlowLoop", "sublabel": "meta-evaluation cycle", "pos": [220, 510], "size": [150, 56] },
@@ -69,8 +69,8 @@
     { "id": "meta-to-slowloop", "from": "meta", "to": "slowloop", "label": "L0/L1/L2", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[755, 566], [755, 610], [295, 610], [295, 566]], "labelDy": 36 }
   ],
   "cards": [
-    { "dot": "cyan", "title": "Fast Loop（快速循环）", "items": ["每候选 11 步：选父 → Director → NoveltyGate → Coder → Critic 重试", "prepare/commit 拆分支持异步并行流水线", "P0-1: 评估失败反馈回流 Coder（通过率 19%→57%）"] },
-    { "dot": "emerald", "title": "MCTS 树搜索", "items": ["ProgressiveMCGS: UCB1 + Beta 贝叶斯回传", "渐进式探索衰减（UCT→Elite 软切换）", "虚拟损失 + 回滚防止并行泄漏"] },
+    { "dot": "cyan", "title": "Fast Loop（快速循环）", "items": ["岛内选父 → Director → idea novelty → Coder/Critic → candidate novelty", "所有任务评估统一进入 EvaluationService", "prepare/commit 保证共享状态串行提交"] },
+    { "dot": "emerald", "title": "LineageUCB 血缘搜索", "items": ["按 score(child) - max(score(parents)) 回传", "父代选择严格 island-local", "progressive_mcgs 仅为弃用兼容别名"] },
     { "dot": "rose", "title": "安全边界", "items": ["Sandbox default-deny: 网络/只读/非root/drop caps", "Governance L2: 评估语义永久禁止自动修改", "ArtifactStore: SHA-256 内容寻址，绝不写临时路径"] }
   ]
 }

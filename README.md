@@ -2,11 +2,11 @@
 
 **受控元进化框架 (Controlled Meta-Evolution Framework)** — LLM 驱动的代码自动进化优化
 
-OmniEvolve 结合 MCTS 搜索、分层记忆、多级新颖性门和受控元进化（Slow Loop），支持任意领域的程序自动优化。Local-first 设计，零外部服务依赖即可运行。
+OmniEvolve 结合种群式代码搜索、分层记忆、两级新颖性评估和受控元进化（Slow Loop），支持任意领域的程序自动优化。Local-first 设计，零外部服务依赖即可运行。
 
 - **双循环架构** — Fast Loop（单代候选进化 11 步）+ Slow Loop（策略窗口评估与受控元进化）
-- **渐进式 MCGS 搜索** — MCTS 引导的父代选择，支持多父代交叉融合、岛屿模型与停滞检测
-- **受控元进化** — L0/L1/L2 风险分级，Champion-Challenger 模式，原子回滚，评估语义永久不可变
+- **LineageUCB 搜索** — 按相对父代增益更新血缘信用，支持多父代交叉、岛屿局部选择与显式迁移
+- **受控元进化** — L0/L1/L2 风险分级，Champion-Challenger 独立等预算 canary，评估语义永久不可变
 - **默认安全** — Docker 沙箱（禁网、只读根、降权、资源限制），SHA-256 内容寻址 Artifact
 
 ## 目录
@@ -31,20 +31,24 @@ OmniEvolve 结合 MCTS 搜索、分层记忆、多级新颖性门和受控元进
 **Fast Loop**（单代候选进化，11 步）：
 
 ```
-1.  Router.select          → 按角色分配模型（Sliding-window UCB / Discounted UCB）
-2.  ParentSelector         → MCTS 引导选择父代
+1.  ParentSelector         → 当前岛内用 LineageUCB 选择父代
+2.  Router.select          → Director / Coder / Critic 分别路由模型
 3.  (可选) Crossover       → 多父代跨分支融合
 4.  Director               → 进化思想（"应该尝试什么方向"）
-5.  NoveltyGate            → 多级新颖性门（Embedding → AST → 行为签名 → 可选 LLM）
-6.  Coder                  → 生成代码（带 Critic 重试 + 评估失败反馈闭环）
-7.  ArtifactStore          → 保存 source / lineage / vector_index_job
-8.  TaskEvaluator          → build_plan（声明式评估计划）
-9.  SandboxBackend         → execute（隔离沙箱执行）
-10. parse_result           → 分数 + 指标
-11. 状态更新                → best / island / MCTS / memory / router / budget
+5.  IdeaNovelty            → Coder 前检查思路/机制重复
+6.  Coder / Critic         → 生成并修复最终代码
+7.  CandidateNovelty       → 对最终代码检查 exact / AST / embedding / epiplexity
+8.  EvaluationService      → 静态校验、反作弊、progressive/hidden/repeated evaluation
+9.  ArtifactStore          → 保存 source / lineage / vector_index_job
+10. Commit                 → 串行提交评估和候选状态
+11. 状态更新                → best / island / LineageUCB / memory / router / budget
 ```
 
 **Slow Loop**（策略窗口评估与受控元进化，每 `health_window_gens` 代）：
+
+普通运行默认 fail closed（`self_evolve_enabled = false`）；只有配置了真实 canary
+executor 并显式启用时才运行。研究协议中的 `full` variant 会显式启用，
+`no_slow_loop` 会显式关闭。
 
 ```
 TelemetryAggregator  → 聚合 ROI/覆盖率/记忆/污染指标
@@ -55,15 +59,15 @@ MetaPlanner.propose  → 只生成允许的 MetaAction（L0/L1/L2 分级）
        ↓
 Governance           → L0 自动；L1 必须 Replay/Canary；L2 禁止
        ↓
-PolicyExperiment     → Champion vs Challenger，等预算比较
+PolicyCanaryRunner   → 冻结 frontier、配对 seeds、独立等预算比较
        ↓
 Promote / Reject / Rollback
 ```
 
 ### 搜索引擎
 
-- **渐进式 MCGS**（MCTS 变体）：UCT → Elite 衰减，支持虚拟损失和 PUCT
-- **岛屿模型**：多个独立精英档案，周期性迁移，停滞检测
+- **LineageUCB**：以 `score(child) - max(score(parents))` 回传血缘信用；`progressive_mcgs` 仅为弃用兼容别名
+- **岛屿模型**：父代选择严格 island-local，只有带审计事件的周期迁移可引入外岛候选
 - **多父代交叉**：segment / function-level / feature-merge
 - **多级新颖性门**：防止重复探索，平衡探索与利用
 
@@ -260,14 +264,14 @@ src/omnievolve/
 EvolutionEngine.run()
    ↓
 ┌─────────────────────── Fast Loop（每代重复）──────────────────────────┐
-│  Router → ParentSelector(MCTS) → [Crossover] → Director → NoveltyGate │
-│  → Coder → Critic 重试 → ArtifactStore → TaskEvaluator.build_plan      │
-│  → Sandbox.execute → parse_result → 状态更新(MCTS/Island/Memory/Router) │
+│  ParentSelector(LineageUCB) → [Crossover] → Director → IdeaNovelty     │
+│  → Coder/Critic → CandidateNovelty → EvaluationService → ArtifactStore │
+│  → Commit → 状态更新(LineageUCB/Island/Memory/Router/Budget)            │
 └──────────────────────────────────────────────────────────────────────┘
    ↓ 每 health_window_gens 代
 ┌─────────────────────── Slow Loop ───────────────────────────────────┐
 │  Telemetry → HealthPolicy → MetaPlanner → Governance(L0/L1/L2)       │
-│  → Champion vs Challenger → Replay → Promote / Reject / Rollback      │
+│  → PolicyCanaryRunner（独立等预算）→ Promote / Hold / Reject            │
 └──────────────────────────────────────────────────────────────────────┘
    ↓
 最优候选 + Champion Policy + 完整审计链
@@ -365,11 +369,15 @@ omnievolve doctor
 ### `research` — 多任务、多种子消融基准
 
 ```bash
-# 生成 9 tasks × 5 variants × 5 seeds = 225 runs 的可恢复清单
-omnievolve research plan --seeds 0,1,2,3,4
+# 先生成固定 3 tasks × 5 variants × 3 paired seeds = 45 runs pilot
+omnievolve research plan-pilot \
+  --calibration .omnievolve/research/calibration.json \
+  --output .omnievolve/research/pilot-matrix.json
 
-# 聚合 JSONL 结果，输出 bootstrap 置信区间和相对 full 的回归判断
-omnievolve research analyze --results .omnievolve/research/results.jsonl
+# 门禁要求显式确认 deterministic replay；价格未知时须预先排除成本指标
+omnievolve research analyze \
+  --results .omnievolve/research/results.jsonl \
+  --deterministic-replay-passed
 ```
 
 完整协议见 [docs/research_benchmark.md](docs/research_benchmark.md)。
@@ -380,7 +388,7 @@ omnievolve research analyze --results .omnievolve/research/results.jsonl
 
 OmniEvolve 通过 `omnievolve.toml` 配置。完整示例见 `configs/omnievolve.toml.example`。
 
-优先级：**环境变量 > 配置文件 > 默认值**。环境变量前缀 `OMNIEVOLVE_`，嵌套用 `__` 分隔（如 `OMNIEVOLVE_EVOLUTION__MAX_GENERATIONS`）。
+优先级：**显式进程环境 > `.local.env` > `.env` > 配置文件 > 默认值**。环境变量前缀 `OMNIEVOLVE_`，嵌套用 `__` 分隔（如 `OMNIEVOLVE_EVOLUTION__MAX_GENERATIONS`）。本地密钥应放在 gitignored `.local.env`，不要提交真实凭据。
 
 ### 主要配置项
 
@@ -394,7 +402,9 @@ mutation_rate = 0.3           # 变异率
 crossover_rate = 0.15         # 交叉率
 max_stagnation_gens = 5       # 最大停滞代数（触发岛屿重置）
 token_budget = 2_000_000      # 总 token 预算（耗尽自动停止）
+compute_budget_sec = 0         # 0 表示不限时；正数才是硬上限
 health_window_gens = 3        # Slow Loop 评估窗口（代）
+self_evolve_enabled = false   # 默认 fail closed；真实 canary 就绪后才显式启用
 async_pipeline_enabled = false # 异步流水线引擎（实验性）
 qd_archive_enabled = false      # 最小行为单元档案（独立消融，默认关闭）
 qd_parent_probability = 0.15    # 从当前岛 QD 档案采样父代的概率
@@ -428,7 +438,7 @@ behavior_gate = false
 llm_judge_on_borderline = true
 
 [sandbox]
-backend = "trusted_subprocess" # trusted_subprocess / docker / monty
+backend = "docker"             # 安全默认；trusted_subprocess 仅用于显式本地开发
 timeout_sec = 30
 mem_limit_mb = 512
 

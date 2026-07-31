@@ -11,8 +11,9 @@ mutation_rate = 0.3
 crossover_rate = 0.15
 max_stagnation_gens = 5
 token_budget = 2_000_000
-compute_budget_sec = 0
+compute_budget_sec = 0            # 0 = unlimited; positive values are hard limits
 health_window_gens = 3
+self_evolve_enabled = false    # fail closed; research full variant enables real canary explicitly
 
 [selection]
 parent_selector = "lineage_ucb"
@@ -83,6 +84,7 @@ db_path = ".omnievolve/omnievolve.db"
 vector_dir = ".omnievolve/vectors"
 artifact_dir = ".omnievolve/artifacts"
 export_dir = ".omnievolve/exports"
+code_backend = "cas"              # cas (default) / git (optional provenance backend)
 
 [storage.jobs]
 lease_sec = 120

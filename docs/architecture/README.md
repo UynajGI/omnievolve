@@ -8,8 +8,8 @@
 | 图表 | 类型 | 文件 | 说明 |
 |------|------|------|------|
 | **系统总览** | Architecture | [system-overview.html](system-overview.html) | 全局模块关系：Engine / Agents / Storage / Sandbox / Meta 的数据流和控制流 |
-| **Fast Loop** | Data Flow | [fast-loop.html](fast-loop.html) | 单候选 11 步进化流水线：Router → MCTS → Director → Coder → Critic → Sandbox → Commit |
-| **Slow Loop** | Data Flow | [slow-loop.html](slow-loop.html) | 策略窗口评估与受控元进化：Telemetry → Health → MetaPlanner → Governance → Champion/Challenger |
+| **Fast Loop** | Data Flow | [fast-loop.html](fast-loop.html) | 单候选流水线：LineageUCB → Director → idea/candidate novelty → EvaluationService → Commit |
+| **Slow Loop** | Data Flow | [slow-loop.html](slow-loop.html) | 策略窗口评估：Telemetry → Governance → 独立等预算 PolicyCanaryRunner → Decision |
 | **存储架构** | Architecture | [storage.html](storage.html) | 持久化层：SQLite + CAS Artifact + Vector (HNSW) + Graph + Git Code Store |
 
 ## 查看方式
