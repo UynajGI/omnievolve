@@ -1,0 +1,17 @@
+# 自动维护固定 SHA 的第三方 action 与 Python/uv 依赖。
+# 第三方 action 固定完整 commit SHA 后，依赖 Dependabot 周期升级避免永久不更新。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    versioning-strategy: "increase-if-necessary"

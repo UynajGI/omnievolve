@@ -3,25 +3,32 @@
 min_version: "1.5.0"
 colors: true
 
+# pre-commit：只做快速写操作（Ruff），且必须严格顺序。
+# 两个写命令（check --fix 与 format）并行会竞态改写同一批 staged 文件，
+# 并各自 stage_fixed 造成非确定性——合并为单一顺序 pipeline：
+# check/fix → format → 两步都成功后才重新暂存。
 pre-commit:
   parallel: true
   commands:
-    ruff-check:
+    ruff:
       glob: "*.py"
-      run: uv run ruff check --fix {staged_files}
-      stage_fixed: true
-    ruff-format:
-      glob: "*.py"
-      run: uv run ruff format {staged_files}
+      run: uv run --frozen ruff check --fix {staged_files} && uv run --frozen ruff format {staged_files}
       stage_fixed: true
 
 commit-msg:
   commands:
     conventional:
-      run: uv run cz check --commit-msg-file {1}
+      run: uv run --frozen cz check --commit-msg-file {1}
 
 pre-push:
   parallel: false
   commands:
+    lock-check:
+      # 本地 pyproject 与 uv.lock 不一致时快速失败，避免拖到 CI。
+      run: uv lock --check
+    type-check:
+      run: uv run --frozen mypy src/omnievolve/
     test:
-      run: uv run pytest tests/ -v -m "not slow and not e2e"
+      # 与 CI fast 集合语义一致：
+      # fast = not llm and not llm_smoke and not slow and not e2e and not benchmark
+      run: uv run --frozen pytest tests/ -q --tb=short -m "not llm and not llm_smoke and not slow and not e2e and not benchmark"

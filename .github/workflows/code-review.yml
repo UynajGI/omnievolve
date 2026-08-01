@@ -8,21 +8,38 @@ on:
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
+      - ".github/workflows/code-review.yml"
 
+# 安全基线：默认只读；仅评论 job 提权到 pull-requests: write。
 permissions:
   contents: read
-  pull-requests: write
+
+concurrency:
+  group: review-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 仅同仓库分支且模型密钥存在时运行：
+    # - 外部 fork 的 PR 不执行（避免不可信代码 + 密钥组合）；
+    # - 缺失密钥时安全跳过，不阻塞主流程。
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository
+      && secrets.ANTHROPIC_API_KEY != ''
+    permissions:
+      pull-requests: write
+    # advisory：AI 供应商超时/限流不阻塞合并（安全/配置错误仍可观测）。
+    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Claude Code Review
-        uses: codelion/claude-code-action@v1
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

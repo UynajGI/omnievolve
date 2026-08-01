@@ -4,27 +4,69 @@ on:
   push:
     tags: ["v*"]
 
+# 安全基线：默认只读；publish job 才拿 id-token（OIDC trusted publishing）。
+permissions:
+  contents: read
+
+# 发布不可中途取消（新的 push 不打断正在进行的发布）。
+concurrency:
+  group: publish-${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
-  build-and-publish:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # OIDC trusted publishing
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
-
-      - name: Build package
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen
+      - name: Verify tag matches project version
+        # tag 与 pyproject.toml 版本不一致时无法发布。
         run: |
-          python -m pip install --upgrade pip build twine
-          python -m build
+          tag="${GITHUB_REF#refs/tags/v}"
+          project_version="$(uv run --frozen python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$tag" != "$project_version" ]; then
+            echo "tag v${tag} != pyproject version ${project_version}" >&2
+            exit 1
+          fi
+      - name: Build package
+        run: uv run --frozen python -m build
+      - name: Check package metadata
+        run: uv run --frozen twine check dist/*
+      - name: Smoke install in clean environment
+        # 在干净临时环境安装 wheel，验证 import 与 CLI 入口。
+        run: |
+          uv venv /tmp/smoke-venv
+          uv pip install --python /tmp/smoke-venv/bin/python dist/*.whl
+          /tmp/smoke-venv/bin/python -c "import omnievolve; print('import ok')"
+          /tmp/smoke-venv/bin/omnievolve --help > /dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
 
-      - name: Verify package
-        run: twine check dist/*
-
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 受保护 environment：审批者批准的是已验证的确切字节。
+    environment: pypi
+    permissions:
+      id-token: write # OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        # 不传 password — 走 OIDC trusted publishing
-        # 需在 PyPI 项目设置中配置 Trusted Publisher (repo + workflow 文件名)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        # 不传 password — 走 OIDC trusted publishing；
+        # 需在 PyPI 项目设置中配置 Trusted Publisher (repo + workflow 文件名 + environment)。

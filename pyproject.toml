@@ -44,6 +44,8 @@ dev = [
     "marker-pdf>=1.6.1",
     "pymupdf>=1.28.0",
     "commitizen>=4.16.5",
+    "build>=1.2",
+    "twine>=5.1",
     "scalene>=1.5",
     "psutil>=5.9",
 ]
@@ -79,6 +81,11 @@ markers = [
     "slow: 运行时间 > 5 秒的性能/soak 测试",
     "e2e: 端到端全管线测试（含 fake LLM）",
     "benchmark: 性能基准/回归测试",
+    # 集合约定（required lanes，互斥，CI 与 lefthook 消费同一表达式）：
+    #   fast        = not llm and not llm_smoke and not slow and not e2e and not benchmark
+    #   integration = (slow or e2e) and not llm and not llm_smoke and not benchmark
+    #   llm         = llm or llm_smoke
+    # 集合互斥由 tests/test_marker_partition.py 审计。
 ]
 
 [build-system]

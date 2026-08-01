@@ -6,124 +6,141 @@ on:
   pull_request:
     branches: [main]
 
+# 安全基线：默认最小权限；只有需要写入的 job 才提权。
+permissions:
+  contents: read
+
+# 同一 PR/提交的新 push 取消旧 run；发布类 workflow 单独配置不取消。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  commit-lint:
+  actionlint:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - run: pip install commitizen
-
-      - name: Check commit messages
-        run: |
-          errors=0
-          while IFS= read -r sha; do
-            msg=$(git log -1 --format='%s' "$sha")
-            # 跳过 merge commit
-            echo "$msg" | grep -qE '^Merge ' && continue
-            echo "$msg" | cz check --commit-msg-file /dev/stdin || errors=$((errors + 1))
-          done <<< "$(git rev-list origin/${{ github.base_ref }}..HEAD)"
-          [ "$errors" -eq 0 ] || exit 1
+          persist-credentials: false
+      - name: "Install actionlint (pinned version)"
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Lint workflows
+        run: "$(go env GOPATH)/bin/actionlint .github/workflows/*.yml"
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
-      - uses: actions/cache@v4
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-lint-${{ hashFiles('pyproject.toml') }}
-
-      - run: |
-          python -m pip install --upgrade pip
-          pip install ruff mypy
-
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra docker
       - name: Ruff check
-        run: ruff check src/omnievolve/ tests/
-
+        run: uv run --frozen ruff check src/omnievolve/ tests/
       - name: Ruff format check
-        run: ruff format --check src/omnievolve/ tests/
-
+        run: uv run --frozen ruff format --check src/omnievolve/ tests/
+      - name: Lock consistency
+        run: uv lock --check
       - name: Mypy
-        run: mypy src/omnievolve/
+        run: uv run --frozen mypy src/omnievolve/
 
-  test:
-    runs-on: ubuntu-latest
+  fast-linux:
     needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: ${{ matrix.python-version }}
-      - uses: actions/cache@v4
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[docker]"
-          pip install pytest pytest-cov hypothesis
-
-      - name: Pytest + Coverage
-        run: pytest -q --cov=omnievolve --cov-report=term-missing --cov-report=xml -m "not llm and not slow and not benchmark"
-
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        continue-on-error: true
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra docker
+      - name: Fast tests
+        # fast = not llm and not llm_smoke and not slow and not e2e and not benchmark
+        # （与 lefthook pre-push 同一表达式，见 pyproject.toml 集合约定）
+        run: uv run --frozen pytest -q -m "not llm and not llm_smoke and not slow and not e2e and not benchmark"
+      - name: Coverage (Python 3.12 only)
+        if: matrix.python-version == '3.12'
+        run: uv run --frozen pytest -q --cov=omnievolve --cov-report=term-missing --cov-report=xml -m "not llm and not llm_smoke and not slow and not e2e and not benchmark"
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        continue-on-error: true # 上传服务故障不阻塞
         with:
           file: coverage.xml
-          flags: py${{ matrix.python-version }}
+          flags: py3.12
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # Windows 平台分支（subprocess 继承环境/UTF-8、artifact store 原子替换与
+  # fsync、git code store 保留名/编码）真实回归，不只是 import smoke。
+  fast-windows:
+    needs: lint
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen
+      - name: Fast tests
+        run: uv run --frozen pytest -q -m "not llm and not llm_smoke and not slow and not e2e and not benchmark"
+
   integration:
+    needs: [fast-linux, fast-windows]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: test
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
-      - uses: actions/cache@v4
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-integ-${{ hashFiles('pyproject.toml') }}
-
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[docker]"
-          pip install pytest hypothesis
-
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra docker
       - name: Slow & E2E tests
-        run: pytest -q -m "slow or e2e"
+        # 与 fast 互斥；显式排除 llm / llm_smoke / benchmark。
+        run: uv run --frozen pytest -q -m "(slow or e2e) and not llm and not llm_smoke and not benchmark"
 
+  # Docker 是真实门禁：镜像构建、入口点、DockerBackend 行为都必须通过，
+  # 不再整体 continue-on-error（外部 registry 波动由有限重试吸收）。
   docker:
+    needs: [fast-linux, fast-windows]
     runs-on: ubuntu-latest
-    needs: test
-    continue-on-error: true  # Docker Hub 网络波动不应阻塞 CI
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra docker
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build sandbox image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: false
@@ -131,6 +148,8 @@ jobs:
           tags: omnievolve/sandbox:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Verify image
+      - name: Verify image entrypoint
         run: docker run --rm omnievolve/sandbox:latest python -c "print('OK')"
+      - name: DockerBackend behavior tests
+        # 覆盖镜像启动、挂载、退出码、超时等 DockerBackend 真实行为。
+        run: uv run --frozen pytest -q tests/sandbox/test_docker_backend.py -m "not llm and not benchmark"

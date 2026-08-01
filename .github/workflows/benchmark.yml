@@ -6,43 +6,68 @@ on:
   pull_request:
     branches: [main]
 
+# 安全基线：PR 只读；仅 main baseline 更新 job 提权到 contents: write。
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  benchmark:
+  benchmark-report:
+    # PR 只读报告：不修改 gh-pages 基线，只产出原始结果供人工/检查消费。
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # benchmark-action auto-push to gh-pages
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
-
-      - uses: actions/cache@v4
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-bench-${{ hashFiles('pyproject.toml') }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[docker]"
-          pip install pytest pytest-benchmark hypothesis
-
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra docker
       - name: Run benchmarks
-        run: pytest tests/ --benchmark-only --benchmark-json=benchmark-output.json -q -m benchmark
+        run: uv run --frozen pytest tests/ --benchmark-only --benchmark-json=benchmark-output.json -q -m benchmark
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: benchmark-results
+          path: benchmark-output.json
+          retention-days: 14
 
+  benchmark-baseline:
+    # main/scheduled：更新 gh-pages 历史基线（唯一写权限 job）。
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # benchmark-action auto-push to gh-pages
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # latest
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync frozen environment
+        run: uv sync --frozen --extra docker
+      - name: Run benchmarks
+        run: uv run --frozen pytest tests/ --benchmark-only --benchmark-json=benchmark-output.json -q -m benchmark
       - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           tool: pytest
           output-file-path: benchmark-output.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: ${{ github.event_name == 'push' }}
+          auto-push: true
+          # GitHub-hosted runner 噪声大：阈值与 fail-on-alert 定位为
+          # 粗粒度回归检测，不作为精密性能研究门禁。
           alert-threshold: "200%"
           fail-on-alert: false
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-results
           path: benchmark-output.json
+          retention-days: 14
