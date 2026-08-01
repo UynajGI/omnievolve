@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785594418522,
+  "lastUpdate": 1785594926973,
   "repoUrl": "https://github.com/UynajGI/omnievolve",
   "entries": {
     "Benchmark": [
@@ -1827,6 +1827,93 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 4.961094784569115e-8",
             "extra": "mean: 458.94007856645595 nsec\nrounds: 98766"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "yuunagi.cn@outlook.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "committer": {
+            "email": "yuunagi.cn@outlook.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "distinct": true,
+          "id": "c3bac9ac3c3e199888bdc71bdf58e043140bc45b",
+          "message": "fix: quote actionlint path only, avoid shellcheck SC2046\n\nCo-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>",
+          "timestamp": "2026-08-01T22:28:11+08:00",
+          "tree_id": "58f47a934f4b19e23f071d78716249c00dfd51f2",
+          "url": "https://github.com/UynajGI/omnievolve/commit/c3bac9ac3c3e199888bdc71bdf58e043140bc45b"
+        },
+        "date": 1785594926156,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_store_throughput",
+            "value": 1471.9484700320645,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005465780223939812",
+            "extra": "mean: 679.3716086937583 usec\nrounds: 23"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_load_throughput",
+            "value": 47710.47899024478,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001451941504835028",
+            "extra": "mean: 20.95975603607893 usec\nrounds: 17396"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_sha256_throughput",
+            "value": 1725.958634227346,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000061257354117183495",
+            "extra": "mean: 579.3881615521259 usec\nrounds: 1727"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_select_throughput",
+            "value": 39700.22270932202,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014049095657445514",
+            "extra": "mean: 25.188775572414855 usec\nrounds: 25643"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_backpropagate_throughput",
+            "value": 65026.09175857299,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000010682345701993871",
+            "extra": "mean: 15.378442298404943 usec\nrounds: 41160"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestNoveltyGatePerformance::test_ast_signature_throughput",
+            "value": 53624.53730760184,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001520386409412297",
+            "extra": "mean: 18.648179550040417 usec\nrounds: 10181"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_numpy_query_throughput",
+            "value": 2028.1043075279931,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011727634642763146",
+            "extra": "mean: 493.0712864659687 usec\nrounds: 761"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_zvec_upsert_throughput",
+            "value": 2827.1811483763663,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005162403413795233",
+            "extra": "mean: 353.7092062792984 usec\nrounds: 2739"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestProfilerOverhead::test_profiler_disabled_overhead",
+            "value": 2941977.2996666296,
+            "unit": "iter/sec",
+            "range": "stddev: 3.4515482886470156e-8",
+            "extra": "mean: 339.9074493584009 nsec\nrounds: 144093"
           }
         ]
       }
