@@ -17,10 +17,11 @@ make test-all              # 全量（不含 LLM）
 .venv/bin/python -m pytest --cov=omnievolve --cov-report=term  # with coverage
 .venv/bin/python -m pytest tests/test_p0_quality_gates.py  # P0 gates only
 
-# Lint / type
+# Lint / type（CI 门禁 = ruff check + ruff format --check + mypy，提交前全部通过）
 make lint                  # ruff check
 make type-check            # mypy
 .venv/bin/ruff check src/omnievolve/ tests/
+.venv/bin/ruff format --check src/omnievolve/ tests/   # 格式门禁：ruff check 不含 format，本地必须单独跑
 .venv/bin/python -m mypy src/omnievolve/ --ignore-missing-imports
 
 # Run
