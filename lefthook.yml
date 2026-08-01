@@ -29,6 +29,8 @@ pre-push:
     type-check:
       run: uv run --frozen mypy src/omnievolve/
     test:
-      # 与 CI fast 集合语义一致：
-      # fast = not llm and not llm_smoke and not slow and not e2e and not benchmark
-      run: uv run --frozen pytest tests/ -q --tb=short -m "not llm and not llm_smoke and not slow and not e2e and not benchmark"
+      # 与 CI fast 集合语义一致（fast = not llm and not llm_smoke and not slow
+      # and not e2e and not benchmark）。带引号的 -m 表达式放在脚本文件里：
+      # lefthook 会剥掉 run 字符串中的引号并按空格分词（shell 无法挽救），
+      # 而 bash 执行脚本文件时内部引号原样保留。
+      run: bash scripts/pre_push_tests.sh
