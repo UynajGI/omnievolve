@@ -236,7 +236,7 @@ class VectorIndexer:
                 lease_owner = NULL,
                 lease_expires_at = NULL,
                 updated_at = ?
-            WHERE status = 'indexing' AND lease_expires_at < ?
+            WHERE status = 'indexing' AND lease_expires_at <= ?
             """,
             (now_iso(), now_iso()),
         )

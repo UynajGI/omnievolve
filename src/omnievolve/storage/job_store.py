@@ -120,6 +120,9 @@ class JobStore:
 
         原子操作：只有成功更新状态的 worker 获得任务。
         """
+        # 租约过期用 <= 而非 <：Windows + Python 3.12 的 datetime.now(UTC) 时钟被量化
+        # 到约 6.6ms 粒度，claim 与后续比较落在同一 tick 时 lease_expires_at == now，
+        # 严格 < 会永远看不到过期（P0-6/P0-7 在 CI Windows 上失败即此原因）。
         lease_expires = self._compute_lease_expiry()
 
         # 查找可认领的任务：queued 或租约过期的 running
@@ -128,7 +131,7 @@ class JobStore:
                 """
                 SELECT * FROM job
                 WHERE job_type = ?
-                  AND (status = 'queued' OR (status = 'running' AND lease_expires_at < ?))
+                  AND (status = 'queued' OR (status = 'running' AND lease_expires_at <= ?))
                   AND attempt < max_attempts
                 ORDER BY created_at
                 LIMIT 1
@@ -139,7 +142,7 @@ class JobStore:
             row = self._db.fetchone(
                 """
                 SELECT * FROM job
-                WHERE (status = 'queued' OR (status = 'running' AND lease_expires_at < ?))
+                WHERE (status = 'queued' OR (status = 'running' AND lease_expires_at <= ?))
                   AND attempt < max_attempts
                 ORDER BY created_at
                 LIMIT 1
@@ -171,7 +174,7 @@ class JobStore:
                 attempt = attempt + 1,
                 heartbeat_at = ?,
                 updated_at = ?
-            WHERE id = ? AND (status = 'queued' OR (status = 'running' AND lease_expires_at < ?))
+            WHERE id = ? AND (status = 'queued' OR (status = 'running' AND lease_expires_at <= ?))
             """,
             (
                 self._worker_id,
@@ -296,7 +299,7 @@ class JobStore:
                 lease_owner = NULL,
                 lease_expires_at = NULL,
                 updated_at = ?
-            WHERE status = 'running' AND lease_expires_at < ?
+            WHERE status = 'running' AND lease_expires_at <= ?
             """,
             (now_iso(), now_iso()),
         )
