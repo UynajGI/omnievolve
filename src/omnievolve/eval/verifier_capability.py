@@ -103,10 +103,17 @@ class VerifierCapabilityProbe:
         experiment_id: str | None = None,
         prompt_version_id: str | None = None,
     ) -> CapabilityProbeResult:
-        """对单个 model/endpoint 执行能力探测."""
-        from omnievolve.agents.llm_gateway import LLMEndpoint
+        """对单个 model/endpoint 执行能力探测.
 
-        endpoint = LLMEndpoint(model, api_key, api_base)
+        失败分类（§13/§7）：
+        - ``LLMVerifierCapabilityError``（logprobs/top_logprobs 不支持或
+          被静默丢弃）→ ``unsupported``；
+        - 鉴权、超时、限流等环境错误向上传播，不得误判为能力缺失。
+
+        probe 使用 gateway 自身配置的凭据（api_key/api_base），不构造
+        空凭据的独立 endpoint，避免把真实 provider 的鉴权失败当作
+        unsupported。
+        """
         messages = [
             {
                 "role": "user",
@@ -117,6 +124,8 @@ class VerifierCapabilityProbe:
                 ),
             }
         ]
+        if api_base is None:
+            api_base = getattr(self._gateway, "_api_base", None)
         coverage = 0.0
         max_top_logprobs = 0
         last_error = ""
@@ -131,16 +140,18 @@ class VerifierCapabilityProbe:
                     prompt_version_id=prompt_version_id,
                     granularity=1,
                     max_retries=1,
-                    endpoints=[endpoint],
                 )
                 coverage = max(coverage, response.probability_coverage)
                 max_top_logprobs = max(max_top_logprobs, top_logprobs)
             except LLMVerifierCapabilityError as exc:
+                # 只有能力类失败（参数不支持/被丢弃/无法生成评分 token）
+                # 才归类为 unsupported。
                 last_error = str(exc)
                 break
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-                break
+            except Exception:
+                # 鉴权/超时/限流等环境错误：向上传播，由调用方按
+                # permanent/transient 语义处理，不得伪装成模型能力缺失。
+                raise
 
         if max_top_logprobs == 0:
             return CapabilityProbeResult(

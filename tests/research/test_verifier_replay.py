@@ -259,8 +259,8 @@ class TestR1Gate:
             granularity=1,
             repetitions=1,
             criteria=("specification_fidelity",),
-            pairs_attempted=10,
-            pairs_completed=10,
+            pairs_attempted=40,
+            pairs_completed=40,
             accuracy=0.95,
             accuracy_ci_lower=0.90,
             brier=0.05,
@@ -277,6 +277,146 @@ class TestR1Gate:
         assert not assess_r1_gate(report).passed
         # 协议预先排除成本时允许通过。
         assert assess_r1_gate(report, cost_excluded=True).passed
+
+
+class TestDataIntegrity:
+    """数据构造完整性：无泄漏、无重复样本、统计门小样本保护."""
+
+    def test_evidence_does_not_leak_ground_truth_scores(self, db, artifact_store):
+        """ground-truth 分数不得进入 prompt（§17.2 防 target leakage）."""
+        _seed_candidates(db, artifact_store)
+        runner = _runner(db, artifact_store)
+        pairs = runner.build_labeled_pairs(experiment_id="exp-replay", min_score_gap=0.05)
+        assert pairs
+        for pair in pairs:
+            candidate_eval = json.loads(pair.evidence["candidate_eval"])
+            peer_eval = json.loads(pair.evidence["peer_eval"])
+            assert "score" not in candidate_eval
+            assert "score" not in peer_eval
+            assert candidate_eval["passed"] is True
+            assert peer_eval["passed"] is True
+
+    def test_latest_run_only_per_candidate(self, db, artifact_store):
+        """同候选多 evaluation_run（seed/attempt）不重复成 pair、不混语义."""
+        _seed_candidates(db, artifact_store)
+        # 给 c-sort-1 / c-sort-2 各加一条 latest run（不同分数/seed）。
+        db.execute(
+            """
+            INSERT INTO evaluation_run
+                (id, experiment_id, candidate_id, evaluator_version_id,
+                 environment_version_id, seed, split_name, attempt, status,
+                 passed, primary_score, metrics, execution_time_ms, finished_at)
+            VALUES ('run-c-sort-1-v2', 'exp-replay', 'c-sort-1', 'eval-v1',
+                    'env-v1', 1, 'default', 2, 'completed', 1, 0.50, '{}',
+                    10.0, '2026-08-02T00:00:00Z')
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO evaluation_run
+                (id, experiment_id, candidate_id, evaluator_version_id,
+                 environment_version_id, seed, split_name, attempt, status,
+                 passed, primary_score, metrics, execution_time_ms, finished_at)
+            VALUES ('run-c-sort-2-v2', 'exp-replay', 'c-sort-2', 'eval-v1',
+                    'env-v1', 1, 'default', 2, 'completed', 1, 0.55, '{}',
+                    10.0, '2026-08-02T00:00:00Z')
+            """
+        )
+        runner = _runner(db, artifact_store)
+        pairs = runner.build_labeled_pairs(experiment_id="exp-replay", min_score_gap=0.05)
+        sort_pairs = [pair for pair in pairs if pair.task_id == "sort"]
+        pair_keys = [(pair.candidate_id, pair.peer_candidate_id) for pair in sort_pairs]
+        # 每个逻辑 pair 只出现一次（latest run 0.50/0.55 配对）。
+        assert len(pair_keys) == len(set(pair_keys))
+        assert len(sort_pairs) == 3
+        # c-sort-1 使用 latest 0.50（而非 0.90）：与 c-sort-2(0.55) 差 0.05。
+        pair_12 = next(p for p in sort_pairs if {"c-sort-1", "c-sort-2"} <= {p.candidate_id, p.peer_candidate_id})
+        assert abs(pair_12.candidate_score - pair_12.peer_score) == pytest.approx(0.05)
+
+    def test_abstention_not_counted_as_correct(self, db, artifact_store):
+        """恒定输出 0.5 的 verifier：tie 不计为正确（§17.2）."""
+        _seed_candidates(db, artifact_store)
+        runner = _runner(db, artifact_store)
+        pairs = runner.build_labeled_pairs(experiment_id="exp-replay", min_score_gap=0.05)
+        fixture = {
+            (pair.candidate_id, pair.peer_candidate_id): (0.5, 0.5)
+            for pair in pairs
+        }
+        tie_runner = VerifierReplayRunner(
+            db,
+            artifact_store,
+            verifier_factory=lambda variant: FakeProbabilisticVerifier(  # noqa: E731
+                fixture=fixture
+            ),
+        )
+        report = tie_runner.run_variant(
+            pairs,
+            VerifierVariant("tie", 5, 1, ("specification_fidelity",)),
+        )
+        assert report.tie_rate == 1.0
+        assert report.accuracy == 0.0
+        assert report.accuracy_ci_lower == 0.0
+        assert not assess_r1_gate(report, cost_excluded=True).passed
+
+    def test_wilson_ci_not_inflated_for_tiny_samples(self):
+        from omnievolve.research.verifier_replay import _one_sided_ci_lower
+
+        # Wald 对 (1.0, 1) 返回 ~0.999998；Wilson 必须远低于该值。
+        assert _one_sided_ci_lower(1.0, 1) < 0.5
+        # n=3 全成功：Wilson 下界 ≈0.526（远低于 Wald 的 ~0.999999），
+        # 剩余的小样本放行风险由 assess_r1_gate 的 min_pairs 门槛兜底。
+        assert _one_sided_ci_lower(1.0, 3) < 0.8
+        assert _one_sided_ci_lower(0.0, 1) == 0.0
+        # 样本充足时下界收窄到可放行区间。
+        assert _one_sided_ci_lower(1.0, 30) > 0.8
+        assert _one_sided_ci_lower(0.95, 100) > 0.5
+
+    def test_gate_requires_minimum_pairs(self):
+        """R1 门需要最小有效 pair 数，防止极少证据放行（§17.2）."""
+        small = VariantReport(
+            name="tiny",
+            granularity=5,
+            repetitions=1,
+            criteria=("specification_fidelity",),
+            pairs_attempted=5,
+            pairs_completed=5,
+            accuracy=1.0,
+            accuracy_ci_lower=0.60,
+            brier=0.05,
+            ece=0.03,
+            tie_rate=0.0,
+            spearman=0.8,
+            probability_coverage=0.99,
+            failure_rate=0.0,
+            failure_categories={},
+            total_tokens=100,
+            cost_usd=0.0,
+            cost_known=True,
+        )
+        gate = assess_r1_gate(small, cost_excluded=True)
+        assert not gate.passed
+        assert any("minimum" in reason for reason in gate.reasons)
+        large = VariantReport(
+            name="large",
+            granularity=5,
+            repetitions=1,
+            criteria=("specification_fidelity",),
+            pairs_attempted=40,
+            pairs_completed=40,
+            accuracy=0.95,
+            accuracy_ci_lower=0.90,
+            brier=0.05,
+            ece=0.03,
+            tie_rate=0.0,
+            spearman=0.8,
+            probability_coverage=0.99,
+            failure_rate=0.0,
+            failure_categories={},
+            total_tokens=100,
+            cost_usd=0.0,
+            cost_known=True,
+        )
+        assert assess_r1_gate(large, cost_excluded=True).passed
 
 
 class TestReportWriter:

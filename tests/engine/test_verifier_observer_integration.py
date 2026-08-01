@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from omnievolve.agents.llm_gateway import FakeLLM, LLMResponse
 from omnievolve.agents.router import ModelSlot
 from omnievolve.config import VerifierSettings
@@ -196,3 +198,19 @@ class TestObserverIntegration:
         # observer 证据不影响 best（仍由 evaluator 决定）。
         assert result.best_score is not None
         assert db.fetchone("SELECT COUNT(*) AS n FROM verification_batch")["n"] > 0
+
+    def test_observer_batch_records_capability_hash(self, tmp_path):
+        """启用前 capability probe 执行，hash 进入 verification_batch（§7）."""
+        verifier = VerifierSettings(enabled=True, mode="observer", model="fake-model")
+        db, engine, experiment_id, llm = _build_engine(tmp_path / "cap", verifier=verifier)
+        engine.run("VALUE = 0\n", "sort")
+        batches = db.fetchall("SELECT capability_hash FROM verification_batch")
+        assert batches
+        assert all(batch["capability_hash"] for batch in batches)
+
+    def test_unimplemented_mode_fails_fast(self, tmp_path):
+        """parent_pair/island_ppt 未实现：配置即失败，禁止静默退化为 observer."""
+        verifier = VerifierSettings(enabled=True, mode="parent_pair", model="fake-model")
+        db, engine, experiment_id, llm = _build_engine(tmp_path / "mode", verifier=verifier)
+        with pytest.raises(ValueError, match="not implemented"):
+            engine.run("VALUE = 0\n", "sort")

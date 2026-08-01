@@ -27,6 +27,19 @@ from omnievolve.utils.hashing import compute_sha256_str
 logger = logging.getLogger(__name__)
 
 
+def _token_field(obj: Any, name: str) -> Any:
+    """从 dict 或 pydantic 对象（LiteLLM TokenLogprob/TopLogprob）取字段.
+
+    LiteLLM 返回 ``litellm.types.utils.TopLogprob`` / ``TokenLogprob``
+    （pydantic 对象，不可下标），测试 fixture 使用 dict；此函数兼容两者。
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
 @dataclass(frozen=True)
 class LLMEndpoint:
     """One model plus its provider-specific OpenAI-compatible credentials."""
@@ -452,13 +465,19 @@ class LLMGateway:
                     positions: list[tuple[str, dict[str, float]]] = []
                     score_token_seen = False
                     for item in logprobs.content:
-                        top = item.get("top_logprobs")
+                        top = _token_field(item, "top_logprobs")
                         if top is None or not top:
                             raise LLMVerifierCapabilityError(
                                 f"Provider {try_model} silently dropped top_logprobs"
                             )
-                        distribution = {t["token"]: math.exp(float(t["logprob"])) for t in top}
-                        actual = item.get("token") or ""
+                        distribution: dict[str, float] = {}
+                        for entry in top:
+                            token = _token_field(entry, "token")
+                            logprob = _token_field(entry, "logprob")
+                            if token is None or logprob is None:
+                                continue
+                            distribution[str(token)] = math.exp(float(logprob))
+                        actual = str(_token_field(item, "token") or "")
                         positions.append((actual, distribution))
                         if actual in score_tokens or any(
                             token in distribution for token in score_tokens
@@ -476,10 +495,15 @@ class LLMGateway:
                             f"{score_tokens} as single tokens"
                         )
 
+                    # 评分覆盖率 = 评分 token 集合在已知 top-K 分布上的概率质量比例
+                    # （不是只取"实际生成 token"自身的概率）。
                     coverage = sum(
-                        distribution.get(actual, 0.0)
-                        for actual, distribution in positions
-                        if actual in score_tokens
+                        sum(
+                            probability
+                            for token, probability in distribution.items()
+                            if token in score_tokens
+                        )
+                        for _, distribution in positions
                     ) / len(positions)
 
                     token_response = TokenScoreResponse(

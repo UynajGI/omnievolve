@@ -37,10 +37,36 @@ logger = logging.getLogger(__name__)
 
 _BATCH_MODES = ("observer", "parent_pair", "island_ppt")
 
+_DEFAULT_SCORE_TOKENS = tuple(str(value) for value in range(0, 21))
 
-def _request_hash(request: VerificationRequest) -> str:
-    """稳定请求哈希（幂等键，含顺序与全部配置维度）."""
-    return compute_sha256_str(json.dumps(request.to_dict(), ensure_ascii=False, sort_keys=True))
+
+def _request_hash(
+    request: VerificationRequest,
+    *,
+    model: str = "",
+    prompt_version_id: str = "",
+    capability_hash: str | None = None,
+    mode: str = "",
+    score_tokens: tuple[str, ...] = (),
+    temperature: float = 0.0,
+) -> str:
+    """稳定请求哈希（幂等键）.
+
+    除 request 本身（candidate/peer/criteria/G/K/order_seed/evidence）外，
+    还必须混入 service/verifier 的 provenance 维度：model、prompt version、
+    capability hash、mode、score vocabulary 与 temperature —— 否则换模型、
+    换 prompt 或重新 probe 后会错误复用旧 evidence（消融互相污染）。
+    """
+    payload = {
+        **request.to_dict(),
+        "model": model,
+        "prompt_version_id": prompt_version_id,
+        "capability_hash": capability_hash,
+        "mode": mode,
+        "score_tokens": list(score_tokens),
+        "temperature": temperature,
+    }
+    return compute_sha256_str(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 @dataclass(frozen=True)
@@ -74,6 +100,8 @@ class VerificationService:
         capability_hash: str | None = None,
         mode: str = "observer",
         fail_closed: bool = False,
+        score_tokens: tuple[str, ...] = _DEFAULT_SCORE_TOKENS,
+        temperature: float = 0.0,
     ) -> None:
         if mode not in _BATCH_MODES:
             raise ValueError(f"unknown verification mode {mode!r}")
@@ -88,6 +116,8 @@ class VerificationService:
         self._capability_hash = capability_hash
         self._mode = mode
         self._fail_closed = fail_closed
+        self._score_tokens = tuple(score_tokens)
+        self._temperature = temperature
 
     # ── 写入路径 ──────────────────────────────────────────────────────
 
@@ -105,58 +135,73 @@ class VerificationService:
         provider）。失败语义按 ``fail_closed`` 区分普通/研究运行。
 
         Raises:
-            LLMError: fail_closed 且证据不足时（研究运行）。
+            LLMError: fail_closed 且证据不足时（研究运行），
+                包括 resume 后命中缓存失败证据的情况。
         """
-        request_hash = _request_hash(request)
+        request_hash = self._request_hash(request)
         existing = self._load_comparison(request_hash)
         if existing is not None:
-            logger.debug("Verification request %s already recorded; reusing evidence", request_hash[:12])
+            if existing["status"] == VerificationStatus.COMPLETED:
+                logger.debug(
+                    "Verification request %s already completed; reusing evidence",
+                    request_hash[:12],
+                )
+                return self._load_evidence(existing["evidence_hash"], request, existing)
+            # 非 completed 的缓存命中：不得绕过失败语义（§13）。
+            # - fail_closed：resume 后仍必须抛错（不静默放行）；
+            # - 普通运行：回退（不重复调用 provider，也不伪装成功）。
+            self._raise_fail_closed(existing["status"])
+            logger.debug(
+                "Verification request %s previously failed (%s); returning cached evidence",
+                request_hash[:12],
+                existing["status"],
+            )
             return self._load_evidence(existing["evidence_hash"], request, existing)
 
         batch_id = generate_id()
         started = _now()
-        batch = self._db.fetchone(
-            "SELECT * FROM verification_batch WHERE id = ?", (batch_id,)
+        self._db.execute(
+            """
+            INSERT INTO verification_batch
+                (id, experiment_id, generation, island_id, mode, model,
+                 prompt_version_id, granularity, repetitions, criteria_json,
+                 order_seed, capability_hash, status, failure_category,
+                 total_tokens, cost_usd, cost_known, started_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                batch_id,
+                request.experiment_id,
+                generation,
+                island_id,
+                self._mode,
+                self._model,
+                self._prompt_version_id,
+                self._granularity,
+                self._repetitions,
+                json.dumps(list(self._criteria), ensure_ascii=False),
+                self._order_seed,
+                self._capability_hash,
+                "running",
+                None,
+                0,
+                None,
+                0,  # cost 未知，直到 _finish_batch 时写入真实值
+                started,
+            ),
         )
-        if batch is None:
-            self._db.execute(
-                """
-                INSERT INTO verification_batch
-                    (id, experiment_id, generation, island_id, mode, model,
-                     prompt_version_id, granularity, repetitions, criteria_json,
-                     order_seed, capability_hash, status, failure_category,
-                     total_tokens, cost_usd, cost_known, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    batch_id,
-                    request.experiment_id,
-                    generation,
-                    island_id,
-                    self._mode,
-                    self._model,
-                    self._prompt_version_id,
-                    self._granularity,
-                    self._repetitions,
-                    json.dumps(list(self._criteria), ensure_ascii=False),
-                    self._order_seed,
-                    self._capability_hash,
-                    "running",
-                    None,
-                    0,
-                    None,
-                    1,
-                    started,
-                ),
-            )
 
         try:
             evidence = verifier.verify_pair(request)
+            # 成功路径同样合并用量：verifier 未在 evidence 上携带时
+            # 回退读取其累计属性（duck-typed）。
+            evidence = _attach_usage(evidence, verifier)
         except LLMVerifierCapabilityError as exc:
             return self._record_failure(
                 batch_id,
                 request,
                 request_hash,
+                verifier=verifier,
                 status=VerificationStatus.UNSUPPORTED,
                 failure_category="unsupported_capability",
                 message=str(exc),
@@ -167,6 +212,7 @@ class VerificationService:
                 batch_id,
                 request,
                 request_hash,
+                verifier=verifier,
                 status=VerificationStatus.FAILED,
                 failure_category=type(exc).__name__,
                 message=str(exc),
@@ -180,6 +226,7 @@ class VerificationService:
                 batch_id,
                 request,
                 request_hash,
+                verifier=verifier,
                 evidence=evidence,
                 started=started,
             )
@@ -192,7 +239,15 @@ class VerificationService:
             evidence=evidence,
             evidence_hash=evidence_hash,
         )
-        self._finish_batch(batch_id, started, status="completed", failure_category=None)
+        self._finish_batch(
+            batch_id,
+            started,
+            status="completed",
+            failure_category=None,
+            total_tokens=evidence.total_tokens,
+            cost_usd=evidence.cost_usd,
+            cost_known=evidence.cost_known,
+        )
         return evidence
 
     def _record_non_completed(
@@ -201,6 +256,7 @@ class VerificationService:
         request: VerificationRequest,
         request_hash: str,
         *,
+        verifier: CandidateVerifier,
         evidence: VerificationEvidence,
         started: str,
     ) -> VerificationEvidence:
@@ -211,6 +267,7 @@ class VerificationService:
             request.candidate_id[:8],
             request.peer_candidate_id[:8],
         )
+        evidence = _attach_usage(evidence, verifier)
         evidence_hash = self._store_evidence(request, evidence)
         self._insert_comparison(
             batch_id=batch_id,
@@ -225,6 +282,9 @@ class VerificationService:
             started,
             status="failed",
             failure_category=evidence.status,
+            total_tokens=evidence.total_tokens,
+            cost_usd=evidence.cost_usd,
+            cost_known=evidence.cost_known,
         )
         if self._fail_closed:
             if evidence.status == VerificationStatus.UNSUPPORTED:
@@ -242,6 +302,7 @@ class VerificationService:
         request: VerificationRequest,
         request_hash: str,
         *,
+        verifier: CandidateVerifier,
         status: str,
         failure_category: str,
         message: str,
@@ -256,6 +317,7 @@ class VerificationService:
             request.peer_candidate_id[:8],
             message[:300],
         )
+        total_tokens, cost_usd, cost_known = _usage_from(verifier)
         evidence = VerificationEvidence(
             candidate_score=0.0,
             peer_score=0.0,
@@ -266,6 +328,9 @@ class VerificationService:
             probability_coverage=0.0,
             status=status,
             evidence_hash=compute_sha256_str(f"{request_hash}:{status}"),
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            cost_known=cost_known,
         )
         evidence_hash = self._store_evidence(request, evidence)
         self._insert_comparison(
@@ -281,16 +346,37 @@ class VerificationService:
             started,
             status="failed",
             failure_category=failure_category,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            cost_known=cost_known,
         )
-        if self._fail_closed and status == VerificationStatus.UNSUPPORTED:
-            raise LLMVerifierCapabilityError(
-                f"fail closed: verifier-on run cannot proceed without native logprobs ({message})"
-            )
-        if self._fail_closed:
-            raise LLMError(
-                f"fail closed: verification evidence incomplete ({status}: {message})"
-            )
+        self._raise_fail_closed(status, message=message)
         return evidence
+
+    def _raise_fail_closed(self, status: str, *, message: str = "") -> None:
+        """fail_closed 时按失败类别抛错（resume 缓存命中同样适用）."""
+        if not self._fail_closed:
+            return
+        detail = f" ({message})" if message else ""
+        if status == VerificationStatus.UNSUPPORTED:
+            raise LLMVerifierCapabilityError(
+                f"fail closed: verifier-on run cannot proceed without native logprobs{detail}"
+            )
+        raise LLMError(
+            f"fail closed: verification evidence incomplete ({status}{detail})"
+        )
+
+    def _request_hash(self, request: VerificationRequest) -> str:
+        """service 级幂等哈希：混入 model/prompt/capability/mode/vocab/temperature."""
+        return _request_hash(
+            request,
+            model=self._model,
+            prompt_version_id=self._prompt_version_id,
+            capability_hash=self._capability_hash,
+            mode=self._mode,
+            score_tokens=self._score_tokens,
+            temperature=self._temperature,
+        )
 
     # ── 读取路径（observer 审计 / 离线 replay）────────────────────────
 
@@ -435,6 +521,13 @@ class VerificationService:
                 probability_coverage=float(evidence["probability_coverage"]),
                 status=evidence["status"],
                 evidence_hash=evidence["evidence_hash"],
+                total_tokens=int(evidence.get("total_tokens", 0) or 0),
+                cost_usd=(
+                    float(evidence["cost_usd"])
+                    if evidence.get("cost_usd") is not None
+                    else None
+                ),
+                cost_known=bool(evidence.get("cost_known", False)),
             )
         except Exception:
             # Artifact 缺失时从 DB 摘要重建（退化路径，不阻断审计）。
@@ -457,15 +550,55 @@ class VerificationService:
         *,
         status: str,
         failure_category: str | None,
+        total_tokens: int = 0,
+        cost_usd: float | None = None,
+        cost_known: bool = False,
     ) -> None:
+        """关闭 batch：写入真实 token/cost 账本（§8 契约）."""
         self._db.execute(
             """
             UPDATE verification_batch
-            SET status = ?, failure_category = ?, finished_at = ?
+            SET status = ?, failure_category = ?, finished_at = ?,
+                total_tokens = ?, cost_usd = ?, cost_known = ?
             WHERE id = ?
             """,
-            (status, failure_category, _now(), batch_id),
+            (
+                status,
+                failure_category,
+                _now(),
+                total_tokens,
+                cost_usd,
+                1 if cost_known else 0,
+                batch_id,
+            ),
         )
+
+
+def _usage_from(verifier: CandidateVerifier) -> tuple[int, float | None, bool]:
+    """从 verifier 的累计用量读取 (total_tokens, cost_usd, cost_known).
+
+    失败路径（异常抛出）没有返回值，只能从 verifier 实例读取累计量；
+    duck-typed：未实现这些属性的 verifier（如 Fake）返回零/未知。
+    """
+    total = int(getattr(verifier, "total_tokens", 0) or 0)
+    cost = getattr(verifier, "cost_usd", None)
+    if cost is not None:
+        cost = float(cost)
+    known = bool(getattr(verifier, "cost_known", cost is not None))
+    return total, cost, known
+
+
+def _attach_usage(
+    evidence: VerificationEvidence,
+    verifier: CandidateVerifier,
+) -> VerificationEvidence:
+    """把 verifier 累计用量合并进证据（非 completed 证据缺失 usage 时）."""
+    total, cost, known = _usage_from(verifier)
+    if evidence.total_tokens or evidence.cost_known or evidence.cost_usd is not None:
+        return evidence
+    from dataclasses import replace
+
+    return replace(evidence, total_tokens=total, cost_usd=cost, cost_known=known)
 
 
 def _now() -> str:

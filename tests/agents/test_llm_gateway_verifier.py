@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from omnievolve.agents.llm_gateway import FakeLLM, LLMGateway
@@ -99,8 +101,68 @@ class TestScoreTokens:
         assert response.actual_tokens == ("7", "8")
         assert len(response.per_position_probabilities) == 2
         assert response.per_position_probabilities[0]["7"] == pytest.approx(0.9)
-        # 两个位置都命中评分集合：coverage = (0.9 + 0.8) / 2
-        assert response.probability_coverage == pytest.approx(0.85)
+        # 两个位置的 top-K 全部落在评分集合：coverage = (1.0 + 1.0) / 2。
+        # （修正后按 top-K 全部评分 token 的概率质量计算，而非只取
+        # actual token 自身概率 (0.9 + 0.8) / 2。）
+        assert response.probability_coverage == pytest.approx(1.0)
+
+    def test_parses_litellm_native_logprob_objects(self, fake_gateway, monkeypatch):
+        """LiteLLM 返回 pydantic TokenLogprob/TopLogprob 对象（不可下标）.
+
+        回归：旧实现用 ``t["token"]``/``item.get(...)`` 直接下标，任一
+        真实 provider 响应都会 ``TypeError: 'TopLogprob' object is not
+        subscriptable``。
+        """
+        litellm = pytest.importorskip("litellm")
+        from litellm.types.utils import ChatCompletionTokenLogprob, TopLogprob
+
+        class Logprobs:
+            def __init__(self):
+                self.content = [
+                    ChatCompletionTokenLogprob(
+                        token="7",
+                        logprob=math.log(0.9),
+                        top_logprobs=[
+                            TopLogprob(token="7", logprob=math.log(0.9)),
+                            TopLogprob(token="6", logprob=math.log(0.1)),
+                        ],
+                    )
+                ]
+
+        class Choice:
+            logprobs = Logprobs()
+
+            class Message:
+                content = "7"
+
+            message = Message()
+
+        class Usage:
+            prompt_tokens = 10
+            completion_tokens = 1
+            total_tokens = 11
+
+        class Response:
+            choices = [Choice()]
+            usage = Usage()
+            _hidden_params = {}
+
+            def model_dump(self):
+                return {}
+
+        monkeypatch.setattr(litellm, "completion", lambda **kw: Response())
+        response = fake_gateway.score_tokens(
+            [{"role": "user", "content": "score"}],
+            score_tokens=("6", "7"),
+            model="verifier-model",
+            top_logprobs=2,
+            experiment_id="e",
+            prompt_version_id="p",
+            granularity=1,
+        )
+        assert response.actual_tokens == ("7",)
+        assert response.per_position_probabilities[0]["7"] == pytest.approx(0.9)
+        assert response.probability_coverage == pytest.approx(1.0)
 
     def test_ignored_logprobs_is_capability_error(self, fake_gateway, monkeypatch):
         import litellm
@@ -289,6 +351,23 @@ class TestCapabilityProbe:
         result = probe.probe("verifier-model")
         assert result.status == "unsupported"
         assert result.max_top_logprobs == 0
+
+    def test_auth_errors_propagate_not_unsupported(self, monkeypatch):
+        """鉴权/超时等环境错误向上传播，不得误判为能力缺失（§13）."""
+        import litellm
+
+        from omnievolve.exceptions import LLMAuthenticationError
+
+        gateway = LLMGateway(default_model="verifier-model")
+
+        def failing_completion(**kwargs):
+            del kwargs
+            raise LLMAuthenticationError("invalid api key")
+
+        monkeypatch.setattr(litellm, "completion", failing_completion)
+        probe = VerifierCapabilityProbe(gateway)
+        with pytest.raises(LLMAuthenticationError, match="invalid api key"):
+            probe.probe("verifier-model")
 
     def test_capability_hash_stable(self):
         from omnievolve.eval.verifier_capability import compute_capability_hash

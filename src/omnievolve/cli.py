@@ -498,6 +498,7 @@ def run(
         evaluator_version_id=evaluator_version_id,
         environment_version_id=environment_version_id,
         config=eval_config,
+        verifier_settings=settings.verifier,
         **components,
     )
 

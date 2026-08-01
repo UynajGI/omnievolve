@@ -68,8 +68,10 @@ class FakeProbabilisticVerifier:
         fixture: 可选的 (candidate_id, peer_candidate_id) → 分数元组映射，
             覆盖确定性生成结果；分数在 [0, 1]。
         force_status: 强制返回状态（测试 failure semantics），
-            None 时返回 ``completed``。
-        coverage: 概率覆盖率（默认 0.97，可通过 fixture 覆盖）。
+            None 时由 coverage 派生（completed / insufficient_coverage）。
+        coverage: 概率覆盖率（默认 0.97），进入证据与状态派生；
+        minimum_coverage: coverage 低于此门槛时返回
+            ``insufficient_coverage``（测试 low-coverage fail-closed 分支）。
     """
 
     def __init__(
@@ -80,12 +82,14 @@ class FakeProbabilisticVerifier:
         fixture: dict[tuple[str, str], tuple[float, float]] | None = None,
         force_status: str | None = None,
         coverage: float = 0.97,
+        minimum_coverage: float = 0.95,
     ) -> None:
         self._seed = seed
         self._score_tokens = score_tokens
         self._fixture = dict(fixture or {})
         self._force_status = force_status
         self._coverage = coverage
+        self._minimum_coverage = minimum_coverage
         self.calls: list[VerificationRequest] = []
 
     def verify_pair(self, request: VerificationRequest) -> VerificationEvidence:
@@ -129,7 +133,7 @@ class FakeProbabilisticVerifier:
                 criterion_scores=criterion_scores,
                 variance=0.0,
                 entropy=0.0,
-                status=VerificationStatus.COMPLETED,
+                status=None,  # 由 coverage 派生（completed 或 insufficient_coverage）
             )
 
         # 确定性：每个 criterion 一个独立播种的 token 分布。
@@ -189,14 +193,22 @@ class FakeProbabilisticVerifier:
                     item.entropy for item in per_repetition_candidate + per_repetition_peer
                 )
             )
-            variances.append(
-                statistics.variance(
-                    [item.expected_score for item in per_repetition_candidate]
-                    + [item.expected_score for item in per_repetition_peer]
+            # 重复测量方差按臂拆分后平均（与 ProbabilisticVerifier 一致）：
+            # 不把两臂均值的 treatment effect 混入测量噪声。
+            if request.repetitions > 1:
+                variances.append(
+                    (
+                        statistics.variance(
+                            [item.expected_score for item in per_repetition_candidate]
+                        )
+                        + statistics.variance(
+                            [item.expected_score for item in per_repetition_peer]
+                        )
+                    )
+                    / 2
                 )
-                if request.repetitions > 1
-                else 0.0
-            )
+            else:
+                variances.append(0.0)
 
         candidate_score = 0.5 + statistics.fmean(criterion_scores.values()) / 2
         peer_score = 0.5 - statistics.fmean(criterion_scores.values()) / 2
@@ -207,7 +219,7 @@ class FakeProbabilisticVerifier:
             criterion_scores=criterion_scores,
             variance=statistics.fmean(variances),
             entropy=statistics.fmean(entropies),
-            status=VerificationStatus.COMPLETED,
+            status=None,  # 由 coverage 派生
         )
 
     @staticmethod
@@ -224,8 +236,8 @@ class FakeProbabilisticVerifier:
         total = sum(probabilities.values())
         return {token: p / total for token, p in probabilities.items()}
 
-    @staticmethod
     def _build_evidence(
+        self,
         request: VerificationRequest,
         *,
         candidate_score: float,
@@ -233,14 +245,26 @@ class FakeProbabilisticVerifier:
         criterion_scores: dict[str, float],
         variance: float,
         entropy: float,
-        status: str,
+        status: str | None = None,
     ) -> VerificationEvidence:
+        """构造证据：coverage 参数真正生效（§16.1），状态由 coverage 派生.
+
+        ``force_status`` 优先；否则 ``coverage < minimum_coverage`` →
+        ``insufficient_coverage``，便于测试 low-coverage fail-closed 分支。
+        """
+        if status is None:
+            status = (
+                VerificationStatus.INSUFFICIENT_COVERAGE
+                if self._coverage < self._minimum_coverage
+                else VerificationStatus.COMPLETED
+            )
         evidence_hash = hashlib.sha256(
             json.dumps(
                 {
                     "candidate_score": candidate_score,
                     "peer_score": peer_score,
                     "criterion_scores": criterion_scores,
+                    "coverage": self._coverage,
                     "status": status,
                 },
                 sort_keys=True,
@@ -253,7 +277,7 @@ class FakeProbabilisticVerifier:
             criterion_scores=criterion_scores,
             variance=variance,
             entropy=entropy,
-            probability_coverage=0.97,
+            probability_coverage=self._coverage,
             status=status,
             evidence_hash=evidence_hash,
         )

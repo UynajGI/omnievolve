@@ -111,6 +111,10 @@ class VerificationEvidence:
 
     ``candidate_score`` / ``peer_score`` 是 A/B 交换后的平均偏好分数；
     ``preference_probability`` 是 Bradley-Terry P(candidate > peer)。
+
+    ``total_tokens`` / ``cost_usd`` / ``cost_known`` 携带本次验证的实际
+    provider 用量（§8 契约：unknown cost 必须保持 null 且 cost_known=False，
+    不得伪装成"成本已知"）。
     """
 
     candidate_score: float
@@ -122,6 +126,9 @@ class VerificationEvidence:
     probability_coverage: float
     status: str
     evidence_hash: str
+    total_tokens: int = 0
+    cost_usd: float | None = None
+    cost_known: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -134,6 +141,9 @@ class VerificationEvidence:
             "probability_coverage": self.probability_coverage,
             "status": self.status,
             "evidence_hash": self.evidence_hash,
+            "total_tokens": self.total_tokens,
+            "cost_usd": self.cost_usd,
+            "cost_known": self.cost_known,
         }
 
 

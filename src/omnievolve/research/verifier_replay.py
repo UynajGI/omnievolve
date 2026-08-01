@@ -162,8 +162,13 @@ class VerifierReplayRunner:
         """构造 label 明确的候选对.
 
         只使用 completed 且有 primary_score 的 evaluation_run；
-        同一 task 内 primary score 差 >= ``min_score_gap`` 的 pair
-        才进入数据集（避免用测量噪声当 ground truth）。
+        同一 (task, evaluator_version, environment_version) 内 primary
+        score 差 >= ``min_score_gap`` 的 pair 才进入数据集
+        （避免用测量噪声当 ground truth）。
+
+        每个候选只取 latest 的一条 completed run（按 finished_at/attempt），
+        固定 evaluator/environment 语义：同一候选的多版本、多 seed、
+        多 attempt 不会被重复当成独立样本，也不会混用不同评估语义的分数。
         """
         import random
 
@@ -178,22 +183,34 @@ class VerifierReplayRunner:
         rows = self._db.fetchall(
             f"""
             SELECT c.id AS candidate_id, c.task_id AS task_id,
-                   e.primary_score AS score, c.artifact_hash AS artifact_hash
+                   e.primary_score AS score, c.artifact_hash AS artifact_hash,
+                   e.evaluator_version_id AS evaluator_version_id,
+                   e.environment_version_id AS environment_version_id,
+                   e.execution_time_ms AS execution_time_ms
             FROM candidate c
             JOIN evaluation_run e ON e.candidate_id = c.id
             WHERE {' AND '.join(where)}
-            ORDER BY c.id
+            ORDER BY COALESCE(e.finished_at, e.started_at) DESC, e.attempt DESC
             """,
             tuple(params),
         )
-        by_task: dict[str, list[dict[str, Any]]] = {}
+        # 按 (task, evaluator, environment) 分组；每候选保留 latest run。
+        by_scope: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
         for row in rows:
-            by_task.setdefault(row["task_id"], []).append(dict(row))
+            record = dict(row)
+            scope = (
+                str(record["task_id"]),
+                str(record["evaluator_version_id"]),
+                str(record["environment_version_id"]),
+            )
+            per_candidate = by_scope.setdefault(scope, {})
+            per_candidate.setdefault(record["candidate_id"], record)
 
         pairs: list[LabeledPair] = []
-        for task, candidates in by_task.items():
-            for i, left in enumerate(candidates):
-                for right in candidates[i + 1 :]:
+        for (task, _evaluator, _environment), candidates in by_scope.items():
+            candidates_list = list(candidates.values())
+            for i, left in enumerate(candidates_list):
+                for right in candidates_list[i + 1 :]:
                     if left["candidate_id"] == right["candidate_id"]:
                         continue
                     difference = float(left["score"]) - float(right["score"])
@@ -223,6 +240,13 @@ class VerifierReplayRunner:
         peer: dict[str, Any],
         task_id: str,
     ) -> dict[str, object]:
+        """构造发送给 verifier 的证据.
+
+        ground-truth label 来自 primary_score 差异（不进入 prompt）：
+        ``candidate_eval``/``peer_eval`` 只含 passed 与执行摘要，
+        绝不携带双方分数 —— 否则 R1 accuracy/Brier/Spearman 衡量的
+        是模型能否读答案，而不是能否独立验证代码（target leakage）。
+        """
         def code_summary(artifact_hash: str) -> str:
             try:
                 return (self._artifact_store.load_text(artifact_hash) or "")[:_MAX_CODE_CHARS]
@@ -234,15 +258,20 @@ class VerifierReplayRunner:
             "candidate_summary": code_summary(candidate["artifact_hash"]),
             "candidate_diff": "",
             "candidate_eval": json.dumps(
-                {"passed": True, "score": float(candidate["score"])}
+                {
+                    "passed": True,
+                    "execution_time_ms": candidate.get("execution_time_ms"),
+                }
             ),
             "peer_summary": code_summary(peer["artifact_hash"]),
             "peer_diff": "",
-            "peer_eval": json.dumps({"passed": True, "score": float(peer["score"])}),
+            "peer_eval": json.dumps(
+                {"passed": True, "execution_time_ms": peer.get("execution_time_ms")}
+            ),
             "thought_summary": "",
             "mechanism_tags": [],
-            "evaluator_version_id": "replay",
-            "environment_version_id": "replay",
+            "evaluator_version_id": candidate.get("evaluator_version_id", "replay"),
+            "environment_version_id": candidate.get("environment_version_id", "replay"),
         }
 
     # ── 变体运行 ──────────────────────────────────────────────────────
@@ -324,11 +353,19 @@ class VerifierReplayRunner:
                 cost_known=cost_known,
             )
 
+        # accuracy 只在非 tie 的 pair 上计算：preference == 0.5 是 abstention，
+        # 不得隐式映射为"预测 peer 胜出"（否则恒定输出 0.5 的 verifier
+        # 会按 pair 方向分布获得虚假 accuracy）。tie 单独报告。
+        non_tie = [
+            (preference, label)
+            for preference, label in zip(preferences, labels)
+            if abs(preference - 0.5) >= tie_threshold
+        ]
         correct = [
             (preference > 0.5) == (label > 0.5)
-            for preference, label in zip(preferences, labels)
+            for preference, label in non_tie
         ]
-        accuracy = statistics.fmean(correct)
+        accuracy = statistics.fmean(correct) if correct else 0.0
         accuracy_ci_lower = _one_sided_ci_lower(accuracy, len(correct))
         brier = statistics.fmean(
             (preference - label) ** 2 for preference, label in zip(preferences, labels)
@@ -427,11 +464,20 @@ def assess_r1_gate(
     coverage_min: float = 0.95,
     failure_max: float = 0.05,
     cost_excluded: bool = False,
+    min_pairs: int = 30,
 ) -> R1Gate:
-    """对单个变体应用 R1 升级门."""
+    """对单个变体应用 R1 升级门（§17.2）.
+
+    小样本保护：``min_pairs`` 设定了有效 pair 数下限，防止极少证据
+    （如 1-3 个全部成功 pair）在 Wilson 区间下仍被放行。
+    """
     reasons: list[str] = []
     if report.pairs_completed == 0:
         reasons.append("no completed pairs")
+    elif report.pairs_completed < min_pairs:
+        reasons.append(
+            f"completed pairs {report.pairs_completed} < minimum {min_pairs}"
+        )
     if report.accuracy_ci_lower <= accuracy_null:
         reasons.append(
             f"accuracy CI lower bound {report.accuracy_ci_lower:.3f} <= {accuracy_null}"
@@ -465,12 +511,24 @@ def write_report(reports: list[VariantReport], path: str) -> str:
 
 
 def _one_sided_ci_lower(accuracy: float, count: int) -> float:
-    """单侧 95% 二项比例 CI 下界（正态近似）."""
+    """单侧 95% 二项比例 CI 下界（Wilson score interval）.
+
+    相比 Wald 正态近似：在 accuracy 接近 0/1 或样本极小时不会给出
+    虚假的窄区间（Wald 对 ``accuracy=1.0, count=1`` 返回 ~1.0，
+    使 R1 门在极少证据下错误放行）。
+    """
     if count == 0:
         return 0.0
     z_value = NormalDist().inv_cdf(0.95)
-    standard_error = math.sqrt(max(accuracy * (1 - accuracy), 1e-12) / count)
-    return max(0.0, accuracy - z_value * standard_error)
+    n = float(count)
+    denominator = 1.0 + z_value**2 / n
+    center = (accuracy + z_value**2 / (2 * n)) / denominator
+    margin = (
+        z_value
+        * math.sqrt((accuracy * (1 - accuracy) + z_value**2 / (4 * n)) / n)
+        / denominator
+    )
+    return max(0.0, center - margin)
 
 
 def _expected_calibration_error(

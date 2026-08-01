@@ -14,7 +14,7 @@ from omnievolve.cli import (
     _load_project_snapshot,
     app,
 )
-from omnievolve.config import OmniEvolveSettings
+from omnievolve.config import OmniEvolveSettings, load_settings
 
 pytestmark = pytest.mark.unit
 
@@ -270,3 +270,194 @@ class TestRecover:
             app, ["recover", "nonexistent-id", "--dry-run", "-c", str(fake_toml)]
         )
         assert result.exit_code != 0
+
+
+# --------------------------------------------------------------------------- #
+#  verifier 接线（P1: CLI → EvolutionEngine 生产路径）
+# --------------------------------------------------------------------------- #
+
+
+class TestVerifierWiring:
+    def test_run_passes_verifier_settings_to_engine(self, tmp_path, monkeypatch):
+        """[verifier] TOML 配置必须进入 EvolutionEngine（observer 启动路径）."""
+        import omnievolve.cli as cli_module
+        import omnievolve.engine.evolution_engine as ee_module
+
+        toml = tmp_path / "omnievolve.toml"
+        toml.write_text(
+            "[storage]\n"
+            f"db_path = '{tmp_path / 'run.db'}'\n"
+            f"artifact_dir = '{tmp_path / 'artifacts'}'\n"
+            "[evolution]\nmax_generations = 1\n"
+            "[verifier]\nenabled = true\nmode = 'observer'\nmodel = 'verifier-model'\n",
+            encoding="utf-8",
+        )
+        settings = load_settings(str(toml))
+
+        from omnievolve.storage.artifact_store import ArtifactStore
+        from omnievolve.storage.db import Database
+        from omnievolve.storage.migrations import initialize_database
+
+        db = Database(settings.storage.db_path)
+        initialize_database(db)
+        artifact_store = ArtifactStore(settings.storage.artifact_dir, db)
+
+        class _FakeSandbox:
+            environment_version_id = "fake-sandbox@cli-v1"
+
+            def healthcheck(self) -> dict[str, str]:
+                return {"status": "healthy"}
+
+        sandbox = _FakeSandbox()
+
+        def fake_bootstrap(config, *, trusted=False, settings_overrides=None):
+            del config, trusted, settings_overrides
+            return settings, db, artifact_store, sandbox
+
+        class _FakeEvaluator:
+            version_id = "fake-evaluator@cli-v1"
+
+            def build_plan(self, candidate, context):
+                del candidate, context
+                return None
+
+            def parse_result(self, result, context):
+                del result, context
+                return None
+
+        def fake_load_evaluator(path):
+            assert path == "dummy:evaluator"
+            return _FakeEvaluator
+
+        def fake_components(db_, settings_, sandbox_, llm_):
+            del db_, settings_, sandbox_, llm_
+            return {}
+
+        captured: dict[str, object] = {}
+
+        class _FakeEngine:
+            def __init__(self, *args, **kwargs):
+                del args
+                captured.update(kwargs)
+
+            def run(self, code, task):
+                del code, task
+                return _FakeResult()
+
+            def resume(self, experiment_id):
+                del experiment_id
+                return _FakeResult()
+
+        class _FakeResult:
+            best_candidate_id = "cand-x"
+            best_score = 0.5
+            champion_policy_id = "policy-1"
+            total_generations = 1
+            total_candidates = 1
+            total_tokens = 10
+            total_cost_usd = 0.0
+            cost_known = False
+
+        monkeypatch.setattr(cli_module, "_bootstrap", fake_bootstrap)
+        monkeypatch.setattr(cli_module, "load_evaluator", fake_load_evaluator)
+        monkeypatch.setattr(cli_module, "_build_engine_components", fake_components)
+        monkeypatch.setattr(ee_module, "EvolutionEngine", _FakeEngine)
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "print(1)",
+                "-e",
+                "dummy:evaluator",
+                "-c",
+                str(toml),
+                "--trusted",
+                "--gens",
+                "1",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["verifier_settings"] is settings.verifier
+        assert captured["verifier_settings"].enabled is True
+        assert captured["verifier_settings"].model == "verifier-model"
+
+    def test_run_disables_verifier_by_default(self, tmp_path, monkeypatch):
+        """未配置 [verifier] 时默认关闭（enabled=False）."""
+        import omnievolve.cli as cli_module
+        import omnievolve.engine.evolution_engine as ee_module
+
+        toml = tmp_path / "omnievolve.toml"
+        toml.write_text(
+            "[storage]\n"
+            f"db_path = '{tmp_path / 'run.db'}'\n"
+            f"artifact_dir = '{tmp_path / 'artifacts'}'\n"
+            "[evolution]\nmax_generations = 1\n",
+            encoding="utf-8",
+        )
+        from omnievolve.config import load_settings
+
+        settings = load_settings(str(toml))
+
+        from omnievolve.storage.artifact_store import ArtifactStore
+        from omnievolve.storage.db import Database
+        from omnievolve.storage.migrations import initialize_database
+
+        db = Database(settings.storage.db_path)
+        initialize_database(db)
+        artifact_store = ArtifactStore(settings.storage.artifact_dir, db)
+
+        class _FakeSandbox:
+            environment_version_id = "fake-sandbox@cli-v1"
+
+            def healthcheck(self) -> dict[str, str]:
+                return {"status": "healthy"}
+
+        sandbox = _FakeSandbox()
+
+        def fake_bootstrap(config, *, trusted=False, settings_overrides=None):
+            del config, trusted, settings_overrides
+            return settings, db, artifact_store, sandbox
+
+        class _FakeEvaluator:
+            version_id = "fake-evaluator@cli-v1"
+
+            def build_plan(self, candidate, context):
+                del candidate, context
+                return None
+
+            def parse_result(self, result, context):
+                del result, context
+                return None
+
+        monkeypatch.setattr(cli_module, "_bootstrap", fake_bootstrap)
+        monkeypatch.setattr(cli_module, "load_evaluator", lambda path: _FakeEvaluator)
+        monkeypatch.setattr(cli_module, "_build_engine_components", lambda *a, **k: {})
+        captured: dict[str, object] = {}
+
+        class _FakeEngine:
+            def __init__(self, *args, **kwargs):
+                del args
+                captured.update(kwargs)
+
+            def run(self, code, task):
+                del code, task
+                return _FakeResult()
+
+        class _FakeResult:
+            best_candidate_id = "cand-x"
+            best_score = 0.5
+            champion_policy_id = "policy-1"
+            total_generations = 1
+            total_candidates = 1
+            total_tokens = 10
+            total_cost_usd = 0.0
+            cost_known = False
+
+        monkeypatch.setattr(ee_module, "EvolutionEngine", _FakeEngine)
+        result = runner.invoke(
+            app,
+            ["run", "print(1)", "-e", "dummy:evaluator", "-c", str(toml), "--trusted"],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["verifier_settings"].enabled is False

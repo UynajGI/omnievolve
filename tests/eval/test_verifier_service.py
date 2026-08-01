@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from omnievolve.eval.fake_verifier import FakeProbabilisticVerifier
@@ -73,17 +75,16 @@ def _request(candidate_id="cand-1", peer_id="cand-2", seed=7, **overrides):
 
 
 def _service(db, artifact_store, **overrides):
-    return VerificationService(
-        db,
-        artifact_store,
-        model="verifier-model",
-        prompt_version_id="verifier-observer-v1",
-        granularity=5,
-        repetitions=2,
-        criteria=CRITERIA,
-        order_seed=7,
-        **overrides,
-    )
+    params: dict[str, Any] = {
+        "model": "verifier-model",
+        "prompt_version_id": "verifier-observer-v1",
+        "granularity": 5,
+        "repetitions": 2,
+        "criteria": CRITERIA,
+        "order_seed": 7,
+    }
+    params.update(overrides)
+    return VerificationService(db, artifact_store, **params)
 
 
 class TestPersistence:
@@ -167,6 +168,33 @@ class TestIdempotency:
         assert first.evidence_hash == second.evidence_hash
         assert first.preference_probability == second.preference_probability
 
+    def test_hash_includes_service_provenance(self, db, artifact_store):
+        """换 model/prompt/capability 后不得复用旧 evidence（§8 幂等键）."""
+        request = _request()
+        verifier = FakeProbabilisticVerifier()
+
+        first_service = _service(db, artifact_store, model="verifier-model-a")
+        first_service.verify_pair(request, verifier)
+        first_rows = db.fetchall("SELECT request_hash FROM verification_comparison")
+        assert len(first_rows) == 1
+        first_hash = first_rows[0]["request_hash"]
+
+        # 同一 request、不同 model → 新 request_hash → 重新执行 provider。
+        second_service = _service(db, artifact_store, model="verifier-model-b")
+        second_service.verify_pair(request, verifier)
+        rows = db.fetchall("SELECT request_hash FROM verification_comparison")
+        assert len(rows) == 2
+        assert rows[1]["request_hash"] != first_hash
+        assert len(verifier.calls) == 2
+
+        # 同一 request、不同 capability_hash → 同样不复用。
+        third_service = _service(
+            db, artifact_store, model="verifier-model-a", capability_hash="new-cap"
+        )
+        third_service.verify_pair(request, verifier)
+        assert db.fetchone("SELECT COUNT(*) AS n FROM verification_comparison")["n"] == 3
+        assert len(verifier.calls) == 3
+
 
 class TestFailureSemantics:
     def test_unsupported_records_and_returns_in_ordinary_run(self, db, artifact_store):
@@ -184,11 +212,47 @@ class TestFailureSemantics:
         with pytest.raises(LLMVerifierCapabilityError, match="fail closed"):
             service.verify_pair(_request(), verifier)
 
+    def test_cached_failure_still_fails_closed_on_resume(self, db, artifact_store):
+        """resume 命中缓存失败证据时不得绕过 fail-closed（§13）."""
+        service = _service(db, artifact_store, fail_closed=True)
+        verifier = FakeProbabilisticVerifier(force_status=VerificationStatus.UNSUPPORTED)
+        with pytest.raises(LLMVerifierCapabilityError, match="fail closed"):
+            service.verify_pair(_request(), verifier)
+        # 第二次调用（模拟 resume）命中缓存：必须仍然抛错，且不重复调用 provider。
+        with pytest.raises(LLMVerifierCapabilityError, match="fail closed"):
+            service.verify_pair(_request(), verifier)
+        assert len(verifier.calls) == 1
+
+    def test_cached_failure_falls_back_in_ordinary_run(self, db, artifact_store):
+        """普通运行：缓存失败证据回退，不重复调用 provider、不伪装成功."""
+        service = _service(db, artifact_store, fail_closed=False)
+        verifier = FakeProbabilisticVerifier(force_status=VerificationStatus.UNSUPPORTED)
+        first = service.verify_pair(_request(), verifier)
+        assert first.status == VerificationStatus.UNSUPPORTED
+        second = service.verify_pair(_request(), verifier)
+        assert second.status == VerificationStatus.UNSUPPORTED
+        assert len(verifier.calls) == 1
+        assert db.fetchone("SELECT COUNT(*) AS n FROM verification_comparison")["n"] == 1
+
     def test_incomplete_evidence_fails_closed_in_research_run(self, db, artifact_store):
         service = _service(db, artifact_store, fail_closed=True)
         verifier = FakeProbabilisticVerifier(force_status=VerificationStatus.INCOMPLETE_EVIDENCE)
         with pytest.raises(LLMError, match="fail closed"):
             service.verify_pair(_request(), verifier)
+
+    def test_fake_verifier_coverage_param_effective(self):
+        """coverage 参数真正进入证据与状态（可测 low-coverage 分支）."""
+        evidence = FakeProbabilisticVerifier(coverage=0.2).verify_pair(_request())
+        assert evidence.probability_coverage == 0.2
+        assert evidence.status == VerificationStatus.INSUFFICIENT_COVERAGE
+
+    def test_low_coverage_fails_closed_in_research_run(self, db, artifact_store):
+        service = _service(db, artifact_store, fail_closed=True)
+        verifier = FakeProbabilisticVerifier(coverage=0.2)
+        with pytest.raises(LLMError, match="fail closed"):
+            service.verify_pair(_request(), verifier)
+        batch = db.fetchone("SELECT * FROM verification_batch")
+        assert batch["status"] == "failed"
 
     def test_invalid_request_records_failed(self, db, artifact_store):
         service = _service(db, artifact_store, fail_closed=False)
@@ -214,6 +278,24 @@ class TestFailureSemantics:
         service.verify_pair(_request(), FakeProbabilisticVerifier())
         batch = db.fetchone("SELECT cost_usd, cost_known FROM verification_batch")
         assert batch["cost_usd"] is None
+        # unknown cost 必须如实标记为未知（§8 契约），不得伪装成成本已知。
+        assert batch["cost_known"] == 0
+
+    def test_batch_records_verifier_usage(self, db, artifact_store):
+        """真实 token/成本进入 verification_batch 账本（§8）."""
+
+        class _UsageVerifier(FakeProbabilisticVerifier):
+            total_tokens = 137
+            cost_usd = 0.0042
+            cost_known = True
+
+        service = _service(db, artifact_store)
+        service.verify_pair(_request(), _UsageVerifier())
+        batch = db.fetchone(
+            "SELECT total_tokens, cost_usd, cost_known FROM verification_batch"
+        )
+        assert batch["total_tokens"] == 137
+        assert batch["cost_usd"] == pytest.approx(0.0042)
         assert batch["cost_known"] == 1
 
     def test_missing_evidence_never_impersonates_default_half(self, db, artifact_store):

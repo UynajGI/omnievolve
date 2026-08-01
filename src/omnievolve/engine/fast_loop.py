@@ -718,8 +718,13 @@ class FastLoopStep:
     def _ensure_verifier_observer(self):
         """惰性构建 observer（缓存到 engine）.
 
+        构建前执行 capability probe（§7）：不支持 logprobs 的 endpoint
+        在启用前即被拒绝并留下可审计的 capability hash；未实现的 mode
+        （parent_pair / island_ppt）fail fast，禁止静默退化为 observer。
+
         Returns:
-            VerifierObserver | None — 配置关闭或无 model 时返回 None。
+            VerifierObserver | None — 配置关闭、无 model 或普通运行下
+            probe 失败时返回 None。
         """
         e = self._e
         settings = getattr(e, "_verifier_settings", None)
@@ -727,13 +732,67 @@ class FastLoopStep:
             return None
         if e._verifier_observer is not None:  # noqa: SLF001
             return e._verifier_observer  # noqa: SLF001
+        if settings.mode != "observer":
+            raise ValueError(
+                f"verifier mode {settings.mode!r} is not implemented; "
+                "only 'observer' is available in this round (PR 1-3). "
+                "parent_pair / island_ppt require the R1 gate to pass."
+            )
         from omnievolve.eval.probabilistic_verifier import (
+            _DEFAULT_SCORE_TOKENS,
             ProbabilisticVerifier,
             ProbabilisticVerifierConfig,
         )
         from omnievolve.eval.verification_service import VerificationService
+        from omnievolve.eval.verifier_capability import VerifierCapabilityProbe
         from omnievolve.eval.verifier_observer import VerifierObserver
+        from omnievolve.exceptions import LLMVerifierCapabilityError
 
+        # capability probe：只读、启用前一次；失败按 fail_closed 分级。
+        probe = VerifierCapabilityProbe(e._llm)  # noqa: SLF001
+        try:
+            probe_result = probe.probe(
+                settings.model,
+                experiment_id=e._experiment_id,  # noqa: SLF001
+                prompt_version_id="verifier-observer-v1",
+            )
+        except LLMVerifierCapabilityError as exc:
+            if settings.fail_closed_in_research:
+                raise
+            logger.warning(
+                "Verifier capability probe failed (%s); disabling observer", exc
+            )
+            return None
+        except Exception:
+            if settings.fail_closed_in_research:
+                raise
+            logger.warning(
+                "Verifier capability probe error; disabling observer", exc_info=True
+            )
+            return None
+        if (
+            probe_result.status == "unsupported"
+            or probe_result.probability_coverage < settings.minimum_probability_coverage
+        ):
+            if settings.fail_closed_in_research:
+                raise LLMVerifierCapabilityError(
+                    "verifier-on run requires native logprobs with adequate "
+                    f"coverage; probe failed: {probe_result.error}"
+                )
+            logger.warning(
+                "Verifier endpoint unsupported (%s); disabling observer",
+                probe_result.error or probe_result.status,
+            )
+            return None
+
+        score_tokens = _DEFAULT_SCORE_TOKENS
+        # token_budget_ratio 的运行时消费者：候选级 token 上限 =
+        # 比例 × 本轮总 token 预算（§11 预算进入运行期）。
+        max_tokens_per_candidate = None
+        if getattr(e._config, "token_budget", 0):  # noqa: SLF001
+            max_tokens_per_candidate = int(
+                settings.token_budget_ratio * e._config.token_budget  # noqa: SLF001
+            )
         service = VerificationService(
             e._db,  # noqa: SLF001
             e._artifact_store,  # noqa: SLF001
@@ -743,8 +802,11 @@ class FastLoopStep:
             repetitions=settings.repetitions,
             criteria=tuple(settings.criteria),
             order_seed=e._config.seed,  # noqa: SLF001
+            capability_hash=probe_result.capability_hash,
             mode="observer",
             fail_closed=settings.fail_closed_in_research,
+            score_tokens=score_tokens,
+            temperature=settings.temperature,
         )
         config = ProbabilisticVerifierConfig(
             model=settings.model,
@@ -754,6 +816,13 @@ class FastLoopStep:
             temperature=settings.temperature,
             minimum_probability_coverage=settings.minimum_probability_coverage,
             prompt_version_id="verifier-observer-v1",
+            score_tokens=score_tokens,
+            max_calls_per_candidate=settings.max_calls_per_candidate,
+            max_tokens_per_candidate=max_tokens_per_candidate,
+            # live 模式（未实现，PR4+）要求成对 A/B 交换；observer 证据
+            # 模式由 order_seed 决定首个顺序，不强制 repetitions >= 2。
+            enforce_paired_swap=settings.mode != "observer",
+            live_min_repetitions=settings.live_min_repetitions,
         )
         verifier = ProbabilisticVerifier(
             e._llm,  # noqa: SLF001
