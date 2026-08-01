@@ -1,0 +1,2 @@
+# Shell 脚本必须保持 LF：CRLF 会破坏 bash 的 \ 续行与 shebang。
+*.sh text eol=lf
