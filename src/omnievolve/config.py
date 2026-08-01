@@ -226,6 +226,37 @@ class EvaluationGovernanceSettings(BaseSettings):
     require_elite_rank_stability: bool = True
 
 
+class VerifierSettings(BaseSettings):
+    """概率 LLM-as-a-Verifier 配置（第一轮：observer-only）.
+
+    默认全部关闭；observer 是第一个可启用模式。
+    live tie-breaker、adaptive allocation、PPT 分别独立开关。
+    G/K/C 与预算必须进入 config snapshot 与 replay hash。
+    """
+
+    enabled: bool = False
+    mode: Literal["observer", "parent_pair", "island_ppt"] = "observer"
+    model: str = ""
+    criteria: tuple[str, ...] = (
+        "specification_fidelity",
+        "mechanism_realization",
+        "evidence_consistency",
+    )
+    granularity: int = Field(default=5, gt=0)
+    repetitions: int = Field(default=1, ge=1, le=10)
+    live_min_repetitions: int = Field(default=2, ge=1, le=10)
+    temperature: float = Field(default=0.0, ge=0.0, le=1.0)
+    minimum_probability_coverage: float = Field(default=0.95, gt=0.0, le=1.0)
+    search_bonus_cap: float = Field(default=0.01, ge=0.0, le=1.0)
+    task_tie_tolerance: float = Field(default=0.01, ge=0.0, le=1.0)
+    max_calls_per_candidate: int = Field(default=6, gt=0)
+    token_budget_ratio: float = Field(default=0.10, gt=0.0, le=1.0)
+    fail_closed_in_research: bool = True
+    ppt_min_candidates: int = Field(default=8, gt=0)
+    ppt_pivots: int = Field(default=3, gt=0)
+    adaptive_benchmark_enabled: bool = False
+
+
 class OmniEvolveSettings(BaseSettings):
     """OmniEvolve 主配置.
 
@@ -251,6 +282,7 @@ class OmniEvolveSettings(BaseSettings):
     evaluation_governance: EvaluationGovernanceSettings = Field(
         default_factory=EvaluationGovernanceSettings
     )
+    verifier: VerifierSettings = Field(default_factory=VerifierSettings)
 
 
 def load_settings(config_path: str | Path | None = None) -> OmniEvolveSettings:
@@ -322,6 +354,7 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
         self_evaluator=SelfEvaluatorSettings(**data.get("self_evaluator", {})),
         meta_evolution=MetaEvolutionSettings(**data.get("meta_evolution", {})),
         evaluation_governance=EvaluationGovernanceSettings(**data.get("evaluation_governance", {})),
+        verifier=VerifierSettings(**data.get("verifier", {})),
     )
 
 

@@ -23,6 +23,15 @@ from omnievolve.research.statistics import (
     paired_randomization_p_value,
     paired_seed_power_analysis,
 )
+from omnievolve.research.verifier_replay import (
+    LabeledPair,
+    R1Gate,
+    VariantReport,
+    VerifierReplayRunner,
+    VerifierVariant,
+    assess_r1_gate,
+    write_report,
+)
 
 __all__ = [
     "AblationVariant",
@@ -44,4 +53,11 @@ __all__ = [
     "paired_randomization_p_value",
     "paired_seed_power_analysis",
     "summarize_results",
+    "LabeledPair",
+    "R1Gate",
+    "VariantReport",
+    "VerifierReplayRunner",
+    "VerifierVariant",
+    "assess_r1_gate",
+    "write_report",
 ]

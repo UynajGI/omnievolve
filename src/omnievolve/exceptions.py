@@ -76,6 +76,15 @@ class LLMAuthenticationError(LLMError):
     """LLM 认证失败（不可重试）."""
 
 
+class LLMVerifierCapabilityError(LLMError):
+    """LLM provider 不满足概率 verifier 能力要求.
+
+    包括：不支持 token logprobs、top_logprobs 被静默丢弃、评分标签
+    无法以单 token 形式生成等。普通运行回退到纯 task score；
+    verifier-on 研究运行必须 fail closed。
+    """
+
+
 # ── 存储 ──────────────────────────────────────────────────────────────
 
 

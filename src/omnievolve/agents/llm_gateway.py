@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,6 +18,7 @@ from omnievolve.exceptions import (
     LLMError,
     LLMRateLimitError,
     LLMTimeoutError,
+    LLMVerifierCapabilityError,
 )
 from omnievolve.storage.db import Database
 from omnievolve.storage.repositories.base import generate_id
@@ -69,6 +71,28 @@ class LLMCallRecord:
     request_hash: str | None
     response_hash: str | None
     created_at: str
+
+
+@dataclass
+class TokenScoreResponse:
+    """概率 verifier 的 token 级评分响应.
+
+    ``per_position_probabilities`` 保留每个生成位置的完整 top-K 分布，
+    供 verifier 层做期望、方差与熵聚合；``probability_coverage`` 是
+    实际生成 token 属于评分集合的概率加权比例（缺失概率不补零）。
+    """
+
+    content: str
+    model: str
+    per_position_probabilities: tuple[dict[str, float], ...]
+    actual_tokens: tuple[str, ...]
+    probability_coverage: float
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cost_usd: float | None = None
+    latency_ms: float | None = None
+    raw_response: dict = field(default_factory=dict)
 
 
 class LLMGateway:
@@ -332,6 +356,253 @@ class LLMGateway:
         logger.error("All LLM retries exhausted: %s", safe_error)
         raise self._typed_error(last_error, safe_error) from last_error
 
+    def score_tokens(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        score_tokens: tuple[str, ...],
+        model: str,
+        top_logprobs: int,
+        experiment_id: str | None,
+        prompt_version_id: str | None,
+        granularity: int = 1,
+        temperature: float = 0.0,
+        max_retries: int | None = None,
+        endpoints: list[LLMEndpoint] | None = None,
+    ) -> TokenScoreResponse:
+        """概率 verifier 专用 token 评分调用.
+
+        与 ``chat()`` 隔离，避免污染普通 agent 调用语义：
+
+        - 请求 ``logprobs=True`` 与显式 ``top_logprobs``，禁止 ``drop_params``；
+        - provider 不支持 / 参数被静默丢弃时抛 ``LLMVerifierCapabilityError``；
+        - 校验评分标签能以单 token 形式生成；
+        - 缺失 token 概率不补零、不无条件重归一化；
+        - fallback 只切换到调用方传入的 ``endpoints``（必须已通过
+          capability probe 的 endpoint 集合）；
+        - 以 ``agent_role="verifier"`` 进入 LLM ledger；
+        - retry、deadline 与 attempt provenance 仍由 OmniEvolve 管理。
+
+        Returns:
+            TokenScoreResponse — 每个生成位置的完整 top-K 概率分布。
+        """
+        if not score_tokens:
+            raise ValueError("score_tokens must not be empty")
+        if top_logprobs < 1:
+            raise ValueError("top_logprobs must be at least 1")
+        if granularity < 1:
+            raise ValueError("granularity must be positive")
+        if model is None or not model.strip():
+            model = self._default_model
+
+        start_time = time.time()
+        if self._circuit_breaker and not self._circuit_breaker.can_execute():
+            raise RuntimeError(
+                "LLM gateway circuit breaker is OPEN. "
+                "All requests are rejected to protect cost/availability."
+            )
+        if self._rate_limiter:
+            waited = self._rate_limiter.acquire()
+            if waited > 0:
+                logger.debug("Rate limiter waited %.1fs", waited)
+        self._remaining_deadline(raise_if_expired=True)
+
+        endpoints_to_try = endpoints if endpoints is not None else [LLMEndpoint(model, self._api_key, self._api_base)]
+        last_error: Exception | None = None
+        for endpoint_index, endpoint in enumerate(endpoints_to_try):
+            endpoint_id = (endpoint.model, endpoint.api_key, endpoint.api_base)
+            if endpoint_id in self._disabled_endpoints:
+                continue
+            try_model = endpoint.model
+            provider_model = self._provider_model(try_model, endpoint.api_base)
+            for attempt in range(max_retries if max_retries is not None else self._max_retries):
+                try:
+                    import litellm
+
+                    remaining = self._remaining_deadline(raise_if_expired=True)
+                    request_timeout = (
+                        self._request_timeout
+                        if remaining is None
+                        else min(self._request_timeout, max(0.001, remaining))
+                    )
+                    response = litellm.completion(
+                        model=provider_model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=granularity,
+                        logprobs=True,
+                        top_logprobs=top_logprobs,
+                        # 参数必须被 provider 接受；静默丢弃 = capability failure。
+                        drop_params=False,
+                        api_key=endpoint.api_key,
+                        api_base=endpoint.api_base,
+                        timeout=request_timeout,
+                        num_retries=0,
+                    )
+
+                    latency_ms = (time.time() - start_time) * 1000
+                    content = response.choices[0].message.content or ""
+                    usage = response.usage
+
+                    logprobs = getattr(response.choices[0], "logprobs", None)
+                    if logprobs is None or not getattr(logprobs, "content", None):
+                        raise LLMVerifierCapabilityError(
+                            f"Provider {try_model} ignored logprobs request"
+                        )
+                    positions: list[tuple[str, dict[str, float]]] = []
+                    score_token_seen = False
+                    for item in logprobs.content:
+                        top = item.get("top_logprobs")
+                        if top is None or not top:
+                            raise LLMVerifierCapabilityError(
+                                f"Provider {try_model} silently dropped top_logprobs"
+                            )
+                        distribution = {t["token"]: math.exp(float(t["logprob"])) for t in top}
+                        actual = item.get("token") or ""
+                        positions.append((actual, distribution))
+                        if actual in score_tokens or any(
+                            token in distribution for token in score_tokens
+                        ):
+                            score_token_seen = True
+
+                    if not positions:
+                        raise LLMVerifierCapabilityError(
+                            f"Provider {try_model} returned no generated tokens"
+                        )
+                    if not score_token_seen:
+                        # 没有任何位置能生成评分标签 → tokenizer 无法单 token 生成。
+                        raise LLMVerifierCapabilityError(
+                            f"Provider {try_model} cannot emit any score token from "
+                            f"{score_tokens} as single tokens"
+                        )
+
+                    coverage = sum(
+                        distribution.get(actual, 0.0)
+                        for actual, distribution in positions
+                        if actual in score_tokens
+                    ) / len(positions)
+
+                    token_response = TokenScoreResponse(
+                        content=content,
+                        model=try_model,
+                        per_position_probabilities=tuple(
+                            distribution for _, distribution in positions
+                        ),
+                        actual_tokens=tuple(actual for actual, _ in positions),
+                        probability_coverage=coverage,
+                        input_tokens=usage.prompt_tokens if usage else 0,
+                        output_tokens=usage.completion_tokens if usage else 0,
+                        total_tokens=usage.total_tokens if usage else 0,
+                        cost_usd=self._extract_cost(response, try_model, usage),
+                        latency_ms=latency_ms,
+                        raw_response=response.model_dump()
+                        if hasattr(response, "model_dump")
+                        else {},
+                    )
+
+                    self._total_tokens += token_response.total_tokens
+                    if token_response.cost_usd is not None:
+                        self._total_cost += token_response.cost_usd
+                    else:
+                        self._cost_known = False
+
+                    if self._budget_guard:
+                        self._budget_guard.consume(
+                            model=try_model,
+                            input_tokens=token_response.input_tokens,
+                            output_tokens=token_response.output_tokens,
+                            compute_sec=0.0,
+                            cost_usd=token_response.cost_usd,
+                            cost_known=token_response.cost_usd is not None,
+                        )
+
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_success()
+
+                    if self._db:
+                        self._record_call(
+                            experiment_id=experiment_id,
+                            agent_role="verifier",
+                            model=try_model,
+                            prompt_version_id=prompt_version_id,
+                            response=LLMResponse(
+                                content=content,
+                                model=try_model,
+                                input_tokens=token_response.input_tokens,
+                                output_tokens=token_response.output_tokens,
+                                total_tokens=token_response.total_tokens,
+                                cost_usd=token_response.cost_usd,
+                                latency_ms=latency_ms,
+                                raw_response=token_response.raw_response,
+                            ),
+                            messages=messages,
+                        )
+
+                    return token_response
+
+                except LLMVerifierCapabilityError:
+                    raise
+                except ImportError as exc:
+                    logger.error("litellm is required for real LLM execution")
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_failure("litellm not installed")
+                    raise LLMError(
+                        "litellm is not installed; use FakeLLM explicitly for tests"
+                    ) from exc
+                except LLMTimeoutError:
+                    raise
+                except Exception as e:
+                    last_error = e
+                    safe_error = self._redact_error(e)
+                    logger.warning(
+                        "Verifier token call attempt %d/%d failed (model=%s): %s",
+                        attempt + 1,
+                        max_retries if max_retries is not None else self._max_retries,
+                        try_model,
+                        safe_error,
+                    )
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_failure(safe_error)
+                    if self._is_authentication_error(e):
+                        self._disabled_endpoints.add(endpoint_id)
+                        if endpoint_index < len(endpoints_to_try) - 1:
+                            break
+                        raise LLMAuthenticationError(safe_error) from e
+                    if self._is_permanent_endpoint_error(e) or self._is_logprobs_error(e):
+                        self._disabled_endpoints.add(endpoint_id)
+                        if endpoint_index < len(endpoints_to_try) - 1:
+                            logger.warning(
+                                "Permanent verifier failure for model=%s; "
+                                "trying next probed endpoint",
+                                try_model,
+                            )
+                            break
+                        if self._is_logprobs_error(e):
+                            raise LLMVerifierCapabilityError(safe_error) from e
+                        raise self._typed_error(e, safe_error) from e
+                    self._remaining_deadline(raise_if_expired=True, cause=e)
+                    if attempt < (max_retries if max_retries is not None else self._max_retries) - 1:
+                        backoff = self._retry_backoff_base * (2**attempt)
+                        remaining = self._remaining_deadline(raise_if_expired=True)
+                        if remaining is not None:
+                            backoff = min(backoff, remaining)
+                        time.sleep(backoff)
+
+        if last_error is None:
+            raise LLMError("LLM gateway did not execute any verifier request")
+        safe_error = self._redact_error(last_error)
+        logger.error("All verifier retries exhausted: %s", safe_error)
+        raise self._typed_error(last_error, safe_error) from last_error
+
+    @staticmethod
+    def _is_logprobs_error(error: Exception) -> bool:
+        """参数被拒绝（logprobs/top_logprobs 不支持）→ 能力失败."""
+        text = f"{type(error).__name__}: {error}".lower()
+        return any(
+            marker in text
+            for marker in ("logprobs", "top_logprobs", "log_probs", "unsupported parameter")
+        )
+
     @staticmethod
     def _provider_model(model: str, api_base: str | None) -> str:
         """Tell LiteLLM to use its OpenAI-compatible adapter for custom bases."""
@@ -580,10 +851,17 @@ class LLMGateway:
 class FakeLLM:
     """Fake LLM for testing."""
 
-    def __init__(self, responses: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str] | None = None,
+        *,
+        score_token_probabilities: dict[str, float] | None = None,
+    ) -> None:
         self._responses = responses or []
         self._call_count = 0
         self.calls: list[dict] = []
+        # 概率 verifier fixture：评分 token → 概率（缺失时确定性生成）。
+        self._score_token_probabilities = score_token_probabilities
 
     def chat(
         self,
@@ -621,6 +899,68 @@ class FakeLLM:
             latency_ms=1.0,
         )
 
+    def score_tokens(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        score_tokens: tuple[str, ...],
+        model: str,
+        top_logprobs: int,
+        experiment_id: str,
+        prompt_version_id: str,
+        granularity: int = 1,
+        temperature: float = 0.0,
+        max_retries: int | None = None,
+        endpoints: list | None = None,
+    ) -> TokenScoreResponse:
+        """确定性 token 评分：概率来自 fixture 或 request hash 播种的生成器."""
+        import random
+
+        del top_logprobs, experiment_id, prompt_version_id, max_retries, endpoints
+        self.calls.append(
+            {"messages": messages, "model": model, "agent_role": "verifier"}
+        )
+        seed = compute_sha256_str(
+            json.dumps(messages, ensure_ascii=False, sort_keys=True) + str(granularity)
+        )
+        probabilities = self._score_token_probabilities
+        if probabilities is None:
+            rng = random.Random(seed)
+            probabilities = {
+                token: rng.random() + 0.01 for token in score_tokens
+            }
+            total = sum(probabilities.values())
+            probabilities = {token: p / total for token, p in probabilities.items()}
+        positions: list[dict[str, float]] = []
+        actual_tokens: list[str] = []
+        total_actual = 0.0
+        token_list = list(probabilities.keys())
+        weights = list(probabilities.values())
+        for index in range(granularity):
+            # temperature=0（评分默认）取 argmax，保证 coverage 稳定；
+            # 否则按概率加权采样。
+            if temperature == 0.0:
+                chosen = max(probabilities, key=probabilities.get)
+            else:
+                rng = random.Random(f"{seed}:{index}")
+                chosen = rng.choices(token_list, weights=weights, k=1)[0]
+            actual_tokens.append(chosen)
+            distribution = dict(probabilities)
+            total_actual += probabilities.get(chosen, 0.0)
+            positions.append(distribution)
+        coverage = total_actual / granularity if granularity else 0.0
+        return TokenScoreResponse(
+            content="".join(actual_tokens),
+            model=model or "fake-model",
+            per_position_probabilities=tuple(positions),
+            actual_tokens=tuple(actual_tokens),
+            probability_coverage=coverage,
+            input_tokens=100,
+            output_tokens=granularity,
+            total_tokens=100 + granularity,
+            latency_ms=1.0,
+        )
+
     def fork(
         self,
         db: Database | None = None,
@@ -628,4 +968,4 @@ class FakeLLM:
     ) -> FakeLLM:
         """Return a fresh deterministic stream for independent replay arms."""
         del db
-        return FakeLLM(list(self._responses))
+        return FakeLLM(list(self._responses), score_token_probabilities=self._score_token_probabilities)

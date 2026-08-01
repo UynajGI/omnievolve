@@ -186,6 +186,8 @@ class EvolutionEngine:
         graph_store: GraphStore | None = None,
         vector_indexer: VectorIndexer | None = None,
         prompt_repo: PromptVersionRepository | None = None,
+        # PR2: 概率 verifier observer（None = 关闭；observer 只写证据）
+        verifier_settings: Any | None = None,
     ) -> None:
         self._db = db
         self._artifact_store = artifact_store
@@ -353,6 +355,10 @@ class EvolutionEngine:
         self._prompt_repo = prompt_repo or PromptVersionRepository(db)
         self._code_profile_id: str | None = None  # run() 时注册
         self._profiler: Any = None  # PipelineProfiler 挂载点（None=零开销）
+
+        # PR2: 概率 verifier observer（惰性构建；None = 关闭）
+        self._verifier_settings = verifier_settings
+        self._verifier_observer: Any = None
 
         # 向量混合检索器（读路径 — 与 VectorIndexer 共享 backend/embedder）
         self._hybrid_retriever = None

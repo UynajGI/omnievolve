@@ -66,6 +66,9 @@ class PreparedCandidate:
     manifest_hash: str | None = None
     thought_confidence: float = 1.0
     critic_passed: bool = True
+    generation: int = 0
+    thought_summary: str = ""
+    mechanism_tags: list = field(default_factory=list)
     # 评估上下文（供 commit 使用）
     eval_run_id: str | None = None
     job_id: str | None = None
@@ -600,6 +603,9 @@ class FastLoopStep:
             island_id=island_id,
             thought_confidence=thought.confidence,
             critic_passed=passed,
+            generation=generation,
+            thought_summary=thought.thought,
+            mechanism_tags=list(thought.mechanism_tags or []),
             eval_run_id=eval_run.id if eval_run else None,
             job_id=job.id if job else None,
             sandbox_result=sandbox_result,
@@ -644,6 +650,10 @@ class FastLoopStep:
 
         # 岛屿分配
         e._island_manager.assign_candidate(prepared.candidate_id, prepared.island_id)  # noqa: SLF001
+
+        # PR2: observer-only verifier — evaluate 后、_apply_eval_result 前。
+        # 只写证据，不修改 search_score/passed/primary_score（集成计划 §9.1）。
+        self._observe_verifier(prepared)
 
         # 应用评估结果（所有状态变更）
         if prepared.output is not None:
@@ -704,6 +714,104 @@ class FastLoopStep:
             )
 
         return prepared.candidate_id, prepared.artifact_hash
+
+    def _ensure_verifier_observer(self):
+        """惰性构建 observer（缓存到 engine）.
+
+        Returns:
+            VerifierObserver | None — 配置关闭或无 model 时返回 None。
+        """
+        e = self._e
+        settings = getattr(e, "_verifier_settings", None)
+        if settings is None or not settings.enabled or not settings.model:
+            return None
+        if e._verifier_observer is not None:  # noqa: SLF001
+            return e._verifier_observer  # noqa: SLF001
+        from omnievolve.eval.probabilistic_verifier import (
+            ProbabilisticVerifier,
+            ProbabilisticVerifierConfig,
+        )
+        from omnievolve.eval.verification_service import VerificationService
+        from omnievolve.eval.verifier_observer import VerifierObserver
+
+        service = VerificationService(
+            e._db,  # noqa: SLF001
+            e._artifact_store,  # noqa: SLF001
+            model=settings.model,
+            prompt_version_id="verifier-observer-v1",
+            granularity=settings.granularity,
+            repetitions=settings.repetitions,
+            criteria=tuple(settings.criteria),
+            order_seed=e._config.seed,  # noqa: SLF001
+            mode="observer",
+            fail_closed=settings.fail_closed_in_research,
+        )
+        config = ProbabilisticVerifierConfig(
+            model=settings.model,
+            criteria=tuple(settings.criteria),
+            granularity=settings.granularity,
+            repetitions=settings.repetitions,
+            temperature=settings.temperature,
+            minimum_probability_coverage=settings.minimum_probability_coverage,
+            prompt_version_id="verifier-observer-v1",
+        )
+        verifier = ProbabilisticVerifier(
+            e._llm,  # noqa: SLF001
+            config,
+            experiment_id=e._experiment_id,  # noqa: SLF001
+        )
+        observer = VerifierObserver(
+            service,
+            verifier,
+            criteria=tuple(settings.criteria),
+            granularity=settings.granularity,
+            repetitions=settings.repetitions,
+            order_seed=e._config.seed,  # noqa: SLF001
+        )
+        e._verifier_observer = observer  # noqa: SLF001
+        return observer
+
+    def _observe_verifier(self, prepared: PreparedCandidate) -> None:
+        """PR2: observer-only verifier hook（集成计划 §9.1）.
+
+        条件：verifier 启用、候选通过硬正确性测试、存在 parent。
+        observer 只写证据；任何失败只记录，不阻断进化。
+        """
+        observer = self._ensure_verifier_observer()
+        if observer is None:
+            return
+        if prepared.output is None or not prepared.output.passed or not prepared.parent_ids:
+            return
+        e = self._e
+        try:
+            code_text = e._artifact_store.load_text(prepared.artifact_hash) or ""  # noqa: SLF001
+            result = prepared.sandbox_result
+            metrics = prepared.output.metrics or {}
+            execution_summary = {
+                "execution_time_ms": getattr(result, "execution_time_ms", None),
+                "memory_peak_kb": getattr(result, "memory_peak_kb", None),
+                "cpu_time_ms": getattr(result, "cpu_time_ms", None),
+                "early_stopped": metrics.get("evaluation_early_stopped", False),
+            }
+            observer.observe(
+                candidate_id=prepared.candidate_id,
+                peer_id=prepared.parent_ids[0],
+                code_text=code_text,
+                output=prepared.output,
+                execution_summary=execution_summary,
+                thought_summary=prepared.thought_summary,
+                mechanism_tags=prepared.mechanism_tags,
+                generation=prepared.generation,
+                island_id=prepared.island_id,
+                task_name=getattr(e, "_task_name", ""),  # noqa: SLF001
+                experiment_id=e._experiment_id,  # noqa: SLF001
+                evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
+                environment_version_id=e._environment_version_id,  # noqa: SLF001
+                db=e._db,  # noqa: SLF001
+                artifact_store=e._artifact_store,  # noqa: SLF001
+            )
+        except Exception:
+            logger.debug("Verifier observer skipped: %s", __import__("traceback").format_exc())
 
     def evaluate_candidate(
         self,

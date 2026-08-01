@@ -17,7 +17,7 @@ from omnievolve.storage.db import Database
 logger = logging.getLogger(__name__)
 
 # 当前 schema 版本
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
 
 def get_schema_version(db: Database) -> int:
@@ -47,13 +47,23 @@ def _get_migration_sql(version: int) -> str:
     """获取指定版本的迁移 SQL."""
     # 从 migrations 目录读取 SQL 文件
     migrations_dir = Path(__file__).parent
-    migration_file = migrations_dir / f"v{version:03d}_initial.sql"
 
     if version == 1:
         # v001: 初始 schema
         schema_file = Path(__file__).parent.parent / "schema.sql"
         if schema_file.exists():
             return schema_file.read_text(encoding="utf-8")
+
+    # 优先精确匹配 vNNN_initial.sql；否则匹配同版本号的任意增量文件
+    # （如 v003_verifier.sql），按文件名排序取第一个。
+    migration_file = migrations_dir / f"v{version:03d}_initial.sql"
+    if not migration_file.exists():
+        candidates = sorted(
+            migrations_dir.glob(f"v{version:03d}_*.sql"),
+            key=lambda path: path.name,
+        )
+        if candidates:
+            migration_file = candidates[0]
 
     if migration_file.exists():
         return migration_file.read_text(encoding="utf-8")
