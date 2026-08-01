@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-01 — LLM-as-a-Verifier 概率验证层（PR 1-3，默认关闭）
+
+### 新能力
+
+- 新增 `[verifier]` 配置（`VerifierSettings`，默认全关；`observer` 为第一个可启用模式）。
+- `LLMGateway.score_tokens()`：原生 token logprob 概率评分，兼容 LiteLLM pydantic logprob 对象；verifier role 入 LLM ledger。
+- capability probe：启用前探测 logprobs 支持、单 token 评分与覆盖率；鉴权/超时错误向上传播，能力缺失按 fail_closed 分级。
+- observer-only Fast Loop 接入：通过硬正确性测试的候选产生 `verification_batch`/`verification_comparison` 证据，不修改 `passed`/`primary_score`/`search_score`。
+- 完整 provenance：request-hash 幂等（含 model/prompt/capability/vocabulary/temperature），evidence 存 ArtifactStore，真实 token/cost 入账。
+- 离线 replay 校准 runner（R1）：无 ground-truth 泄漏，按 (task, evaluator, environment) 固定 + 每候选取 latest run，Wilson CI + 最小 pair 门禁。
+- 预算与失败语义：`max_calls`/token 上限强制执行，A/B 顺序由 `order_seed` 决定；未实现的 `parent_pair`/`island_ppt` 模式配置即 fail fast。
+
+### 验证
+
+- 新增 89 个 verifier 用例；全量非 slow suite：1070 passed、4 skipped、16 deselected；Ruff 通过；mypy 无新增错误。
+- 设计与实施记录（含 2026-08-01 审查修复）：`docs/llm_as_verifier_integration_plan.md` §21。
+
 ## 2026-07-31 — 运行时闭环与研究门禁
 
 ### 运行时语义

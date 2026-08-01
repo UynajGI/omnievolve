@@ -40,7 +40,8 @@ Python 3.12+ (dev env: 3.13). Virtualenv at `.venv/` (Windows: `.venv/Scripts/`,
 src/omnievolve/
   engine/     EvolutionEngine, FastLoopStep (prepare/commit), SlowLoopController, LineageUCB selection, mutation, crossover, novelty, memory, island, checkpoint, queue
   agents/     Director, Coder, Critic, LLMGateway (+CircuitBreaker+RateLimiter), ModelRouter, ContextBuilder
-  eval/       TaskEvaluator (Protocol), EvaluatorRegistry, EvaluationRun, Telemetry, HealthPolicy, Metrics
+  eval/       TaskEvaluator (Protocol), EvaluatorRegistry, EvaluationRun, Telemetry, HealthPolicy, Metrics, Verifier (observer-only PR1-3, 默认关闭: ProbabilisticVerifier/VerificationService/VerifierObserver/CapabilityProbe/FakeVerifier)
+  research/   verifier_replay (R1 离线校准 runner, Wilson CI + 无泄漏标签)
   meta/       PolicyGenome, PolicyArchive, Governance (L0/L1/L2), BayesianTuner (GP+EI), InfraAdapter, AuditReport, PromptEvolver
   sandbox/    DockerBackend（安全默认）, TrustedSubprocessBackend（仅显式本地开发）, MontyBackend, HardenedBackend (Protocol: SandboxBackend)
   storage/    SQLite DB, AsyncDatabase, ArtifactStore (SHA-256 CAS), GraphStore, VectorStore, HybridRetriever, ZvecBackend (HNSW), JobStore, UnitOfWork
@@ -63,6 +64,7 @@ scripts/      profile_pipeline.py (Scalene 行级性能分析入口)
 
 - **Name search honestly.** `lineage_ucb` is the canonical selector and receives relative-parent-gain credit. `progressive_mcgs` is only a deprecated compatibility alias; do not describe it as DAG MCGS, rollout, PUCT, or MCTS.
 - **Evaluator semantic immutability (L2).** Task semantics, correctness tests, hidden data, metric definitions, score formulas are permanently forbidden from auto-modification. See `meta/governance.py` GovernancePolicy.
+- **Verifier writes evidence, never correctness.** `[verifier]` observer must not modify `passed` / `primary_score` / `search_score`; `parent_pair` search credit, adaptive benchmark and island PPT stay unimplemented until the R1 calibration gate passes (docs/llm_as_verifier_integration_plan.md §2/§3.2/§21).
 - **Sandbox default-deny.** DockerBackend defaults: network=none, read-only root, run-as-non-root, drop capabilities, no-new-privileges. `--trusted` flag bypasses for dev only.
 - **Artifact content-addressed.** All code stored via ArtifactStore with SHA-256 hashing. Never write candidate code to ad-hoc paths.
 - **Vector outbox consistency.** Candidate/thought creation must enqueue `vector_index_job` entries — the embedding/novelty/memory pipeline depends on it.

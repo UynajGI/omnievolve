@@ -95,6 +95,14 @@ Promote / Reject / Rollback
 | Coder | patch_applied + compile_success + test_pass_rate + performance_gain |
 | Critic | defect_recall − false_rejection_rate + evaluator_cost_saved |
 
+### LLM-as-a-Verifier 概率验证层（实验性，默认关闭）
+
+第一轮只做 observer-only 证据采集（PR 1-3）：通过硬正确性测试的候选产生
+A/B 概率偏好证据（token logprob 期望、Bradley-Terry、G/K/C 聚合），写入独立
+表与 ArtifactStore，**不修改 `passed` / `primary_score` / `search_score`**。
+默认全关；`parent_pair` search credit、adaptive benchmark 与 island PPT 需 R1
+离线校准门禁通过后才实现。详见 [集成计划](docs/llm_as_verifier_integration_plan.md)。
+
 ## 安装
 
 要求 Python 3.12+。
@@ -558,6 +566,7 @@ pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
 | [健康指标](docs/health_metrics.md) | ROI/覆盖率/记忆有效性公式与限制 |
 | [向量配置](docs/vector_configuration.md) | 向量后端（NumPy/zvec）、Embedding、索引生命周期 |
 | [Docker 安全基线](docs/docker_security_baseline.md) | Docker 安全策略与残余风险 |
+| [LLM-as-a-Verifier 集成计划](docs/llm_as_verifier_integration_plan.md) | 概率验证层设计、R1-R4 研究协议、PR 边界与实施记录 |
 | [v0.2 发布说明](docs/release_notes_v0.2.md) | 版本特性、已知限制、参考系统 |
 
 ## 参考系统
