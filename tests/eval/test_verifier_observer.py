@@ -39,7 +39,16 @@ def _make_candidate(db, artifact_store, *, candidate_id, experiment_id, task_id,
              search_policy_id, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (candidate_id, experiment_id, task_id, 1, "island-1", artifact_hash, "policy-1", "evaluated"),
+        (
+            candidate_id,
+            experiment_id,
+            task_id,
+            1,
+            "island-1",
+            artifact_hash,
+            "policy-1",
+            "evaluated",
+        ),
     )
     return artifact_hash
 
@@ -134,14 +143,20 @@ class TestObserverWritesEvidenceOnly:
     ):
         experiment_id = "exp-observer"
         _make_candidate(
-            db, artifact_store,
-            candidate_id="parent-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="parent-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="def f(x): return sorted(x)",
         )
         _make_eval_run(db, candidate_id="parent-1", experiment_id=experiment_id, score=0.5)
         _make_candidate(
-            db, artifact_store,
-            candidate_id="child-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="child-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="def f(x): return sorted(set(x))",
         )
         _make_eval_run(db, candidate_id="child-1", experiment_id=experiment_id, score=0.9)
@@ -183,14 +198,20 @@ class TestObserverWritesEvidenceOnly:
     def test_evidence_contains_peer_and_candidate_summary(self, db, artifact_store):
         experiment_id = "exp-observer-2"
         _make_candidate(
-            db, artifact_store,
-            candidate_id="parent-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="parent-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="parent code body",
         )
         _make_eval_run(db, candidate_id="parent-1", experiment_id=experiment_id, score=0.5)
         _make_candidate(
-            db, artifact_store,
-            candidate_id="child-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="child-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="child code body",
         )
         _make_eval_run(db, candidate_id="child-1", experiment_id=experiment_id, score=0.9)
@@ -226,14 +247,20 @@ class TestObserverWritesEvidenceOnly:
         """证据只含公开摘要；隐藏测试内容不得进入 ArtifactStore."""
         experiment_id = "exp-observer-3"
         _make_candidate(
-            db, artifact_store,
-            candidate_id="parent-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="parent-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="parent code",
         )
         _make_eval_run(db, candidate_id="parent-1", experiment_id=experiment_id, score=0.5)
         _make_candidate(
-            db, artifact_store,
-            candidate_id="child-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="child-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="child code",
         )
         _make_eval_run(db, candidate_id="child-1", experiment_id=experiment_id, score=0.9)
@@ -265,8 +292,11 @@ class TestObserverGating:
     def test_skips_when_no_peer(self, db, artifact_store):
         experiment_id = "exp-observer-4"
         _make_candidate(
-            db, artifact_store,
-            candidate_id="child-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="child-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="code",
         )
         _make_eval_run(db, candidate_id="child-1", experiment_id=experiment_id, score=0.9)
@@ -296,14 +326,20 @@ class TestObserverGating:
         """observer 失败只记录，不抛错、不写假证据（§13）."""
         experiment_id = "exp-observer-5"
         _make_candidate(
-            db, artifact_store,
-            candidate_id="parent-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="parent-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="parent",
         )
         _make_eval_run(db, candidate_id="parent-1", experiment_id=experiment_id, score=0.5)
         _make_candidate(
-            db, artifact_store,
-            candidate_id="child-1", experiment_id=experiment_id, task_id="sort",
+            db,
+            artifact_store,
+            candidate_id="child-1",
+            experiment_id=experiment_id,
+            task_id="sort",
             code="child",
         )
         _make_eval_run(db, candidate_id="child-1", experiment_id=experiment_id, score=0.9)

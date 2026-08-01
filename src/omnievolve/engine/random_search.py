@@ -26,9 +26,7 @@ def derive_random_search_seed(
     parent_code: str,
 ) -> int:
     """Derive a stable per-slot seed without depending on thread scheduling."""
-    payload = (
-        f"{experiment_seed}\0{generation}\0{slot}\0{island_id}\0{parent_code}"
-    ).encode()
+    payload = (f"{experiment_seed}\0{generation}\0{slot}\0{island_id}\0{parent_code}").encode()
     return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
 
 
@@ -84,9 +82,7 @@ def _mutate_site(kind: str, node: ast.AST, rng: random.Random) -> str:
     if kind == "numeric_constant":
         assert isinstance(node, ast.Constant)
         old_value = node.value
-        assert (
-            isinstance(old_value, int | float) and not isinstance(old_value, bool)
-        )
+        assert isinstance(old_value, int | float) and not isinstance(old_value, bool)
         if isinstance(old_value, int):
             node.value = old_value + rng.choice((-2, -1, 1, 2))
         else:
@@ -109,17 +105,13 @@ def _mutate_site(kind: str, node: ast.AST, rng: random.Random) -> str:
         if replacement is None:
             return "comparison operator unchanged"
         node.ops[index] = replacement()
-        return (
-            f"comparison {type(compare_old_op).__name__} -> {replacement.__name__}"
-        )
+        return f"comparison {type(compare_old_op).__name__} -> {replacement.__name__}"
 
     if kind == "arithmetic_operator":
         assert isinstance(node, ast.BinOp)
         arithmetic_old_type = type(node.op)
         node.op = ast.Sub() if isinstance(node.op, ast.Add) else ast.Add()
-        return (
-            f"arithmetic {arithmetic_old_type.__name__} -> {type(node.op).__name__}"
-        )
+        return f"arithmetic {arithmetic_old_type.__name__} -> {type(node.op).__name__}"
 
     assert kind == "boolean_operator"
     assert isinstance(node, ast.BoolOp)

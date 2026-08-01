@@ -33,10 +33,7 @@ class _FakeCompletion:
                         "top_logprobs": (
                             None
                             if no_top_logprobs
-                            else [
-                                {"token": t, "logprob": lp}
-                                for t, lp in distribution.items()
-                            ]
+                            else [{"token": t, "logprob": lp} for t, lp in distribution.items()]
                         ),
                     }
                     for token, logprob, distribution in positions
@@ -88,7 +85,9 @@ class TestScoreTokens:
             ("7", 0.0, _dist({"7": 0.9, "6": 0.1})),
             ("8", 0.0, _dist({"8": 0.8, "7": 0.2})),
         ]
-        monkeypatch.setattr(litellm, "completion", lambda **kw: _FakeCompletion(positions=positions).response)
+        monkeypatch.setattr(
+            litellm, "completion", lambda **kw: _FakeCompletion(positions=positions).response
+        )
         response = fake_gateway.score_tokens(
             [{"role": "user", "content": "score"}],
             score_tokens=("6", "7", "8"),
@@ -170,7 +169,11 @@ class TestScoreTokens:
         monkeypatch.setattr(
             litellm,
             "completion",
-            lambda **kw: _FakeCompletion(positions=[("7", 0.0, _dist({"7": 1.0}))], ignored_logprobs=True).response,
+            lambda **kw: (
+                _FakeCompletion(
+                    positions=[("7", 0.0, _dist({"7": 1.0}))], ignored_logprobs=True
+                ).response
+            ),
         )
         with pytest.raises(LLMVerifierCapabilityError, match="ignored logprobs"):
             fake_gateway.score_tokens(
@@ -342,10 +345,12 @@ class TestCapabilityProbe:
         monkeypatch.setattr(
             litellm,
             "completion",
-            lambda **kw: _FakeCompletion(
-                positions=[("10", 0.0, _dist({"10": 1.0}))],
-                ignored_logprobs=True,
-            ).response,
+            lambda **kw: (
+                _FakeCompletion(
+                    positions=[("10", 0.0, _dist({"10": 1.0}))],
+                    ignored_logprobs=True,
+                ).response
+            ),
         )
         probe = VerifierCapabilityProbe(gateway)
         result = probe.probe("verifier-model")

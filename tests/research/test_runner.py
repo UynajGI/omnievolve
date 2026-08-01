@@ -123,12 +123,8 @@ def test_deterministic_outcome_normalizes_ids_and_timings(tmp_path):
     first = tmp_path / "first.db"
     second = tmp_path / "second.db"
     changed = tmp_path / "changed.db"
-    _write_deterministic_replay_db(
-        first, candidate_id="z-child-1", compute_sec=0.1
-    )
-    _write_deterministic_replay_db(
-        second, candidate_id="a-child-1", compute_sec=9.9
-    )
+    _write_deterministic_replay_db(first, candidate_id="z-child-1", compute_sec=0.1)
+    _write_deterministic_replay_db(second, candidate_id="a-child-1", compute_sec=9.9)
     _write_deterministic_replay_db(changed, candidate_id="candidate-c", score=0.5)
     _add_replay_lineage(
         first,
@@ -155,10 +151,7 @@ def test_deterministic_outcome_normalizes_ids_and_timings(tmp_path):
 
     assert first_outcome["sha256"] == second_outcome["sha256"]
     assert first_outcome["sha256"] != changed_outcome["sha256"]
-    assert (
-        first_outcome["structural_sha256"]
-        == changed_outcome["structural_sha256"]
-    )
+    assert first_outcome["structural_sha256"] == changed_outcome["structural_sha256"]
 
 
 def test_benchmark_job_payload_roundtrip():
@@ -227,13 +220,10 @@ def test_run_repetition_records_replay_and_applies_variant(monkeypatch, tmp_path
     assert any(arg == "evolution.self_evolve_enabled=false" for arg in benchmark_call)
     assert any(arg == "evolution.population_size=3" for arg in benchmark_call)
     assert any(
-        arg == f"evolution.eval_repetitions={job.eval_repetitions}"
-        for arg in benchmark_call
+        arg == f"evolution.eval_repetitions={job.eval_repetitions}" for arg in benchmark_call
     )
     replay = json.loads(
-        (tmp_path / "runs" / job.run_id / "rep-0" / "replay.json").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / "runs" / job.run_id / "rep-0" / "replay.json").read_text(encoding="utf-8")
     )
     assert replay["schema_version"] == 2
     assert replay["git"]["commit"] == "ok"
@@ -267,8 +257,7 @@ def test_evaluator_calibrator_stops_at_first_converged_prefix(monkeypatch, tmp_p
     assert report["all_converged"] is True
     assert report["reference_scale"] == 1.0
     assert all(
-        task_result["calibration"]["repeats"] == 3
-        for task_result in report["tasks"].values()
+        task_result["calibration"]["repeats"] == 3 for task_result in report["tasks"].values()
     )
     assert len(calls) == 9
 
@@ -316,14 +305,10 @@ def test_replay_provenance_detects_changed_inputs(monkeypatch, tmp_path):
             "safe_environment",
         )
     }
-    calibration_report = {
-        "tasks": {"sort": {"provenance": stable_provenance}}
-    }
+    calibration_report = {"tasks": {"sort": {"provenance": stable_provenance}}}
     assert validate_calibration_report(calibration_report, tmp_path) == []
     initial.write_text("def sort_items(xs): return xs\n", encoding="utf-8")
-    assert validate_replay_record(record, tmp_path) == [
-        "input fingerprint mismatch: initial_code"
-    ]
+    assert validate_replay_record(record, tmp_path) == ["input fingerprint mismatch: initial_code"]
     assert validate_calibration_report(calibration_report, tmp_path) == [
         "sort: input fingerprint mismatch: initial_code"
     ]

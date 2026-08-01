@@ -227,9 +227,7 @@ class CASCodeStore:
         for path in sorted(parent_files.keys() | child_files.keys()):
             parent = parent_files.get(path, "").splitlines(keepends=True)
             child = child_files.get(path, "").splitlines(keepends=True)
-            chunks.extend(
-                difflib.unified_diff(parent, child, f"a/{path}", f"b/{path}")
-            )
+            chunks.extend(difflib.unified_diff(parent, child, f"a/{path}", f"b/{path}"))
         return "".join(chunks)
 
     def get_parents(self, ref: str) -> list[str]:

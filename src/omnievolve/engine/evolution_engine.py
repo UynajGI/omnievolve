@@ -270,11 +270,7 @@ class EvolutionEngine:
             migration_interval=self._config.island_migration_interval,
         )
         policy_selector = self._search_policy.parent_selector
-        selector_strategy = (
-            "tournament"
-            if policy_selector == "lineage_ucb"
-            else policy_selector
-        )
+        selector_strategy = "tournament" if policy_selector == "lineage_ucb" else policy_selector
         self._parent_selector = parent_selector or ParentSelector(
             db,
             strategy=selector_strategy,
@@ -442,9 +438,7 @@ class EvolutionEngine:
     def champion_policy_id(self) -> str:
         return self._champion_policy_id
 
-    def run(
-        self, initial_code: str | dict[str, str], task_name: str
-    ) -> EvolutionResult:
+    def run(self, initial_code: str | dict[str, str], task_name: str) -> EvolutionResult:
         """启动进化循环（Fast Loop + 按窗口触发 Slow Loop）.
 
         支持 SIGINT/SIGTERM 优雅关闭（参考 OpenEvolve）。
@@ -469,9 +463,7 @@ class EvolutionEngine:
             signal.signal(signal.SIGTERM, prev_term)
         return result
 
-    def _run_evolution(
-        self, initial_code: str | dict[str, str], task_name: str
-    ) -> EvolutionResult:
+    def _run_evolution(self, initial_code: str | dict[str, str], task_name: str) -> EvolutionResult:
         """进化主循环（内部实现）."""
         logger.info("Starting evolution: %s", task_name)
 
@@ -889,9 +881,7 @@ class EvolutionEngine:
     ) -> EvalOutput | None:
         """评估候选（T1: 委托给 FastLoopStep）."""
         assert self._fast_loop is not None
-        return self._fast_loop.evaluate_candidate(
-            candidate_id, artifact_hash, manifest_hash
-        )
+        return self._fast_loop.evaluate_candidate(candidate_id, artifact_hash, manifest_hash)
 
     # ------------------------------------------------------------------ #
     #  Slow Loop

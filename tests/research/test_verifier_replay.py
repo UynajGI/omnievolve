@@ -97,6 +97,7 @@ def _seed_candidates(db, artifact_store, experiment_id="exp-replay"):
 
 def _runner(db, artifact_store, *, verifier_factory=None, seed=0):
     if verifier_factory is None:
+
         def factory(variant):
             del variant
             return FakeProbabilisticVerifier(seed=seed)
@@ -121,9 +122,7 @@ class TestBuildLabeledPairs:
     def test_high_gap_excludes_noisy_pairs(self, db, artifact_store):
         _seed_candidates(db, artifact_store)
         runner = _runner(db, artifact_store)
-        pairs = runner.build_labeled_pairs(
-            experiment_id="exp-replay", min_score_gap=0.5
-        )
+        pairs = runner.build_labeled_pairs(experiment_id="exp-replay", min_score_gap=0.5)
         for pair in pairs:
             assert abs(pair.candidate_score - pair.peer_score) >= 0.5
         # sort: 0.9-0.45=0.45 (<0.5 排除), 0.9-0.2=0.7, 0.45-0.2=0.25 排除
@@ -190,9 +189,7 @@ class TestRunVariant:
                 force_status=VerificationStatus.INSUFFICIENT_COVERAGE, seed=3
             )
 
-        failing_runner = VerifierReplayRunner(
-            db, artifact_store, verifier_factory=failing_factory
-        )
+        failing_runner = VerifierReplayRunner(db, artifact_store, verifier_factory=failing_factory)
         report = failing_runner.run_variant(
             pairs,
             VerifierVariant("G1_K1_C1", 1, 1, ("specification_fidelity",)),
@@ -330,7 +327,11 @@ class TestDataIntegrity:
         assert len(pair_keys) == len(set(pair_keys))
         assert len(sort_pairs) == 3
         # c-sort-1 使用 latest 0.50（而非 0.90）：与 c-sort-2(0.55) 差 0.05。
-        pair_12 = next(p for p in sort_pairs if {"c-sort-1", "c-sort-2"} <= {p.candidate_id, p.peer_candidate_id})
+        pair_12 = next(
+            p
+            for p in sort_pairs
+            if {"c-sort-1", "c-sort-2"} <= {p.candidate_id, p.peer_candidate_id}
+        )
         assert abs(pair_12.candidate_score - pair_12.peer_score) == pytest.approx(0.05)
 
     def test_abstention_not_counted_as_correct(self, db, artifact_store):
@@ -338,10 +339,7 @@ class TestDataIntegrity:
         _seed_candidates(db, artifact_store)
         runner = _runner(db, artifact_store)
         pairs = runner.build_labeled_pairs(experiment_id="exp-replay", min_score_gap=0.05)
-        fixture = {
-            (pair.candidate_id, pair.peer_candidate_id): (0.5, 0.5)
-            for pair in pairs
-        }
+        fixture = {(pair.candidate_id, pair.peer_candidate_id): (0.5, 0.5) for pair in pairs}
         tie_runner = VerifierReplayRunner(
             db,
             artifact_store,

@@ -70,9 +70,7 @@ class TestScoreTokenMap:
 
     def test_out_of_range_mapping_rejected(self):
         with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
-            build_score_token_map(
-                ("0", "5"), explicit_scores={"0": 0.0, "5": 1.5}
-            )
+            build_score_token_map(("0", "5"), explicit_scores={"0": 0.0, "5": 1.5})
 
 
 class TestBradleyTerry:
@@ -87,12 +85,8 @@ class TestBradleyTerry:
     def test_numerically_stable_at_extremes(self):
         # P(candidate > peer) = sigmoid(score 差)：
         # sigmoid(1.0) ≈ 0.731，sigmoid(-1.0) ≈ 0.269。
-        assert bradley_terry_preference(1.0, 0.0) == pytest.approx(
-            1.0 / (1.0 + math.exp(-1.0))
-        )
-        assert bradley_terry_preference(0.0, 1.0) == pytest.approx(
-            1.0 / (1.0 + math.exp(1.0))
-        )
+        assert bradley_terry_preference(1.0, 0.0) == pytest.approx(1.0 / (1.0 + math.exp(-1.0)))
+        assert bradley_terry_preference(0.0, 1.0) == pytest.approx(1.0 / (1.0 + math.exp(1.0)))
         # 不溢出：极大差距被裁剪到 [-30, 30]。
         value = bradley_terry_preference(1e9, -1e9)
         assert math.isfinite(value)
@@ -102,9 +96,7 @@ class TestCriterionAggregate:
     def test_mean_and_variance(self):
         distributions = []
         for value in (0.2, 0.4, 0.6):
-            distributions.append(
-                _fake_distribution(expected=value)
-            )
+            distributions.append(_fake_distribution(expected=value))
         mean, variance, entropy = criterion_aggregate(distributions)
         assert mean == pytest.approx(0.4)
         assert variance == pytest.approx(0.04)

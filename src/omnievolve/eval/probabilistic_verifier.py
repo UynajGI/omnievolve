@@ -144,9 +144,7 @@ class ProbabilisticVerifier:
         """
         missing = [key for key in _REQUIRED_EVIDENCE_KEYS if key not in request.evidence]
         if missing:
-            raise ValueError(
-                f"verification evidence missing required keys: {', '.join(missing)}"
-            )
+            raise ValueError(f"verification evidence missing required keys: {', '.join(missing)}")
 
         if self._config.enforce_paired_swap and (
             request.repetitions < self._config.live_min_repetitions
@@ -259,13 +257,11 @@ class ProbabilisticVerifier:
                 import statistics
 
                 variances[criterion] = (
-                    statistics.variance(candidate_scores)
-                    + statistics.variance(peer_scores)
+                    statistics.variance(candidate_scores) + statistics.variance(peer_scores)
                 ) / 2
-            entropies[criterion] = (
-                sum(item.entropy for item in per_rep_candidate + per_rep_peer)
-                / (2 * request.repetitions)
-            )
+            entropies[criterion] = sum(
+                item.entropy for item in per_rep_candidate + per_rep_peer
+            ) / (2 * request.repetitions)
 
         coverage = sum(coverages) / len(coverages) if coverages else 0.0
         if coverage < self._config.minimum_probability_coverage:
@@ -282,7 +278,9 @@ class ProbabilisticVerifier:
             entropies=entropies,
             coverage=coverage,
             status=status,
-            evidence_hash=_evidence_hash(candidate_score_by_criterion, peer_score_by_criterion, status),
+            evidence_hash=_evidence_hash(
+                candidate_score_by_criterion, peer_score_by_criterion, status
+            ),
         )
         from dataclasses import replace
 

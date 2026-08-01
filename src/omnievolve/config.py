@@ -71,9 +71,7 @@ class SelectionSettings(BaseSettings):
 class ModelRoutingSettings(BaseSettings):
     """模型路由配置."""
 
-    algorithm: Literal["sliding_window_ucb", "discounted_ucb", "thompson"] = (
-        "sliding_window_ucb"
-    )
+    algorithm: Literal["sliding_window_ucb", "discounted_ucb", "thompson"] = "sliding_window_ucb"
     window_size: int = 50
     ucb_c: float = 1.414
     cost_weight: float = 0.2

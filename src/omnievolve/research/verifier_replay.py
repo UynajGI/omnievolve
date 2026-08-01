@@ -189,7 +189,7 @@ class VerifierReplayRunner:
                    e.execution_time_ms AS execution_time_ms
             FROM candidate c
             JOIN evaluation_run e ON e.candidate_id = c.id
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
             ORDER BY COALESCE(e.finished_at, e.started_at) DESC, e.attempt DESC
             """,
             tuple(params),
@@ -247,6 +247,7 @@ class VerifierReplayRunner:
         绝不携带双方分数 —— 否则 R1 accuracy/Brier/Spearman 衡量的
         是模型能否读答案，而不是能否独立验证代码（target leakage）。
         """
+
         def code_summary(artifact_hash: str) -> str:
             try:
                 return (self._artifact_store.load_text(artifact_hash) or "")[:_MAX_CODE_CHARS]
@@ -313,9 +314,7 @@ class VerifierReplayRunner:
                 )
                 continue
             if evidence.status != VerificationStatus.COMPLETED:
-                failure_categories[evidence.status] = (
-                    failure_categories.get(evidence.status, 0) + 1
-                )
+                failure_categories[evidence.status] = failure_categories.get(evidence.status, 0) + 1
                 continue
             completed += 1
             preferences.append(evidence.preference_probability)
@@ -361,18 +360,14 @@ class VerifierReplayRunner:
             for preference, label in zip(preferences, labels)
             if abs(preference - 0.5) >= tie_threshold
         ]
-        correct = [
-            (preference > 0.5) == (label > 0.5)
-            for preference, label in non_tie
-        ]
+        correct = [(preference > 0.5) == (label > 0.5) for preference, label in non_tie]
         accuracy = statistics.fmean(correct) if correct else 0.0
         accuracy_ci_lower = _one_sided_ci_lower(accuracy, len(correct))
         brier = statistics.fmean(
             (preference - label) ** 2 for preference, label in zip(preferences, labels)
         )
         tie_rate = statistics.fmean(
-            1.0 if abs(preference - 0.5) < tie_threshold else 0.0
-            for preference in preferences
+            1.0 if abs(preference - 0.5) < tie_threshold else 0.0 for preference in preferences
         )
         ece = _expected_calibration_error(preferences, labels)
         spearman = _spearman(preferences, score_differences)
@@ -416,18 +411,14 @@ class VerifierReplayRunner:
         for granularity in granularities:
             for repetition in repetitions:
                 for criteria in criteria_options:
-                    name = (
-                        f"G{granularity}_K{repetition}_C{len(criteria)}"
-                    )
+                    name = f"G{granularity}_K{repetition}_C{len(criteria)}"
                     variant = VerifierVariant(
                         name=name,
                         granularity=granularity,
                         repetitions=repetition,
                         criteria=criteria,
                     )
-                    reports.append(
-                        self.run_variant(pairs, variant, tie_threshold=tie_threshold)
-                    )
+                    reports.append(self.run_variant(pairs, variant, tie_threshold=tie_threshold))
         return reports
 
     def _accounting_snapshot(self) -> tuple[int, float | None, bool]:
@@ -442,7 +433,7 @@ class VerifierReplayRunner:
 
 @dataclass(frozen=True)
 class R1Gate:
-    """R1 升级门评估结果（§17.2）. """
+    """R1 升级门评估结果（§17.2）."""
 
     passed: bool
     reasons: tuple[str, ...]
@@ -475,19 +466,13 @@ def assess_r1_gate(
     if report.pairs_completed == 0:
         reasons.append("no completed pairs")
     elif report.pairs_completed < min_pairs:
-        reasons.append(
-            f"completed pairs {report.pairs_completed} < minimum {min_pairs}"
-        )
+        reasons.append(f"completed pairs {report.pairs_completed} < minimum {min_pairs}")
     if report.accuracy_ci_lower <= accuracy_null:
-        reasons.append(
-            f"accuracy CI lower bound {report.accuracy_ci_lower:.3f} <= {accuracy_null}"
-        )
+        reasons.append(f"accuracy CI lower bound {report.accuracy_ci_lower:.3f} <= {accuracy_null}")
     if report.brier >= brier_max:
         reasons.append(f"brier {report.brier:.3f} >= {brier_max}")
     if report.probability_coverage < coverage_min:
-        reasons.append(
-            f"coverage {report.probability_coverage:.3f} < {coverage_min}"
-        )
+        reasons.append(f"coverage {report.probability_coverage:.3f} < {coverage_min}")
     if report.failure_rate > failure_max:
         reasons.append(f"failure rate {report.failure_rate:.3f} > {failure_max}")
     if not cost_excluded and not report.cost_known:
@@ -524,9 +509,7 @@ def _one_sided_ci_lower(accuracy: float, count: int) -> float:
     denominator = 1.0 + z_value**2 / n
     center = (accuracy + z_value**2 / (2 * n)) / denominator
     margin = (
-        z_value
-        * math.sqrt((accuracy * (1 - accuracy) + z_value**2 / (4 * n)) / n)
-        / denominator
+        z_value * math.sqrt((accuracy * (1 - accuracy) + z_value**2 / (4 * n)) / n) / denominator
     )
     return max(0.0, center - margin)
 
@@ -567,13 +550,9 @@ def _spearman(preferences: list[float], scores: list[float]) -> float | None:
         score_ranks = _rank(scores)
         mean_p = statistics.fmean(pref_ranks)
         mean_s = statistics.fmean(score_ranks)
-        numerator = sum(
-            (p - mean_p) * (s - mean_s)
-            for p, s in zip(pref_ranks, score_ranks)
-        )
+        numerator = sum((p - mean_p) * (s - mean_s) for p, s in zip(pref_ranks, score_ranks))
         denominator = math.sqrt(
-            sum((p - mean_p) ** 2 for p in pref_ranks)
-            * sum((s - mean_s) ** 2 for s in score_ranks)
+            sum((p - mean_p) ** 2 for p in pref_ranks) * sum((s - mean_s) ** 2 for s in score_ranks)
         )
         if denominator == 0:
             return None
@@ -589,8 +568,7 @@ def _rank(values: list[float]) -> list[float]:
     while index < len(ordered):
         duplicate = 1
         while (
-            index + duplicate < len(ordered)
-            and ordered[index + duplicate][1] == ordered[index][1]
+            index + duplicate < len(ordered) and ordered[index + duplicate][1] == ordered[index][1]
         ):
             duplicate += 1
         average = index + 1 + (duplicate - 1) / 2

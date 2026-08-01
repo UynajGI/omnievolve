@@ -287,14 +287,11 @@ class FastLoopStep:
             dict.fromkeys(
                 str(program["candidate_id"])
                 for program in inspiration
-                if program.get("candidate_id")
-                and program["candidate_id"] not in parent_ids
+                if program.get("candidate_id") and program["candidate_id"] not in parent_ids
             )
         )
         if e._config.random_search_mode:  # noqa: SLF001
-            inspiration = [
-                program for program in inspiration if program.get("is_parent")
-            ]
+            inspiration = [program for program in inspiration if program.get("is_parent")]
             memory_hits = []
             reference_ids = []
 
@@ -329,9 +326,7 @@ class FastLoopStep:
             evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
             environment_version_id=e._environment_version_id,  # noqa: SLF001
             model=director_model,
-            generation_mode=(
-                operator_decision.operator if operator_decision is not None else ""
-            ),
+            generation_mode=(operator_decision.operator if operator_decision is not None else ""),
             prompt_version_id=e._load_champion_prompt("director"),  # noqa: SLF001
         )
 
@@ -411,9 +406,7 @@ class FastLoopStep:
             code = CodeOutput(
                 diff=mutation.description,
                 full_code=mutation.code,
-                explanation=(
-                    f"LLM-free random-search mutation (seed={mutation.seed})"
-                ),
+                explanation=(f"LLM-free random-search mutation (seed={mutation.seed})"),
             )
             passed = True
         else:
@@ -504,10 +497,7 @@ class FastLoopStep:
                     existing_similarities=code_similarities or None,
                     exact_reference_codes=parent_codes,
                 )
-        if (
-            candidate_novelty is not None
-            and candidate_novelty.decision == NoveltyDecision.REJECT
-        ):
+        if candidate_novelty is not None and candidate_novelty.decision == NoveltyDecision.REJECT:
             e._mcts.rollback_last_select()  # noqa: SLF001
             return None
 
@@ -523,12 +513,8 @@ class FastLoopStep:
             "relation": relation,
             "model": model,
             "role_models": dict(role_models),
-            "operator": (
-                operator_decision.operator if operator_decision is not None else None
-            ),
-            "operator_stage": (
-                operator_decision.stage if operator_decision is not None else None
-            ),
+            "operator": (operator_decision.operator if operator_decision is not None else None),
+            "operator_stage": (operator_decision.stage if operator_decision is not None else None),
             **novelty_meta,
         }
 
@@ -759,16 +745,12 @@ class FastLoopStep:
         except LLMVerifierCapabilityError as exc:
             if settings.fail_closed_in_research:
                 raise
-            logger.warning(
-                "Verifier capability probe failed (%s); disabling observer", exc
-            )
+            logger.warning("Verifier capability probe failed (%s); disabling observer", exc)
             return None
         except Exception:
             if settings.fail_closed_in_research:
                 raise
-            logger.warning(
-                "Verifier capability probe error; disabling observer", exc_info=True
-            )
+            logger.warning("Verifier capability probe error; disabling observer", exc_info=True)
             return None
         if (
             probe_result.status == "unsupported"
@@ -1174,7 +1156,9 @@ class FastLoopStep:
                         candidate_id,
                         candidate_novelty.objective_score,
                     )
-                generation = cand_meta.generation if cand_meta is not None else e._current_generation  # noqa: SLF001
+                generation = (
+                    cand_meta.generation if cand_meta is not None else e._current_generation
+                )  # noqa: SLF001
                 island.record_generation_score(
                     generation,
                     output.score,
@@ -1207,11 +1191,7 @@ class FastLoopStep:
         e._candidate_repo.update_search_state(  # noqa: SLF001
             candidate_id,
             visit_delta=1,
-            value_delta=(
-                normalized_gain
-                if search_credit_enabled
-                else output.score
-            ),
+            value_delta=(normalized_gain if search_credit_enabled else output.score),
             frontier_status="elite" if output.passed else "closed",
         )
 

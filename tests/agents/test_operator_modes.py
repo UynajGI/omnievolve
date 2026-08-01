@@ -24,15 +24,11 @@ def test_rewrite_and_crossover_map_to_distinct_generation_modes():
     base = AgentContext(experiment_id="exp", task_id="sort", generation=1)
 
     assert (
-        Coder._select_mode(
-            AgentContext(**{**base.__dict__, "generation_mode": "rewrite"})
-        )
+        Coder._select_mode(AgentContext(**{**base.__dict__, "generation_mode": "rewrite"}))
         == GenerationMode.FULL_REWRITE
     )
     assert (
-        Coder._select_mode(
-            AgentContext(**{**base.__dict__, "generation_mode": "crossover"})
-        )
+        Coder._select_mode(AgentContext(**{**base.__dict__, "generation_mode": "crossover"}))
         == GenerationMode.FUSION_AWARE
     )
 

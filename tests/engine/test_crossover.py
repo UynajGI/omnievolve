@@ -106,8 +106,7 @@ class TestCrossoverOperator:
                 "import math\n\n"
                 "def solve():\n    return 1\n\n"
                 "if __name__ == '__main__':\n    print(solve())\n",
-                "def solve():\n    return 2\n\n"
-                "def helper():\n    return 'new'\n",
+                "def solve():\n    return 2\n\ndef helper():\n    return 'new'\n",
             ]
         )
 

@@ -13,9 +13,7 @@ from typing import Any
 
 from omnievolve.storage.db import Database
 
-PARENT_SELECTION_STRATEGIES = frozenset(
-    {"best", "tournament", "random", "power_law", "weighted"}
-)
+PARENT_SELECTION_STRATEGIES = frozenset({"best", "tournament", "random", "power_law", "weighted"})
 
 
 class ParentSelector:
@@ -43,7 +41,9 @@ class ParentSelector:
         """
         if strategy not in PARENT_SELECTION_STRATEGIES:
             allowed = ", ".join(sorted(PARENT_SELECTION_STRATEGIES))
-            raise ValueError(f"Unknown parent selection strategy {strategy!r}; expected one of: {allowed}")
+            raise ValueError(
+                f"Unknown parent selection strategy {strategy!r}; expected one of: {allowed}"
+            )
         self._db = db
         self._strategy = strategy
         self._tournament_size = tournament_size

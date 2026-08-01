@@ -150,7 +150,6 @@ class OperatorPortfolio:
                 if payload is None:
                     raise ValueError("operator portfolio checkpoint is incomplete")
                 restored[str(context)][operator] = {
-                    key: float(payload[key])
-                    for key in ("count", "reward_sum", "alpha", "beta")
+                    key: float(payload[key]) for key in ("count", "reward_sum", "alpha", "beta")
                 }
         self._state = restored

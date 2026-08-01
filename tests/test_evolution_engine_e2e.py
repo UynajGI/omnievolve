@@ -268,11 +268,14 @@ class TestEvolutionEngineE2E:
         qd_stats = engine._behavior_archive.get_stats()  # noqa: SLF001
         assert qd_stats["islands"]["island_0"]["occupied_cells"] >= 1
         operator_stats = engine._operator_portfolio.get_stats()  # noqa: SLF001
-        assert sum(
-            operator["count"]
-            for context in operator_stats["contexts"].values()
-            for operator in context.values()
-        ) >= 1
+        assert (
+            sum(
+                operator["count"]
+                for context in operator_stats["contexts"].values()
+                for operator in context.values()
+            )
+            >= 1
+        )
 
         engine._select_parents("island_0")  # noqa: SLF001
         assert engine._last_selection_trace["mechanism"] == "qd_archive"  # noqa: SLF001

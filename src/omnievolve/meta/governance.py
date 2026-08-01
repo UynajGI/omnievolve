@@ -241,10 +241,7 @@ class ReplayEvaluator:
 
         if ci_low > self._min_gain:
             decision = "promote"
-            reason = (
-                "Paired one-sided 95% lower bound is positive "
-                f"(lower={ci_low:.4f})"
-            )
+            reason = f"Paired one-sided 95% lower bound is positive (lower={ci_low:.4f})"
         elif ci_high < 0:
             decision = "reject"
             reason = f"Paired one-sided 95% upper bound is negative ({ci_high:.4f})"

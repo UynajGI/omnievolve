@@ -29,8 +29,7 @@ def test_environment_files_preserve_process_env_and_prefer_local(tmp_path, monke
         encoding="utf-8",
     )
     (tmp_path / ".local.env").write_text(
-        "OMNIEVOLVE_TEST_EXPLICIT=local\n"
-        "OMNIEVOLVE_TEST_LAYER=local\n",
+        "OMNIEVOLVE_TEST_EXPLICIT=local\nOMNIEVOLVE_TEST_LAYER=local\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)

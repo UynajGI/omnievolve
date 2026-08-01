@@ -155,11 +155,15 @@ def _open_run(root: Path, experiment_id: str | None = None):
     store = CASCodeStore(artifacts, root / "work")
     sandbox = _DeterministicSandbox(store)
     if experiment_id is None:
-        experiment_id = ExperimentRepository(db).create(
-            task_id="sort",
-            task_name="sort",
-            config_snapshot={"deterministic_replay": True},
-        ).id
+        experiment_id = (
+            ExperimentRepository(db)
+            .create(
+                task_id="sort",
+                task_name="sort",
+                config_snapshot={"deterministic_replay": True},
+            )
+            .id
+        )
     engine = EvolutionEngine(
         db,
         store,

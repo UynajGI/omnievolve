@@ -85,9 +85,7 @@ class _ScriptedGateway:
             a_dist = self._candidate_dist if a_is_candidate else self._peer_dist
             b_dist = self._peer_dist if a_is_candidate else self._candidate_dist
         half = granularity // 2
-        positions = [dict(a_dist) for _ in range(half)] + [
-            dict(b_dist) for _ in range(half)
-        ]
+        positions = [dict(a_dist) for _ in range(half)] + [dict(b_dist) for _ in range(half)]
         actual_tokens = tuple(max(dist, key=dist.get) for dist in positions)
         return TokenScoreResponse(
             content="".join(actual_tokens),
@@ -242,9 +240,7 @@ class TestBudgets:
 
     def test_max_tokens_enforced(self):
         """累计 token 超限 → fail closed（11 token/次，2 次 = 22 > 15）."""
-        gateway = _ScriptedGateway(
-            {"20": 1.0}, {"0": 1.0}, tokens_per_call=11
-        )
+        gateway = _ScriptedGateway({"20": 1.0}, {"0": 1.0}, tokens_per_call=11)
         verifier = _verifier(gateway, max_calls=10, max_tokens=15)
         with pytest.raises(LLMVerifierCapabilityError, match="token budget exceeded"):
             verifier.verify_pair(_request(repetitions=2))
@@ -260,9 +256,7 @@ class TestVarianceAndUsage:
         assert evidence.variance == 0.0
 
     def test_usage_recorded_in_evidence(self):
-        gateway = _ScriptedGateway(
-            {"20": 1.0}, {"0": 1.0}, tokens_per_call=11, cost_usd=0.001
-        )
+        gateway = _ScriptedGateway({"20": 1.0}, {"0": 1.0}, tokens_per_call=11, cost_usd=0.001)
         verifier = _verifier(gateway)
         evidence = verifier.verify_pair(_request())
         # 1 criterion × 1 repetition = 1 次调用。

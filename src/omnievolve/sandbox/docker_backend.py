@@ -273,9 +273,7 @@ class DockerBackend:
 
         try:
             files: dict[str, bytes]
-            if candidate.manifest_hash and hasattr(
-                self._artifact_store, "load_snapshot_files"
-            ):
+            if candidate.manifest_hash and hasattr(self._artifact_store, "load_snapshot_files"):
                 files = {
                     path: content.encode("utf-8")
                     for path, content in self._artifact_store.load_snapshot_files(
@@ -290,11 +288,7 @@ class DockerBackend:
             with tarfile.open(fileobj=tar_stream, mode="w") as tar:
                 for path, content in sorted(files.items()):
                     pure = PurePosixPath(path)
-                    if (
-                        pure.is_absolute()
-                        or ".." in pure.parts
-                        or pure.as_posix() != path
-                    ):
+                    if pure.is_absolute() or ".." in pure.parts or pure.as_posix() != path:
                         raise ValueError(f"Unsafe snapshot path: {path!r}")
                     info = tarfile.TarInfo(name=path)
                     info.size = len(content)

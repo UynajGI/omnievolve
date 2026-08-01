@@ -131,9 +131,7 @@ class LocalPolicyArmRunner:
                     arm_llm,
                     experiment_id=experiment.id,
                     evaluator_version_id=getattr(self._task_evaluator, "version_id", ""),
-                    environment_version_id=getattr(
-                        arm_sandbox, "environment_version_id", ""
-                    ),
+                    environment_version_id=getattr(arm_sandbox, "environment_version_id", ""),
                     config=arm_config,
                     search_policy=policy,
                     model_slots=self._model_slots,
@@ -175,9 +173,7 @@ class LocalPolicyArmRunner:
         for row in rows:
             generation = int(row["generation"])
             score = float(row["primary_score"])
-            generation_best[generation] = max(
-                generation_best.get(generation, -float("inf")), score
-            )
+            generation_best[generation] = max(generation_best.get(generation, -float("inf")), score)
         running = -float("inf")
         frontier = []
         for generation in range(requested_generations + 1):
@@ -216,11 +212,7 @@ class LocalPolicyArmRunner:
         )
         calls = int(ledger["calls"] if ledger else 0)
         priced = int(ledger["priced"] if ledger else 0)
-        cost = (
-            float(ledger["cost"] or 0.0)
-            if calls == priced
-            else None
-        )
+        cost = float(ledger["cost"] or 0.0) if calls == priced else None
         return PolicyArmResult(
             frontier_auc=statistics.fmean(frontier),
             best_score=max(float(row["primary_score"]) for row in rows),

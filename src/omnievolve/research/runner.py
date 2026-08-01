@@ -144,11 +144,7 @@ def build_replay_record(
             "generations": generations,
             "population_size": population_size,
         },
-        "replay_class": (
-            "deterministic_artifacts"
-            if artifact_deterministic
-            else "stochastic_llm"
-        ),
+        "replay_class": ("deterministic_artifacts" if artifact_deterministic else "stochastic_llm"),
         "determinism_note": (
             "Mutation artifacts and lineage must reproduce exactly; runtime "
             "benchmark measurements are compared separately because they are noisy."
@@ -322,12 +318,8 @@ def _deterministic_outcome(db_path: Path) -> dict[str, Any]:
             "schema_version": checkpoint.get("schema_version"),
             "generation": checkpoint.get("generation"),
             "total_candidates": checkpoint.get("total_candidates"),
-            "search_policy": runtime.get("search_policy")
-            if isinstance(runtime, dict)
-            else None,
-            "selection_mode": runtime.get("selection_mode")
-            if isinstance(runtime, dict)
-            else None,
+            "search_policy": runtime.get("search_policy") if isinstance(runtime, dict) else None,
+            "selection_mode": runtime.get("selection_mode") if isinstance(runtime, dict) else None,
             "python_random_state": runtime.get("python_random_state")
             if isinstance(runtime, dict)
             else None,
@@ -341,9 +333,7 @@ def _deterministic_outcome(db_path: Path) -> dict[str, Any]:
     )
     return {
         "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
-        "structural_sha256": hashlib.sha256(
-            structural_payload.encode("utf-8")
-        ).hexdigest(),
+        "structural_sha256": hashlib.sha256(structural_payload.encode("utf-8")).hexdigest(),
         "outcome": outcome,
     }
 
@@ -417,9 +407,7 @@ def strict_replay(
         original = _deterministic_outcome(original_db)
         replayed = _deterministic_outcome(replay_db)
         exact = original["sha256"] == replayed["sha256"]
-        structural = (
-            original["structural_sha256"] == replayed["structural_sha256"]
-        )
+        structural = original["structural_sha256"] == replayed["structural_sha256"]
         result.update(
             {
                 "deterministic_equivalent": exact,
@@ -430,9 +418,7 @@ def strict_replay(
                 "replay_structural_sha256": replayed["structural_sha256"],
             }
         )
-        required_equivalent = (
-            exact if record["replay_class"] == "deterministic" else structural
-        )
+        required_equivalent = exact if record["replay_class"] == "deterministic" else structural
         if not required_equivalent:
             raise RuntimeError(
                 "strict replay outcome mismatch: "
@@ -509,9 +495,7 @@ class EvaluatorNoiseCalibrator:
                 if calibration.converged:
                     break
             if calibration is None:
-                raise RuntimeError(
-                    f"task {task.name!r} produced too few calibration measurements"
-                )
+                raise RuntimeError(f"task {task.name!r} produced too few calibration measurements")
             if len(set(artifact_hashes)) != 1:
                 raise RuntimeError(
                     f"task {task.name!r} calibration did not keep the candidate frozen"
@@ -540,8 +524,7 @@ class EvaluatorNoiseCalibrator:
             "min_repeats": min_repeats,
             "max_repeats": max_repeats,
             "all_converged": all(
-                bool(result["calibration"]["converged"])
-                for result in task_results.values()
+                bool(result["calibration"]["converged"]) for result in task_results.values()
             ),
             "tasks": task_results,
         }
@@ -553,9 +536,7 @@ class EvaluatorNoiseCalibrator:
         seed: int,
         repetition: int,
     ) -> dict[str, Any]:
-        run_id = hashlib.sha256(
-            f"calibration-v1:{task.name}:{seed}".encode()
-        ).hexdigest()[:16]
+        run_id = hashlib.sha256(f"calibration-v1:{task.name}:{seed}".encode()).hexdigest()[:16]
         calibration_variant = AblationVariant(
             name="evaluator_noise_calibration",
             description="Frozen initial candidate with no mutation or LLM calls.",
@@ -573,12 +554,7 @@ class EvaluatorNoiseCalibrator:
             eval_repetitions=1,
             protocol="calibration",
         )
-        run_dir = (
-            self._settings.runs_dir
-            / "calibration"
-            / task.name
-            / f"rep-{repetition}"
-        )
+        run_dir = self._settings.runs_dir / "calibration" / task.name / f"rep-{repetition}"
         run_dir.mkdir(parents=True, exist_ok=True)
         db_path = run_dir / "run.db"
         artifact_dir = run_dir / "artifacts"
@@ -648,14 +624,10 @@ class EvaluatorNoiseCalibrator:
                 stored_replay.get("returncode") == 0
                 and stored_replay.get("argv") == replay["argv"]
                 and stored_replay.get("inputs") == replay["inputs"]
-                and not validate_replay_record(
-                    stored_replay, self._settings.repo_root
-                )
+                and not validate_replay_record(stored_replay, self._settings.repo_root)
             ):
                 observed = self._read_measurement(db_path)
-                observed["wall_sec"] = float(
-                    stored_replay.get("observed", {}).get("wall_sec", 0.0)
-                )
+                observed["wall_sec"] = float(stored_replay.get("observed", {}).get("wall_sec", 0.0))
                 observed["provenance_valid"] = True
                 observed["provenance"] = self._stable_provenance(stored_replay)
                 return observed
@@ -694,14 +666,12 @@ class EvaluatorNoiseCalibrator:
                 encoding="utf-8",
             )
             raise RuntimeError(
-                f"calibration command failed with exit code "
-                f"{completed.returncode}: {tail}"
+                f"calibration command failed with exit code {completed.returncode}: {tail}"
             )
         provenance_errors = validate_replay_record(replay, self._settings.repo_root)
         if provenance_errors:
             raise RuntimeError(
-                "calibration provenance changed during run: "
-                + "; ".join(provenance_errors)
+                "calibration provenance changed during run: " + "; ".join(provenance_errors)
             )
         observed = self._read_measurement(db_path)
         observed["wall_sec"] = time.monotonic() - started
@@ -766,9 +736,7 @@ class EvaluatorNoiseCalibrator:
         if measurement is None:
             raise RuntimeError("calibration produced no completed initial evaluation")
         if candidate_count != 1:
-            raise RuntimeError(
-                "calibration must evaluate exactly one frozen candidate"
-            )
+            raise RuntimeError("calibration must evaluate exactly one frozen candidate")
         if llm_calls != 0:
             raise RuntimeError("calibration unexpectedly invoked an LLM")
         return {
@@ -791,11 +759,7 @@ def validate_calibration_report(
     if not isinstance(task_payloads, dict) or not task_payloads:
         return ["calibration report has no task results"]
     for task_name, task_result in task_payloads.items():
-        provenance = (
-            task_result.get("provenance")
-            if isinstance(task_result, dict)
-            else None
-        )
+        provenance = task_result.get("provenance") if isinstance(task_result, dict) else None
         if not isinstance(provenance, dict):
             issues.append(f"{task_name}: missing calibration provenance")
             continue
@@ -919,9 +883,7 @@ class ResearchBenchmarkRunner:
         scores = [float(measurement["frontier_auc"]) for measurement in measurements]
         known_cost = all(bool(measurement["cost_known"]) for measurement in measurements)
         score_stdev = statistics.stdev(scores) if len(scores) > 1 else 0.0
-        score_ci_half_width = (
-            1.96 * score_stdev / (len(scores) ** 0.5) if len(scores) > 1 else 0.0
-        )
+        score_ci_half_width = 1.96 * score_stdev / (len(scores) ** 0.5) if len(scores) > 1 else 0.0
         record = {
             "schema_version": 2,
             "run_id": job.run_id,
@@ -952,13 +914,9 @@ class ResearchBenchmarkRunner:
                 else None
             ),
             "cost_known": known_cost,
-            "total_tokens": sum(
-                measurement["total_tokens"] for measurement in measurements
-            ),
+            "total_tokens": sum(measurement["total_tokens"] for measurement in measurements),
             "llm_calls": sum(measurement["llm_calls"] for measurement in measurements),
-            "candidate_counts": [
-                measurement["candidate_count"] for measurement in measurements
-            ],
+            "candidate_counts": [measurement["candidate_count"] for measurement in measurements],
             "checkpoint_generations": [
                 measurement["checkpoint_generation"] for measurement in measurements
             ],
@@ -1062,9 +1020,7 @@ class ResearchBenchmarkRunner:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"benchmark timed out after {self._settings.timeout_sec}s"
-            ) from exc
+            raise RuntimeError(f"benchmark timed out after {self._settings.timeout_sec}s") from exc
 
         (run_dir / "stdout.log").write_text(completed.stdout, encoding="utf-8")
         (run_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
@@ -1097,9 +1053,7 @@ class ResearchBenchmarkRunner:
         )
         return stats
 
-    def _read_run_stats(
-        self, db_path: Path, job: BenchmarkJob
-    ) -> dict[str, Any]:
+    def _read_run_stats(self, db_path: Path, job: BenchmarkJob) -> dict[str, Any]:
         """Read metrics and reject superficially completed, non-evolving runs."""
         if not db_path.exists():
             raise RuntimeError(f"benchmark database was not created: {db_path}")
@@ -1176,13 +1130,8 @@ class ResearchBenchmarkRunner:
                 f"benchmark variant {job.variant.name!r} produced no successful LLM calls"
             )
         canary_total = int(policy_experiments[0] if policy_experiments else 0)
-        canary_completed = int(
-            (policy_experiments[1] or 0) if policy_experiments else 0
-        )
-        if (
-            job.variant.name in _SLOW_LOOP_REQUIRED_VARIANTS
-            and canary_completed == 0
-        ):
+        canary_completed = int((policy_experiments[1] or 0) if policy_experiments else 0)
+        if job.variant.name in _SLOW_LOOP_REQUIRED_VARIANTS and canary_completed == 0:
             raise PermanentJobError(
                 f"{job.variant.name} variant produced no completed independent "
                 "policy canary; "
@@ -1210,11 +1159,7 @@ class ResearchBenchmarkRunner:
         success_rate = statistics.fmean(float(bool(row[2])) for row in trajectory)
         priced_calls = int(ledger[1] if ledger else 0)
         cost_known = llm_calls == priced_calls
-        cost_usd = (
-            float(ledger[2] or 0.0)
-            if ledger and cost_known
-            else None
-        )
+        cost_usd = float(ledger[2] or 0.0) if ledger and cost_known else None
         return {
             "score": frontier_auc,
             "frontier_auc": frontier_auc,

@@ -60,9 +60,7 @@ class AsyncEvolutionEngine:
         self._shutdown_event = asyncio.Event()
         self._executor: ThreadPoolExecutor | None = None
 
-    async def run(
-        self, initial_code: str | dict[str, str], task_name: str
-    ) -> EvolutionResult:
+    async def run(self, initial_code: str | dict[str, str], task_name: str) -> EvolutionResult:
         """异步进化主循环.
 
         .. deprecated:: 使用 AsyncPipelineEngine.run() 代替。
@@ -281,9 +279,7 @@ class AsyncPipelineEngine:
 
         self._fast_loop = FastLoopStep(engine)
 
-    async def run(
-        self, initial_code: str | dict[str, str], task_name: str
-    ) -> EvolutionResult:
+    async def run(self, initial_code: str | dict[str, str], task_name: str) -> EvolutionResult:
         """异步流水线主循环."""
         from omnievolve.utils.seed import set_global_seed
 

@@ -291,9 +291,7 @@ class VerificationService:
                 raise LLMVerifierCapabilityError(
                     "fail closed: verifier-on run cannot proceed without native logprobs"
                 )
-            raise LLMError(
-                f"fail closed: verification evidence incomplete ({evidence.status})"
-            )
+            raise LLMError(f"fail closed: verification evidence incomplete ({evidence.status})")
         return evidence
 
     def _record_failure(
@@ -362,9 +360,7 @@ class VerificationService:
             raise LLMVerifierCapabilityError(
                 f"fail closed: verifier-on run cannot proceed without native logprobs{detail}"
             )
-        raise LLMError(
-            f"fail closed: verification evidence incomplete ({status}{detail})"
-        )
+        raise LLMError(f"fail closed: verification evidence incomplete ({status}{detail})")
 
     def _request_hash(self, request: VerificationRequest) -> str:
         """service 级幂等哈希：混入 model/prompt/capability/mode/vocab/temperature."""
@@ -386,7 +382,7 @@ class VerificationService:
         candidate_id: str,
         peer_candidate_id: str,
     ) -> list[dict[str, Any]]:
-        """按候选对读取比较行（用于离线 replay 与审计）. """
+        """按候选对读取比较行（用于离线 replay 与审计）."""
         return [
             dict(row)
             for row in self._db.fetchall(
@@ -513,8 +509,7 @@ class VerificationService:
                 peer_score=float(evidence["peer_score"]),
                 preference_probability=float(evidence["preference_probability"]),
                 criterion_scores={
-                    key: float(value)
-                    for key, value in evidence["criterion_scores"].items()
+                    key: float(value) for key, value in evidence["criterion_scores"].items()
                 },
                 variance=float(evidence["variance"]),
                 entropy=float(evidence["entropy"]),
@@ -523,9 +518,7 @@ class VerificationService:
                 evidence_hash=evidence["evidence_hash"],
                 total_tokens=int(evidence.get("total_tokens", 0) or 0),
                 cost_usd=(
-                    float(evidence["cost_usd"])
-                    if evidence.get("cost_usd") is not None
-                    else None
+                    float(evidence["cost_usd"]) if evidence.get("cost_usd") is not None else None
                 ),
                 cost_known=bool(evidence.get("cost_known", False)),
             )

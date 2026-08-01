@@ -330,9 +330,7 @@ def build_default_matrix(
                 seed,
                 protocol="formal",
                 repetitions=repetitions,
-                eval_repetitions=_eval_repetitions_for_task(
-                    task.name, eval_repetitions
-                ),
+                eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
             ),
             task=task,
             variant=variant,
@@ -366,9 +364,7 @@ def build_pilot_matrix(
                 seed,
                 protocol="pilot",
                 repetitions=repetitions,
-                eval_repetitions=_eval_repetitions_for_task(
-                    task.name, eval_repetitions
-                ),
+                eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
             ),
             task=task,
             variant=variant,
@@ -405,9 +401,7 @@ def build_reference_credit_matrix(
                 seed,
                 protocol="reference_credit",
                 repetitions=repetitions,
-                eval_repetitions=_eval_repetitions_for_task(
-                    task.name, eval_repetitions
-                ),
+                eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
             ),
             task=task,
             variant=variant,
@@ -445,9 +439,7 @@ def _build_independent_ablation_matrix(
                 seed,
                 protocol=protocol,
                 repetitions=repetitions,
-                eval_repetitions=_eval_repetitions_for_task(
-                    task.name, eval_repetitions
-                ),
+                eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
             ),
             task=task,
             variant=variant,
@@ -511,13 +503,7 @@ def write_manifest(
         "seed_count": len({job.seed for job in jobs}),
         "run_count": len(jobs),
         "eval_repetitions": {
-            task_name: sorted(
-                {
-                    job.eval_repetitions
-                    for job in jobs
-                    if job.task.name == task_name
-                }
-            )
+            task_name: sorted({job.eval_repetitions for job in jobs if job.task.name == task_name})
             for task_name in sorted({job.task.name for job in jobs})
         },
         "metadata": metadata or {},
@@ -556,9 +542,7 @@ def summarize_results(
 ) -> dict[str, Any]:
     """Aggregate paired research results without treating unknown cost as zero."""
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    failures: dict[tuple[str, str, str], dict[str, int]] = defaultdict(
-        lambda: defaultdict(int)
-    )
+    failures: dict[tuple[str, str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for record in records:
         key = (
             str(record.get("protocol") or "formal"),
@@ -603,9 +587,7 @@ def summarize_results(
                 "total_tokens": metric_stats("total_tokens"),
                 "wall_sec": metric_stats("wall_sec"),
                 "cost_usd": (
-                    summarize_samples(known_costs, seed=0).to_dict()
-                    if known_costs
-                    else None
+                    summarize_samples(known_costs, seed=0).to_dict() if known_costs else None
                 ),
                 "unknown_cost_runs": len(completed) - len(known_costs),
             }
@@ -620,18 +602,12 @@ def summarize_results(
     for protocol in protocols:
         baseline_name = baseline_names.get(protocol, "full")
         tasks = sorted(
-            {
-                task
-                for current_protocol, task, _ in grouped
-                if current_protocol == protocol
-            }
+            {task for current_protocol, task, _ in grouped if current_protocol == protocol}
         )
         for task in tasks:
             baseline_records = grouped.get((protocol, task, baseline_name), [])
             baseline = {
-                int(record["seed"]): float(
-                    record.get("frontier_auc", record["score"])
-                )
+                int(record["seed"]): float(record.get("frontier_auc", record["score"]))
                 for record in baseline_records
                 if record.get("seed") is not None
             }
@@ -647,9 +623,7 @@ def summarize_results(
                     continue
                 current_records = grouped[(protocol, task, variant)]
                 current = {
-                    int(record["seed"]): float(
-                        record.get("frontier_auc", record["score"])
-                    )
+                    int(record["seed"]): float(record.get("frontier_auc", record["score"]))
                     for record in current_records
                     if record.get("seed") is not None
                 }
@@ -657,15 +631,9 @@ def summarize_results(
                 if paired_seeds:
                     baseline_values = [baseline[seed] for seed in paired_seeds]
                     current_values = [current[seed] for seed in paired_seeds]
-                    differences = [
-                        baseline[seed] - current[seed] for seed in paired_seeds
-                    ]
+                    differences = [baseline[seed] - current[seed] for seed in paired_seeds]
                     effect = summarize_samples(differences, seed=0).to_dict()
-                    deviation = (
-                        statistics.stdev(differences)
-                        if len(differences) >= 2
-                        else 0.0
-                    )
+                    deviation = statistics.stdev(differences) if len(differences) >= 2 else 0.0
                     comparison_record = {
                         "protocol": protocol,
                         "task": task,
@@ -678,9 +646,7 @@ def summarize_results(
                             current_values,
                         ),
                         "standardized_effect": (
-                            statistics.fmean(differences) / deviation
-                            if deviation > 0
-                            else None
+                            statistics.fmean(differences) / deviation if deviation > 0 else None
                         ),
                         "p_value": paired_randomization_p_value(differences),
                         "power_analysis": (
@@ -726,9 +692,7 @@ def summarize_results(
     ]
     formal_seed_recommendation = (
         {
-            "recommended_seeds": max(
-                int(result["recommended_seeds"]) for result in power_results
-            ),
+            "recommended_seeds": max(int(result["recommended_seeds"]) for result in power_results),
             "required_seeds_unbounded": max(
                 int(result["required_seeds_unbounded"]) for result in power_results
             ),
@@ -767,17 +731,13 @@ def _assess_slow_loop(records: list[dict[str, Any]]) -> dict[str, Any]:
     for record in records:
         if record.get("status") != "completed" or record.get("score") is None:
             continue
-        completed[
-            (str(record["task"]), str(record["variant"]), int(record.get("seed", -1)))
-        ] = float(record["score"])
+        completed[(str(record["task"]), str(record["variant"]), int(record.get("seed", -1)))] = (
+            float(record["score"])
+        )
 
     differences = []
     pair_ids = []
-    task_seeds = sorted(
-        (task, seed)
-        for task, variant, seed in completed
-        if variant == "full"
-    )
+    task_seeds = sorted((task, seed) for task, variant, seed in completed if variant == "full")
     for task, seed in task_seeds:
         full = completed.get((task, "full", seed))
         no_slow = completed.get((task, "no_slow_loop", seed))

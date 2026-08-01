@@ -54,9 +54,7 @@ def calibrate_evaluator_noise(
         prefix = values[:count]
         mean = statistics.fmean(prefix)
         scale = (
-            abs(float(reference_scale))
-            if reference_scale is not None
-            else max(abs(mean), 1e-12)
+            abs(float(reference_scale)) if reference_scale is not None else max(abs(mean), 1e-12)
         )
         target = minimum_effect * scale
         deviation = statistics.stdev(prefix)
@@ -153,8 +151,7 @@ def paired_randomization_p_value(differences: Sequence[float]) -> float:
     permutation_count = 1 << len(values)
     for mask in range(permutation_count):
         permuted_mean = statistics.fmean(
-            value if mask & (1 << index) else -value
-            for index, value in enumerate(values)
+            value if mask & (1 << index) else -value for index, value in enumerate(values)
         )
         if abs(permuted_mean) >= observed - 1e-15:
             extreme += 1
@@ -222,9 +219,7 @@ def assess_pilot_gate(
     paired_counts: list[int] = []
     for task, variant in cells:
         full_seeds = {seed for t, name, seed in completed if t == task and name == "full"}
-        variant_seeds = {
-            seed for t, name, seed in completed if t == task and name == variant
-        }
+        variant_seeds = {seed for t, name, seed in completed if t == task and name == variant}
         paired_counts.append(len(full_seeds & variant_seeds))
     minimum_pairs = min(paired_counts, default=0)
 

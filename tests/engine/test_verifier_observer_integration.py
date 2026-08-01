@@ -135,11 +135,15 @@ def _build_engine(
     artifacts = ArtifactStore(root / "artifacts", db)
     store = CASCodeStore(artifacts, root / "work")
     sandbox = _ObserverSandbox(store)
-    experiment_id = ExperimentRepository(db).create(
-        task_id="sort",
-        task_name="sort",
-        config_snapshot={"verifier_integration": True},
-    ).id
+    experiment_id = (
+        ExperimentRepository(db)
+        .create(
+            task_id="sort",
+            task_name="sort",
+            config_snapshot={"verifier_integration": True},
+        )
+        .id
+    )
     llm = _ObserverLLM()
     engine = EvolutionEngine(
         db,

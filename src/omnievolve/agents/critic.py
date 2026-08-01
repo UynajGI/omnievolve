@@ -27,6 +27,7 @@ class CriticReviewTrace:
     llm_used: bool
     model: str | None = None
 
+
 CRITIC_SYSTEM_PROMPT = """You are the Critic Agent in an evolutionary code optimization system.
 Your role is to review the generated code for correctness and quality.
 
@@ -140,9 +141,7 @@ class Critic:
                     code, thought, last_eval_stderr, model=selected_model
                 )
             else:
-                llm_passed, llm_feedback = self._llm_review(
-                    code, thought, model=selected_model
-                )
+                llm_passed, llm_feedback = self._llm_review(code, thought, model=selected_model)
             if not llm_passed:
                 issues.append(llm_feedback)
 

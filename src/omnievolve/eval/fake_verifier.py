@@ -95,13 +95,9 @@ class FakeProbabilisticVerifier:
     def verify_pair(self, request: VerificationRequest) -> VerificationEvidence:
         """确定性验证：run(N) == run(K) + resume(N-K) 依赖此实现."""
         self.calls.append(request)
-        missing = [
-            key for key in _REQUIRED_EVIDENCE_KEYS if key not in request.evidence
-        ]
+        missing = [key for key in _REQUIRED_EVIDENCE_KEYS if key not in request.evidence]
         if missing:
-            raise ValueError(
-                f"verification evidence missing required keys: {', '.join(missing)}"
-            )
+            raise ValueError(f"verification evidence missing required keys: {', '.join(missing)}")
         pair = (request.candidate_id, request.peer_candidate_id)
 
         if self._force_status is not None:
@@ -123,8 +119,7 @@ class FakeProbabilisticVerifier:
         if pair in self._fixture:
             candidate_score, peer_score = self._fixture[pair]
             criterion_scores = {
-                criterion: candidate_score - peer_score
-                for criterion in request.criteria
+                criterion: candidate_score - peer_score for criterion in request.criteria
             }
             return self._build_evidence(
                 request,
@@ -140,9 +135,7 @@ class FakeProbabilisticVerifier:
         criterion_scores = {}
         entropies: list[float] = []
         variances: list[float] = []
-        score_map = {
-            token: (int(token) / 20.0) for token in self._score_tokens
-        }
+        score_map = {token: (int(token) / 20.0) for token in self._score_tokens}
         for criterion_index, criterion in enumerate(request.criteria):
             criterion_rng = random.Random(
                 _stable_seed(request, salt=f"criterion:{criterion_index}:{self._seed}")
@@ -155,20 +148,14 @@ class FakeProbabilisticVerifier:
             per_repetition_peer: list[ScoreTokenDistribution] = []
             for repetition in range(request.repetitions):
                 rep_rng = random.Random(
-                    _stable_seed(
-                        request, salt=f"rep:{criterion_index}:{repetition}:{self._seed}"
-                    )
+                    _stable_seed(request, salt=f"rep:{criterion_index}:{repetition}:{self._seed}")
                 )
-                candidate_tokens = self._sample_distribution(
-                    rep_rng, candidate_expected
-                )
+                candidate_tokens = self._sample_distribution(rep_rng, candidate_expected)
                 peer_tokens = self._sample_distribution(rep_rng, peer_expected)
                 per_repetition_candidate.append(
                     ScoreTokenDistribution(
                         probabilities=candidate_tokens,
-                        expected_score=token_expectation(
-                            candidate_tokens, score_map
-                        )[0],
+                        expected_score=token_expectation(candidate_tokens, score_map)[0],
                         entropy=token_expectation(candidate_tokens, score_map)[1],
                         covered_probability_mass=self._coverage,
                     )
@@ -184,9 +171,7 @@ class FakeProbabilisticVerifier:
             candidate_avg = statistics.fmean(
                 item.expected_score for item in per_repetition_candidate
             )
-            peer_avg = statistics.fmean(
-                item.expected_score for item in per_repetition_peer
-            )
+            peer_avg = statistics.fmean(item.expected_score for item in per_repetition_peer)
             criterion_scores[criterion] = candidate_avg - peer_avg
             entropies.append(
                 statistics.fmean(
@@ -201,9 +186,7 @@ class FakeProbabilisticVerifier:
                         statistics.variance(
                             [item.expected_score for item in per_repetition_candidate]
                         )
-                        + statistics.variance(
-                            [item.expected_score for item in per_repetition_peer]
-                        )
+                        + statistics.variance([item.expected_score for item in per_repetition_peer])
                     )
                     / 2
                 )

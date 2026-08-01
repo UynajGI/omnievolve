@@ -34,24 +34,10 @@ def test_pilot_matrix_is_fixed_45_run_paired_protocol():
     no_slow = next(job for job in jobs if job.variant.name == "no_slow_loop")
     assert full.variant.config_overrides["evolution.self_evolve_enabled"] is True
     assert full.variant.config_overrides["meta_evolution.enabled"] is True
-    assert (
-        full.variant.config_overrides[
-            "meta_evolution.meta_canary_budget_ratio"
-        ]
-        == 0.5
-    )
-    assert (
-        full.variant.config_overrides["self_evaluator.roi_warn_threshold"]
-        > 1_000_000
-    )
-    assert (
-        no_novelty.variant.config_overrides["evolution.self_evolve_enabled"]
-        is True
-    )
-    assert (
-        no_novelty.variant.config_overrides["self_evaluator.roi_warn_threshold"]
-        > 1_000_000
-    )
+    assert full.variant.config_overrides["meta_evolution.meta_canary_budget_ratio"] == 0.5
+    assert full.variant.config_overrides["self_evaluator.roi_warn_threshold"] > 1_000_000
+    assert no_novelty.variant.config_overrides["evolution.self_evolve_enabled"] is True
+    assert no_novelty.variant.config_overrides["self_evaluator.roi_warn_threshold"] > 1_000_000
     assert no_slow.variant.config_overrides["evolution.self_evolve_enabled"] is False
     assert {job.eval_repetitions for job in jobs} == {3}
 
@@ -119,10 +105,7 @@ def test_reference_credit_ablation_is_separate_and_paired():
         "reference_credit_on",
         "reference_credit_off",
     }
-    assert all(
-        "evolution.reference_credit_enabled" in job.variant.config_overrides
-        for job in jobs
-    )
+    assert all("evolution.reference_credit_enabled" in job.variant.config_overrides for job in jobs)
 
 
 def test_operator_portfolio_ablation_is_separate_and_paired():
@@ -136,8 +119,7 @@ def test_operator_portfolio_ablation_is_separate_and_paired():
         "operator_thompson",
     }
     assert all(
-        job.variant.config_overrides["evolution.qd_archive_enabled"] is False
-        for job in jobs
+        job.variant.config_overrides["evolution.qd_archive_enabled"] is False for job in jobs
     )
 
 
@@ -226,16 +208,9 @@ def test_independent_ablation_summary_is_protocol_scoped_and_holm_corrected():
 
     report = summarize_results(records, include_cost_metric=False)
 
-    assert {cell["protocol"] for cell in report["cells"]} == {
-        "operator_portfolio"
-    }
-    assert {comparison["relative_to"] for comparison in report["comparisons"]} == {
-        "operator_fixed"
-    }
-    assert all(
-        0.0 <= comparison["holm_adjusted_p"] <= 1.0
-        for comparison in report["comparisons"]
-    )
+    assert {cell["protocol"] for cell in report["cells"]} == {"operator_portfolio"}
+    assert {comparison["relative_to"] for comparison in report["comparisons"]} == {"operator_fixed"}
+    assert all(0.0 <= comparison["holm_adjusted_p"] <= 1.0 for comparison in report["comparisons"])
     assert all("cliffs_delta" in comparison for comparison in report["comparisons"])
 
 

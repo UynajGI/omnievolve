@@ -119,9 +119,7 @@ def test_permanently_denied_endpoint_is_skipped_on_later_calls(monkeypatch) -> N
         default_model="primary",
         api_key="primary-key",
         api_base="https://primary.invalid/v1",
-        fallback_endpoints=[
-            LLMEndpoint("fallback", "fallback-key", "https://fallback.invalid/v1")
-        ],
+        fallback_endpoints=[LLMEndpoint("fallback", "fallback-key", "https://fallback.invalid/v1")],
         max_retries=1,
     )
 

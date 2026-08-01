@@ -420,7 +420,11 @@ class LLMGateway:
                 logger.debug("Rate limiter waited %.1fs", waited)
         self._remaining_deadline(raise_if_expired=True)
 
-        endpoints_to_try = endpoints if endpoints is not None else [LLMEndpoint(model, self._api_key, self._api_base)]
+        endpoints_to_try = (
+            endpoints
+            if endpoints is not None
+            else [LLMEndpoint(model, self._api_key, self._api_base)]
+        )
         last_error: Exception | None = None
         for endpoint_index, endpoint in enumerate(endpoints_to_try):
             endpoint_id = (endpoint.model, endpoint.api_key, endpoint.api_base)
@@ -605,7 +609,10 @@ class LLMGateway:
                             raise LLMVerifierCapabilityError(safe_error) from e
                         raise self._typed_error(e, safe_error) from e
                     self._remaining_deadline(raise_if_expired=True, cause=e)
-                    if attempt < (max_retries if max_retries is not None else self._max_retries) - 1:
+                    if (
+                        attempt
+                        < (max_retries if max_retries is not None else self._max_retries) - 1
+                    ):
                         backoff = self._retry_backoff_base * (2**attempt)
                         remaining = self._remaining_deadline(raise_if_expired=True)
                         if remaining is not None:
@@ -653,9 +660,7 @@ class LLMGateway:
             retry_backoff_base=self._retry_backoff_base,
             fallback_model=self._fallback_model,
             fallback_endpoints=list(self._fallback_endpoints),
-            request_timeout=(
-                self._request_timeout if request_timeout is None else request_timeout
-            ),
+            request_timeout=(self._request_timeout if request_timeout is None else request_timeout),
             default_max_tokens=self._default_max_tokens,
             deadline_monotonic=deadline_monotonic,
         )
@@ -821,8 +826,7 @@ class LLMGateway:
         calls = row["calls"] if row else 0
         priced_row = self._db.fetchone(
             (
-                "SELECT COUNT(cost_usd) AS priced FROM llm_call_ledger "
-                "WHERE experiment_id = ?"
+                "SELECT COUNT(cost_usd) AS priced FROM llm_call_ledger WHERE experiment_id = ?"
                 if experiment_id
                 else "SELECT COUNT(cost_usd) AS priced FROM llm_call_ledger"
             ),
@@ -941,18 +945,14 @@ class FakeLLM:
         import random
 
         del top_logprobs, experiment_id, prompt_version_id, max_retries, endpoints
-        self.calls.append(
-            {"messages": messages, "model": model, "agent_role": "verifier"}
-        )
+        self.calls.append({"messages": messages, "model": model, "agent_role": "verifier"})
         seed = compute_sha256_str(
             json.dumps(messages, ensure_ascii=False, sort_keys=True) + str(granularity)
         )
         probabilities = self._score_token_probabilities
         if probabilities is None:
             rng = random.Random(seed)
-            probabilities = {
-                token: rng.random() + 0.01 for token in score_tokens
-            }
+            probabilities = {token: rng.random() + 0.01 for token in score_tokens}
             total = sum(probabilities.values())
             probabilities = {token: p / total for token, p in probabilities.items()}
         positions: list[dict[str, float]] = []
@@ -992,4 +992,6 @@ class FakeLLM:
     ) -> FakeLLM:
         """Return a fresh deterministic stream for independent replay arms."""
         del db
-        return FakeLLM(list(self._responses), score_token_probabilities=self._score_token_probabilities)
+        return FakeLLM(
+            list(self._responses), score_token_probabilities=self._score_token_probabilities
+        )

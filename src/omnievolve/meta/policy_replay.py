@@ -100,7 +100,9 @@ class PolicyReplayEvidence:
             raise ValueError("challenger replay did not produce one score per seed")
         if not self.integrity_passed or not self.anti_cheat_passed:
             raise ValueError("policy replay failed integrity or anti-cheat guardrails")
-        if not all(math.isfinite(value) for value in (*self.champion_scores, *self.challenger_scores)):
+        if not all(
+            math.isfinite(value) for value in (*self.champion_scores, *self.challenger_scores)
+        ):
             raise ValueError("policy replay scores must be finite")
         if self.champion_best_scores and len(self.champion_best_scores) != len(request.seeds):
             raise ValueError("champion replay best-score count does not match paired seeds")
@@ -108,11 +110,16 @@ class PolicyReplayEvidence:
             raise ValueError("challenger replay best-score count does not match paired seeds")
         if self.champion_success_rates and len(self.champion_success_rates) != len(request.seeds):
             raise ValueError("champion replay success-rate count does not match paired seeds")
-        if self.challenger_success_rates and len(self.challenger_success_rates) != len(request.seeds):
+        if self.challenger_success_rates and len(self.challenger_success_rates) != len(
+            request.seeds
+        ):
             raise ValueError("challenger replay success-rate count does not match paired seeds")
         champion_ceiling = self.champion_token_budget or request.token_budget_per_arm
         challenger_ceiling = self.challenger_token_budget or request.token_budget_per_arm
-        if champion_ceiling != challenger_ceiling or champion_ceiling != request.token_budget_per_arm:
+        if (
+            champion_ceiling != challenger_ceiling
+            or champion_ceiling != request.token_budget_per_arm
+        ):
             raise ValueError("policy replay arms did not use the same configured token budget")
         if self.champion_tokens > request.token_budget_per_arm:
             raise ValueError("champion exceeded replay token budget")

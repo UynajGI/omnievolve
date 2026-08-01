@@ -97,18 +97,14 @@ def _load_project_snapshot(root: Path) -> dict[str, str]:
         try:
             files[relative.as_posix()] = data.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise ValueError(
-                f"Project file is not UTF-8 text: {relative.as_posix()}"
-            ) from exc
+            raise ValueError(f"Project file is not UTF-8 text: {relative.as_posix()}") from exc
 
     if "main.py" not in files:
         raise ValueError("A project task must contain a UTF-8 main.py entrypoint")
     return files
 
 
-def _apply_setting_overrides(
-    settings: OmniEvolveSettings, overrides: list[str] | None
-) -> None:
+def _apply_setting_overrides(settings: OmniEvolveSettings, overrides: list[str] | None) -> None:
     """Apply validated ``section.field=JSON`` overrides to loaded settings."""
     for raw in overrides or []:
         if "=" not in raw:
@@ -225,10 +221,7 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
             )
 
     return {
-        "api_key": (
-            os.environ.get("OMNIEVOLVE_LLM_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-        ),
+        "api_key": (os.environ.get("OMNIEVOLVE_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")),
         "api_base": (
             os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
         ),
@@ -893,9 +886,7 @@ def research_benchmark(
         "--task",
         help="calibrate/execute 时仅运行指定任务",
     ),
-    variant_filter: str | None = typer.Option(
-        None, "--variant", help="execute 时仅运行指定变体"
-    ),
+    variant_filter: str | None = typer.Option(None, "--variant", help="execute 时仅运行指定变体"),
     seed_limit: int | None = typer.Option(
         None, "--seed-limit", min=1, help="execute 时每个 cell 仅取前 N 个种子"
     ),
@@ -937,9 +928,7 @@ def research_benchmark(
 
         calibration_tasks = PILOT_TASKS
         if task_filter:
-            calibration_tasks = tuple(
-                task for task in PILOT_TASKS if task.name == task_filter
-            )
+            calibration_tasks = tuple(task for task in PILOT_TASKS if task.name == task_filter)
             if not calibration_tasks:
                 raise typer.BadParameter(
                     f"pilot calibration task not found: {task_filter}",
@@ -1038,12 +1027,8 @@ def research_benchmark(
                 "calibration_path": str(Path(calibration).resolve()),
                 "calibration_sha256": hashlib.sha256(calibration_bytes).hexdigest(),
                 "calibration_required": True,
-                "calibration_all_converged": bool(
-                    calibration_payload.get("all_converged")
-                ),
-                "calibration_minimum_effect": calibration_payload.get(
-                    "minimum_effect"
-                ),
+                "calibration_all_converged": bool(calibration_payload.get("all_converged")),
+                "calibration_minimum_effect": calibration_payload.get("minimum_effect"),
             }
         path = write_manifest(jobs, output, metadata=metadata)
         variant_count = len({job.variant.name for job in jobs})
@@ -1063,9 +1048,7 @@ def research_benchmark(
 
         matrix_path = Path(output)
         if not matrix_path.exists():
-            raise typer.BadParameter(
-                f"matrix file not found: {output}", param_hint="--output"
-            )
+            raise typer.BadParameter(f"matrix file not found: {output}", param_hint="--output")
         jobs = load_manifest_jobs(matrix_path)
         if task_filter:
             jobs = [job for job in jobs if job.task.name == task_filter]

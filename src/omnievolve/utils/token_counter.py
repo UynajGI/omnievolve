@@ -261,9 +261,7 @@ class BudgetGuard:
             "token_remaining": self._state.remaining_tokens,
             "token_ratio": self._state.token_ratio,
             "cost_budget": self._state.cost_budget_usd,
-            "cost_used": (
-                self._state.used_cost_usd if self._state.cost_known else None
-            ),
+            "cost_used": (self._state.used_cost_usd if self._state.cost_known else None),
             "known_cost_used": self._state.used_cost_usd,
             "cost_known": self._state.cost_known,
             "cost_remaining": self._state.remaining_cost,
@@ -307,9 +305,7 @@ class BudgetGuard:
             self._state.used_cost_usd,
             float(state.get("used_cost_usd", 0.0)),
         )
-        self._state.cost_known = self._state.cost_known and bool(
-            state.get("cost_known", True)
-        )
+        self._state.cost_known = self._state.cost_known and bool(state.get("cost_known", True))
         self._state.used_compute_sec = max(
             self._state.used_compute_sec,
             float(state.get("used_compute_sec", 0.0)),

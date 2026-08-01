@@ -19,7 +19,7 @@ CRITERIA = ("specification_fidelity", "mechanism_realization", "evidence_consist
 
 @pytest.fixture(autouse=True)
 def _seed_fk_rows(db):
-    """FK：experiment + candidate 行（comparison 引用两者）. """
+    """FK：experiment + candidate 行（comparison 引用两者）."""
     db.execute(
         """
         INSERT OR IGNORE INTO experiment
@@ -35,8 +35,16 @@ def _seed_fk_rows(db):
         """
     )
     for candidate_id in (
-        "cand-0", "cand-1", "cand-2", "cand-3", "cand-4",
-        "peer-0", "peer-1", "peer-2", "peer-3", "peer-4",
+        "cand-0",
+        "cand-1",
+        "cand-2",
+        "cand-3",
+        "cand-4",
+        "peer-0",
+        "peer-1",
+        "peer-2",
+        "peer-3",
+        "peer-4",
     ):
         db.execute(
             """
@@ -142,19 +150,17 @@ class TestIdempotency:
 
     def test_resume_invariant(self, db, artifact_store):
         """run(N) == run(K) + resume(N-K)（§15 Fake verifier 不变式）."""
-        requests = [_request(candidate_id=f"cand-{i}", peer_id=f"peer-{i}", seed=i) for i in range(4)]
+        requests = [
+            _request(candidate_id=f"cand-{i}", peer_id=f"peer-{i}", seed=i) for i in range(4)
+        ]
         verifier = FakeProbabilisticVerifier()
         full_service = _service(db, artifact_store)
-        full_results = [
-            full_service.verify_pair(request, verifier) for request in requests
-        ]
+        full_results = [full_service.verify_pair(request, verifier) for request in requests]
         full_calls = len(verifier.calls)
 
         # 全新 service（模拟 resume）逐 request 重放：全部命中幂等缓存。
         resumed_service = _service(db, artifact_store)
-        resumed_results = [
-            resumed_service.verify_pair(request, verifier) for request in requests
-        ]
+        resumed_results = [resumed_service.verify_pair(request, verifier) for request in requests]
         assert len(verifier.calls) == full_calls  # resume 不重复调用 provider
         for full, resumed in zip(full_results, resumed_results):
             assert full.evidence_hash == resumed.evidence_hash
@@ -291,9 +297,7 @@ class TestFailureSemantics:
 
         service = _service(db, artifact_store)
         service.verify_pair(_request(), _UsageVerifier())
-        batch = db.fetchone(
-            "SELECT total_tokens, cost_usd, cost_known FROM verification_batch"
-        )
+        batch = db.fetchone("SELECT total_tokens, cost_usd, cost_known FROM verification_batch")
         assert batch["total_tokens"] == 137
         assert batch["cost_usd"] == pytest.approx(0.0042)
         assert batch["cost_known"] == 1

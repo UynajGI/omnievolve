@@ -23,15 +23,9 @@ def test_descriptor_separates_recursive_and_iterative_programs():
 def test_archive_keeps_best_per_cell_and_never_crosses_islands():
     archive = BehaviorArchive(max_cells_per_island=4)
     code = "def f(xs):\n    for x in xs:\n        print(x)\n"
-    assert archive.update(
-        island_id="island_0", candidate_id="weak", score=0.4, code=code
-    )
-    assert archive.update(
-        island_id="island_0", candidate_id="strong", score=0.8, code=code
-    )
-    assert not archive.update(
-        island_id="island_0", candidate_id="worse", score=0.2, code=code
-    )
+    assert archive.update(island_id="island_0", candidate_id="weak", score=0.4, code=code)
+    assert archive.update(island_id="island_0", candidate_id="strong", score=0.8, code=code)
+    assert not archive.update(island_id="island_0", candidate_id="worse", score=0.2, code=code)
 
     random.seed(3)
     assert archive.choose_parent("island_0", allowed_candidate_ids={"strong"}) == "strong"
