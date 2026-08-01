@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import statistics
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from omnievolve.eval.anti_cheat import (
     AntiCheatFinding,
@@ -170,18 +170,21 @@ class EvaluationService:
                     )
                     output = EvalOutput(
                         score=0.0,
-                        metrics={
-                            "anti_cheat_findings": float(len(findings)),
-                            "evaluation_integrity_findings": [
-                                {
-                                    "rule": finding.rule,
-                                    "detail": finding.detail,
-                                }
-                                for finding in findings
-                            ],
-                            "evaluation_stage_evidence": stage_evidence,
-                            **(extra_metrics or {}),
-                        },
+                        metrics=cast(
+                            dict[str, float],
+                            {
+                                "anti_cheat_findings": float(len(findings)),
+                                "evaluation_integrity_findings": [
+                                    {
+                                        "rule": finding.rule,
+                                        "detail": finding.detail,
+                                    }
+                                    for finding in findings
+                                ],
+                                "evaluation_stage_evidence": stage_evidence,
+                                **(extra_metrics or {}),
+                            },
+                        ),
                         passed=False,
                         failure_reason=f"Evaluation integrity check failed: {reason}",
                         confidence=1.0,

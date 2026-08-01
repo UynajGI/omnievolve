@@ -237,7 +237,8 @@ class PolicyCanaryRunner:
 
         def known_cost(results: list[PolicyArmResult]) -> float | None:
             costs = [result.cost_usd for result in results]
-            return float(sum(costs)) if all(cost is not None for cost in costs) else None
+            known = [cost for cost in costs if cost is not None]
+            return float(sum(known)) if len(known) == len(costs) else None
 
         evidence = PolicyReplayEvidence(
             snapshot_id=request.snapshot_id,

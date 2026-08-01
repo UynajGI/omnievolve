@@ -30,7 +30,7 @@ import signal
 import time
 import warnings
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Literal, cast
 
 from omnievolve.agents.coder import Coder
 from omnievolve.agents.context_builder import ContextBuilder
@@ -294,7 +294,10 @@ class EvolutionEngine:
             from omnievolve.engine.operator_portfolio import OperatorPortfolio
 
             self._operator_portfolio = OperatorPortfolio(
-                algorithm=self._config.operator_portfolio_algorithm,
+                algorithm=cast(
+                    Literal["ucb", "thompson"],
+                    self._config.operator_portfolio_algorithm,
+                ),
                 exploration=self._config.operator_portfolio_ucb_c,
             )
 

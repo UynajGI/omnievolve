@@ -964,7 +964,7 @@ class FakeLLM:
             # temperature=0（评分默认）取 argmax，保证 coverage 稳定；
             # 否则按概率加权采样。
             if temperature == 0.0:
-                chosen = max(probabilities, key=probabilities.get)
+                chosen = max(probabilities, key=lambda token: probabilities[token])
             else:
                 rng = random.Random(f"{seed}:{index}")
                 chosen = rng.choices(token_list, weights=weights, k=1)[0]

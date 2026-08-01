@@ -186,16 +186,15 @@ class LocalPolicyArmRunner:
             (experiment_id,),
         )
         checkpoint = json.loads(experiment["checkpoint_data"] or "{}") if experiment else {}
-        candidate_count = int(
-            db.fetchone(
-                """
-                SELECT COUNT(*) AS count
-                FROM candidate
-                WHERE experiment_id = ? AND status != 'aborted'
-                """,
-                (experiment_id,),
-            )["count"]
+        candidate_count_row = db.fetchone(
+            """
+            SELECT COUNT(*) AS count
+            FROM candidate
+            WHERE experiment_id = ? AND status != 'aborted'
+            """,
+            (experiment_id,),
         )
+        candidate_count = int(candidate_count_row["count"]) if candidate_count_row else 0
         integrity = bool(
             experiment
             and experiment["status"] == "completed"
@@ -212,7 +211,8 @@ class LocalPolicyArmRunner:
         )
         calls = int(ledger["calls"] if ledger else 0)
         priced = int(ledger["priced"] if ledger else 0)
-        cost = float(ledger["cost"] or 0.0) if calls == priced else None
+        # ledger 为 None（无调用记录）时 cost 回退 0.0，避免空索引 TypeError。
+        cost = float((ledger["cost"] if ledger else 0.0) or 0.0) if calls == priced else None
         return PolicyArmResult(
             frontier_auc=statistics.fmean(frontier),
             best_score=max(float(row["primary_score"]) for row in rows),

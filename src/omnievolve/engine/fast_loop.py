@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
 from omnievolve.engine.novelty import NoveltyDecision, NoveltyResult
@@ -152,7 +152,10 @@ class FastLoopStep:
             operator_decision = e._operator_portfolio.select(  # noqa: SLF001
                 task=task_name,
                 stage=stage,
-                eligible=eligible,
+                eligible=cast(
+                    list[Literal["point", "diff", "rewrite", "crossover", "repair"]],
+                    eligible,
+                ),
             )
 
         # 步骤 2: 选择父代

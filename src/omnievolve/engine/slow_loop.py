@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     )
     from omnievolve.meta.policy_archive import PolicyArchive
     from omnievolve.meta.policy_genome import SearchPolicyGenome
-    from omnievolve.meta.policy_replay import PolicyReplayExecutor
+    from omnievolve.meta.policy_replay import PolicyReplayExecutor, PolicyReplayRequest
     from omnievolve.storage.artifact_store import ArtifactStore
     from omnievolve.storage.db import Database
     from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
@@ -361,7 +361,7 @@ class SlowLoopController:
         )
         return tuple(str(row["artifact_ref"]) for row in rows if row["artifact_ref"])
 
-    def _start_policy_experiment(self, request: object) -> str:
+    def _start_policy_experiment(self, request: PolicyReplayRequest) -> str:
         """Persist the canary before execution so failures remain auditable."""
         policy_experiment_id = generate_id()
         self._db.execute(

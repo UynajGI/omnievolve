@@ -559,12 +559,14 @@ def summarize_results(
         completed = grouped[key]
 
         def metric_stats(name: str, fallback: str | None = None) -> dict[str, Any] | None:
-            values = [
-                float(record[name] if record.get(name) is not None else record[fallback])
-                for record in completed
-                if record.get(name) is not None
-                or (fallback is not None and record.get(fallback) is not None)
-            ]
+            def pick(record: dict[str, Any]) -> float | None:
+                if record.get(name) is not None:
+                    return float(record[name])
+                if fallback is not None and record.get(fallback) is not None:
+                    return float(record[fallback])
+                return None
+
+            values = [value for record in completed if (value := pick(record)) is not None]
             return summarize_samples(values, seed=0).to_dict() if values else None
 
         known_costs = [
@@ -592,7 +594,7 @@ def summarize_results(
                 "unknown_cost_runs": len(completed) - len(known_costs),
             }
         )
-    comparisons = []
+    comparisons: list[dict[str, Any]] = []
     baseline_names = {
         "operator_portfolio": "operator_fixed",
         "qd_archive": "qd_off",
