@@ -760,8 +760,33 @@ PPT、adaptive allocation 和 verifier-aware Slow Loop 必须分别通过独立�
 
 ### 验证
 
-- 新增测试：`tests/eval/test_verifier_math.py`、`tests/eval/test_verifier_service.py`、`tests/eval/test_verifier_observer.py`、`tests/research/test_verifier_replay.py`、`tests/agents/test_llm_gateway_verifier.py`、`tests/engine/test_verifier_observer_integration.py`（63 个用例）。
-- 全量：`pytest -m "not slow and not llm and not benchmark"` 1044 passed；ruff 全绿；mypy 无新增错误。
+- 新增测试：`tests/eval/test_verifier_math.py`、`tests/eval/test_verifier_service.py`、`tests/eval/test_verifier_observer.py`、`tests/eval/test_probabilistic_verifier.py`、`tests/research/test_verifier_replay.py`、`tests/agents/test_llm_gateway_verifier.py`、`tests/engine/test_verifier_observer_integration.py`、`tests/test_cli.py`（89 个用例）。
+- 全量：`pytest -m "not slow and not llm and not benchmark"` 1070 passed；ruff 全绿；mypy 与基线一致（零新增）。
+
+### 审查修复（2026-08-01，commit c62c41f）
+
+针对 PR 1-3 代码审查（Request changes）的全部 P1/P2/P3 finding 已修复：
+
+| 审查 finding | 修复 |
+|---|---|
+| CLI 未接线 verifier 配置（死路径） | `cli.py` 传入 `verifier_settings=settings.verifier`，并加 CLI 接线测试 |
+| LiteLLM 原生 `TopLogprob` 对象不可下标 | `_token_field` 兼容 dict/pydantic；新增原生类型 contract 测试 |
+| 期望/覆盖率只取 actual token 概率 | 期望与覆盖率在完整 top-K 评分 mass 上计算（gateway 与 verifier 两层） |
+| replay prompt 泄漏 ground-truth 分数 | `_build_evidence` 只含 passed/执行摘要，不含 score；新增泄漏测试 |
+| 同候选多 evaluation_run 重复成对/混语义 | 按 (task, evaluator, environment) 分组、每候选取 latest run |
+| Wald 区间小样本虚假放行 | Wilson score interval + `min_pairs=30` 门禁 |
+| 幂等哈希不含 model/prompt/capability | request hash 混入全部 provenance 维度 |
+| 缓存失败证据绕过 fail-closed | 非 completed 缓存命中时 fail_closed 重新抛错、普通运行回退 |
+| batch 伪造零 token/成本已知 | evidence 携带真实 usage，batch 账本如实记录（unknown → cost_known=0） |
+| max_calls / token_budget_ratio 无消费者 | verifier 强制执行调用数与 token 上限（比例 × 总 token 预算） |
+| order_seed 未用、单次固定 A 位 | order_seed 决定首臂；live 模式强制成对交换 |
+| live 前未执行 capability probe | observer 构建前探测，capability_hash 入 batch；unsupported 按 fail_closed 分级 |
+| 鉴权/超时误判为 unsupported | probe 仅能力类失败归类，环境错误向上传播 |
+| 未实现 mode 静默退化为 observer | parent_pair/island_ppt 配置即 fail fast |
+| 方差混入 treatment effect | 按臂拆分（within-arm）后平均 |
+| 0.5 abstention 计为负类正确 | accuracy 只在非 tie pair 上计算 |
+| Fake verifier coverage 参数不生效 | coverage 进入证据与状态派生（可测 low-coverage 分支） |
+| `.example.env` 优先级说明矛盾 | 修正为与 loader 一致的单条说明 |
 
 ### 未开始（需 R1 门禁通过）
 
