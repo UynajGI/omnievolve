@@ -26,8 +26,10 @@ jobs:
       - name: "Install actionlint (pinned version)"
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - name: Lint workflows
-        # 只引二进制路径：整串引号会触发 shellcheck SC2046（CI ubuntu 自带 shellcheck 检查）
-        run: "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
+        # 只引二进制路径避免 shellcheck SC2046；整串引号又会触发 SC2046。
+        # YAML 不允许 quoted+plain 混排，故用块标量把整条命令原样交给 shell。
+        run: |
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
 
   lint:
     runs-on: ubuntu-latest
