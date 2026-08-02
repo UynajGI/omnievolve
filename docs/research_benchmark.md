@@ -5,6 +5,35 @@ only after enabled runtime mechanisms are live, auditable, independently
 ablatable, and deterministically resumable. The historical v4 pilot is
 engineering calibration data and is invalid for inference.
 
+## Default Fast Loop R&D program
+
+Normal runs and the default research matrix keep Slow Loop disabled. The
+canonical control matrix uses four arms: `random_search`, `single_agent`,
+`no_novelty`, and `no_slow_loop` (the full Fast Loop baseline). Generate it
+with five to ten paired seeds:
+
+```bash
+omnievolve research plan \
+  --seeds 0,1,2,3,4 \
+  --eval-repetitions 3 \
+  --output .omnievolve/research/fast-loop-matrix.json
+```
+
+Run operator, selector, context-retrieval, and evaluator-repeat experiments as
+separate matrices so each comparison changes one mechanism at a time:
+
+```bash
+omnievolve research plan-operator  --output .omnievolve/research/operator-matrix.json
+omnievolve research plan-selector  --output .omnievolve/research/selector-matrix.json
+omnievolve research plan-context   --output .omnievolve/research/context-matrix.json
+omnievolve research plan-evaluator --output .omnievolve/research/evaluator-matrix.json
+```
+
+All of these protocols explicitly set `evolution.self_evolve_enabled=false`.
+Use `--task` and `--seed-limit 1` during `research execute` for an exploratory
+smoke run before draining a paired matrix. The Slow Loop protocol below is a
+separate, explicitly requested study and remains gated.
+
 ## Fixed 45-run pilot
 
 The pilot crosses three tasks (`sort`, `nqueens`, and `circle_packing`), five
@@ -71,13 +100,13 @@ Only after the pilot gate, generate the existing nine-task, five-variant formal
 matrix with the power-selected seed count:
 
 ```bash
-omnievolve research plan \
+omnievolve research plan-slow \
   --seeds 0,1,2,3,4 \
   --eval-repetitions 3 \
-  --output .omnievolve/research/formal-matrix.json
+  --output .omnievolve/research/slow-loop-formal-matrix.json
 
 omnievolve research execute \
-  --output .omnievolve/research/formal-matrix.json \
+  --output .omnievolve/research/slow-loop-formal-matrix.json \
   --workers 2 --gens 5 --population 4 \
   --max-attempts 3 \
   --results .omnievolve/research/results.jsonl
@@ -136,12 +165,16 @@ seed recommendation across comparisons, capped at 5–10 with an explicit
   checkpoint state.
 - Report failed seeds and costs alongside scores; never silently drop failures.
 
-## Post-pilot ablations
+## Fast Loop ablations
 
-Run these as two independent experiments after the pilot gate:
+Run these as independent Fast Loop experiments. They do not depend on passing
+the separate Slow Loop pilot gate:
 
 1. operator UCB/Thompson versus a fixed mutation mix;
-2. a minimal behavior-cell archive versus the current archive.
+2. parent-selector alternatives versus `lineage_ucb`;
+3. context retrieval budgets 4/8/16;
+4. one versus three evaluator measurements per candidate;
+5. a minimal behavior-cell archive versus the current archive.
 
 Generate their manifests independently:
 
@@ -150,13 +183,26 @@ omnievolve research plan-operator \
   --seeds 0,1,2,3,4 \
   --output .omnievolve/research/operator-portfolio-matrix.json
 
+omnievolve research plan-selector \
+  --seeds 0,1,2,3,4 \
+  --output .omnievolve/research/selector-matrix.json
+
+omnievolve research plan-context \
+  --seeds 0,1,2,3,4 \
+  --output .omnievolve/research/context-matrix.json
+
+omnievolve research plan-evaluator \
+  --seeds 0,1,2,3,4 \
+  --output .omnievolve/research/evaluator-matrix.json
+
 omnievolve research plan-qd \
   --seeds 0,1,2,3,4 \
   --output .omnievolve/research/qd-archive-matrix.json
 ```
 
-`operator_fixed` is the operator-family baseline; `qd_off` is the
-archive-family baseline. Analysis groups by protocol before pairing, applies
+`operator_fixed`, `selector_lineage_ucb`, `context_retrieval_8`,
+`evaluator_repeat_1`, and `qd_off` are the respective baselines. Analysis
+groups by protocol before pairing, applies
 an exact paired randomization test with Holm correction, and reports paired
 effect, standardized effect, and Cliff's delta. Unknown provider prices remain
 `cost_usd = null, cost_known = false` from the call ledger through the CLI and

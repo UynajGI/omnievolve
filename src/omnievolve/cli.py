@@ -847,8 +847,9 @@ def research_benchmark(
     action: str = typer.Argument(
         "plan",
         help=(
-            "calibrate、plan、plan-pilot、plan-reference、plan-operator、"
-            "plan-qd、execute、analyze 或 replay"
+            "calibrate、plan、plan-pilot、plan-slow、plan-reference、plan-operator、"
+            "plan-selector、plan-context、plan-evaluator、plan-qd、"
+            "execute、analyze 或 replay"
         ),
     ),
     output: str = typer.Option(
@@ -910,11 +911,15 @@ def research_benchmark(
     from omnievolve.research.matrix import (
         PILOT_TASK_NAMES,
         PILOT_TASKS,
+        build_context_matrix,
         build_default_matrix,
+        build_evaluator_matrix,
         build_operator_portfolio_matrix,
         build_pilot_matrix,
         build_qd_archive_matrix,
         build_reference_credit_matrix,
+        build_selector_matrix,
+        build_slow_loop_matrix,
         load_calibration_repetitions,
         summarize_results,
         write_manifest,
@@ -961,8 +966,12 @@ def research_benchmark(
     if action in {
         "plan",
         "plan-pilot",
+        "plan-slow",
         "plan-reference",
         "plan-operator",
+        "plan-selector",
+        "plan-context",
+        "plan-evaluator",
         "plan-qd",
     }:
         try:
@@ -1004,6 +1013,11 @@ def research_benchmark(
                     seeds=seed_values[:3],
                     eval_repetitions=calibrated_repetitions,
                 )
+            elif action == "plan-slow":
+                jobs = build_slow_loop_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
             elif action == "plan-reference":
                 jobs = build_reference_credit_matrix(
                     seeds=seed_values,
@@ -1014,6 +1028,18 @@ def research_benchmark(
                     seeds=seed_values,
                     eval_repetitions=eval_repetitions,
                 )
+            elif action == "plan-selector":
+                jobs = build_selector_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
+            elif action == "plan-context":
+                jobs = build_context_matrix(
+                    seeds=seed_values,
+                    eval_repetitions=eval_repetitions,
+                )
+            elif action == "plan-evaluator":
+                jobs = build_evaluator_matrix(seeds=seed_values)
             else:
                 jobs = build_qd_archive_matrix(
                     seeds=seed_values,

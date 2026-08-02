@@ -179,6 +179,53 @@ DEFAULT_VARIANTS = (
     ),
 )
 
+# Default R&D controls are deliberately Fast-Loop-only.  DEFAULT_VARIANTS is
+# retained for the explicit Slow Loop pilot so historical manifests remain
+# replayable under the original protocol.
+FAST_LOOP_CONTROL_VARIANTS = (
+    AblationVariant(
+        "random_search",
+        "LLM-free deterministic AST random search.",
+        {
+            "selection.parent_selector": "random",
+            "evolution.random_search_mode": True,
+            "evolution.novelty_enabled": False,
+            "evolution.crossover_rate": 0.0,
+            "evolution.self_evolve_enabled": False,
+            "evolution.island_count": 1,
+        },
+        ("--no-self-evolve",),
+    ),
+    AblationVariant(
+        "single_agent",
+        "One proposal and one island, with crossover and Slow Loop disabled.",
+        {
+            "evolution.population_size": 1,
+            "evolution.island_count": 1,
+            "evolution.crossover_rate": 0.0,
+            "evolution.self_evolve_enabled": False,
+            "evolution.single_agent_mode": True,
+            "models.routing.role_conditioned": False,
+        },
+        ("--no-self-evolve",),
+    ),
+    AblationVariant(
+        "no_novelty",
+        "Fast Loop with both novelty gates disabled.",
+        {
+            "evolution.novelty_enabled": False,
+            "evolution.self_evolve_enabled": False,
+        },
+        ("--no-self-evolve",),
+    ),
+    AblationVariant(
+        "no_slow_loop",
+        "Canonical full Fast Loop baseline with controlled self-evolution disabled.",
+        {"evolution.self_evolve_enabled": False},
+        ("--no-self-evolve",),
+    ),
+)
+
 REFERENCE_CREDIT_VARIANTS = (
     AblationVariant(
         "reference_credit_on",
@@ -224,6 +271,57 @@ OPERATOR_PORTFOLIO_VARIANTS = (
             "evolution.qd_archive_enabled": False,
         },
         ("--no-self-evolve",),
+    ),
+)
+
+SELECTOR_VARIANTS = tuple(
+    AblationVariant(
+        f"selector_{strategy}",
+        f"Fast Loop parent selection using {strategy}.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "selection.parent_selector": strategy,
+            "evolution.operator_portfolio_enabled": False,
+            "evolution.qd_archive_enabled": False,
+        },
+        ("--no-self-evolve",),
+    )
+    for strategy in ("lineage_ucb", "tournament", "power_law", "weighted")
+)
+
+CONTEXT_VARIANTS = tuple(
+    AblationVariant(
+        f"context_retrieval_{budget}",
+        f"Fast Loop memory/context retrieval budget of {budget} items.",
+        {
+            "evolution.self_evolve_enabled": False,
+            "evolution.retrieval_budget": budget,
+            "evolution.operator_portfolio_enabled": False,
+            "evolution.qd_archive_enabled": False,
+        },
+        ("--no-self-evolve",),
+    )
+    for budget in (4, 8, 16)
+)
+
+EVALUATOR_REPETITION_VARIANTS = (
+    (
+        AblationVariant(
+            "evaluator_repeat_1",
+            "Single evaluator measurement per candidate.",
+            {"evolution.self_evolve_enabled": False},
+            ("--no-self-evolve",),
+        ),
+        1,
+    ),
+    (
+        AblationVariant(
+            "evaluator_repeat_3",
+            "Median of three evaluator measurements per candidate.",
+            {"evolution.self_evolve_enabled": False},
+            ("--no-self-evolve",),
+        ),
+        3,
     ),
 )
 
@@ -313,7 +411,7 @@ def build_default_matrix(
     repetitions: int = 1,
     eval_repetitions: int | Mapping[str, int] = 3,
 ) -> list[BenchmarkJob]:
-    """Build the canonical 9-task, 5+-seed ablation matrix."""
+    """Build the canonical 9-task Fast Loop control matrix."""
     seed_values = tuple(seeds)
     if not 5 <= len(seed_values) <= 10:
         raise ValueError("research benchmark requires 5 to 10 seeds")
@@ -328,7 +426,7 @@ def build_default_matrix(
                 task.name,
                 variant.name,
                 seed,
-                protocol="formal",
+                protocol="fast_loop",
                 repetitions=repetitions,
                 eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
             ),
@@ -337,10 +435,10 @@ def build_default_matrix(
             seed=seed,
             repetitions=repetitions,
             eval_repetitions=_eval_repetitions_for_task(task.name, eval_repetitions),
-            protocol="formal",
+            protocol="fast_loop",
         )
         for task in DEFAULT_TASKS
-        for variant in DEFAULT_VARIANTS
+        for variant in FAST_LOOP_CONTROL_VARIANTS
         for seed in seed_values
     ]
 
@@ -471,6 +569,94 @@ def build_operator_portfolio_matrix(
     )
 
 
+def build_slow_loop_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+    eval_repetitions: int | Mapping[str, int] = 3,
+) -> list[BenchmarkJob]:
+    """Build the explicit legacy Fast+Slow formal matrix after its pilot gate."""
+
+    return _build_independent_ablation_matrix(
+        variants=DEFAULT_VARIANTS,
+        protocol="formal",
+        seeds=seeds,
+        repetitions=repetitions,
+        eval_repetitions=eval_repetitions,
+    )
+
+
+def build_selector_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+    eval_repetitions: int | Mapping[str, int] = 3,
+) -> list[BenchmarkJob]:
+    """Build the isolated Fast Loop parent-selector experiment."""
+
+    return _build_independent_ablation_matrix(
+        variants=SELECTOR_VARIANTS,
+        protocol="selector",
+        seeds=seeds,
+        repetitions=repetitions,
+        eval_repetitions=eval_repetitions,
+    )
+
+
+def build_context_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+    eval_repetitions: int | Mapping[str, int] = 3,
+) -> list[BenchmarkJob]:
+    """Build the isolated Fast Loop memory/context-budget experiment."""
+
+    return _build_independent_ablation_matrix(
+        variants=CONTEXT_VARIANTS,
+        protocol="context",
+        seeds=seeds,
+        repetitions=repetitions,
+        eval_repetitions=eval_repetitions,
+    )
+
+
+def build_evaluator_matrix(
+    *,
+    seeds: range | tuple[int, ...] = range(5),
+    repetitions: int = 1,
+) -> list[BenchmarkJob]:
+    """Build the isolated one-vs-three-repeat evaluator experiment."""
+
+    seed_values = tuple(seeds)
+    if not 5 <= len(seed_values) <= 10:
+        raise ValueError("independent ablation requires 5 to 10 paired seeds")
+    if len(set(seed_values)) != len(seed_values) or any(seed < 0 for seed in seed_values):
+        raise ValueError("seeds must be unique non-negative integers")
+    if repetitions < 1:
+        raise ValueError("repetitions must be positive")
+    return [
+        BenchmarkJob(
+            run_id=_run_id(
+                task.name,
+                variant.name,
+                seed,
+                protocol="evaluator",
+                repetitions=repetitions,
+                eval_repetitions=evaluator_repetitions,
+            ),
+            task=task,
+            variant=variant,
+            seed=seed,
+            repetitions=repetitions,
+            eval_repetitions=evaluator_repetitions,
+            protocol="evaluator",
+        )
+        for task in DEFAULT_TASKS
+        for variant, evaluator_repetitions in EVALUATOR_REPETITION_VARIANTS
+        for seed in seed_values
+    ]
+
+
 def build_qd_archive_matrix(
     *,
     seeds: range | tuple[int, ...] = range(5),
@@ -596,7 +782,11 @@ def summarize_results(
         )
     comparisons: list[dict[str, Any]] = []
     baseline_names = {
+        "fast_loop": "no_slow_loop",
         "operator_portfolio": "operator_fixed",
+        "selector": "selector_lineage_ucb",
+        "context": "context_retrieval_8",
+        "evaluator": "evaluator_repeat_1",
         "qd_archive": "qd_off",
         "reference_credit": "reference_credit_off",
     }
