@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785596551473,
+  "lastUpdate": 1785684797881,
   "repoUrl": "https://github.com/UynajGI/omnievolve",
   "entries": {
     "Benchmark": [
@@ -2088,6 +2088,93 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 4.6579102064756737e-8",
             "extra": "mean: 390.8327807245244 nsec\nrounds: 113161"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "59381036+UynajGI@users.noreply.github.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc137e2b6947dccbc7481a5eb15fcf36ca9949e0",
+          "message": "feat(research): add Fast Loop experiment matrices\n\nMake Fast Loop the default research program, add isolated operator, selector, context, and evaluator matrices, and keep Slow Loop behind an explicit planning path.",
+          "timestamp": "2026-08-02T23:32:15+08:00",
+          "tree_id": "01d45143774e97f66bbf988aa75a4c7e45625629",
+          "url": "https://github.com/UynajGI/omnievolve/commit/dc137e2b6947dccbc7481a5eb15fcf36ca9949e0"
+        },
+        "date": 1785684796661,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_store_throughput",
+            "value": 1060.6534819547292,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00396274232928043",
+            "extra": "mean: 942.8149881307626 usec\nrounds: 337"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_load_throughput",
+            "value": 33949.12862144529,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003826806079753153",
+            "extra": "mean: 29.455837030477152 usec\nrounds: 14696"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_sha256_throughput",
+            "value": 1504.6678955216682,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007027706009818674",
+            "extra": "mean: 664.5984824799497 usec\nrounds: 1484"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_select_throughput",
+            "value": 28084.18071652899,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002163266066418229",
+            "extra": "mean: 35.607234196846214 usec\nrounds: 19031"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_backpropagate_throughput",
+            "value": 47288.74271918725,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002090875790742847",
+            "extra": "mean: 21.14668190563361 usec\nrounds: 31192"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestNoveltyGatePerformance::test_ast_signature_throughput",
+            "value": 39752.942366315736,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000032976387747965704",
+            "extra": "mean: 25.155370658734938 usec\nrounds: 9761"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_numpy_query_throughput",
+            "value": 1451.8129881889238,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000021462391246636897",
+            "extra": "mean: 688.7939480741651 usec\nrounds: 597"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_zvec_upsert_throughput",
+            "value": 2374.036680051899,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000818967593265189",
+            "extra": "mean: 421.2234833617393 usec\nrounds: 2344"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestProfilerOverhead::test_profiler_disabled_overhead",
+            "value": 2473311.6146689495,
+            "unit": "iter/sec",
+            "range": "stddev: 6.094624817005001e-8",
+            "extra": "mean: 404.31621881735634 nsec\nrounds: 107551"
           }
         ]
       }
