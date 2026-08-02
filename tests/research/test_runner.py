@@ -387,7 +387,7 @@ def test_run_integrity_rejects_completed_shell_with_no_evolved_candidate(tmp_pat
     job = next(
         job
         for job in build_default_matrix()
-        if job.task.name == "sort" and job.variant.name == "full"
+        if job.task.name == "sort" and job.variant.name == "no_slow_loop"
     )
     settings = ResearchRunSettings(
         repo_root=tmp_path,
@@ -407,7 +407,7 @@ def test_run_integrity_requires_llm_calls_for_llm_variant(tmp_path: Path):
     job = next(
         job
         for job in build_default_matrix()
-        if job.task.name == "sort" and job.variant.name == "full"
+        if job.task.name == "sort" and job.variant.name == "no_slow_loop"
     )
     settings = ResearchRunSettings(
         repo_root=tmp_path,

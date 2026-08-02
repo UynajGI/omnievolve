@@ -377,7 +377,18 @@ omnievolve doctor
 ### `research` — 多任务、多种子消融基准
 
 ```bash
-# 先生成固定 3 tasks × 5 variants × 3 paired seeds = 45 runs pilot
+# 默认生成 Fast Loop 四对照矩阵（Slow Loop 全部关闭）
+omnievolve research plan \
+  --seeds 0,1,2,3,4 \
+  --output .omnievolve/research/fast-loop-matrix.json
+
+# 算子、选择器、上下文、评估器分别生成独立矩阵
+omnievolve research plan-operator  -o .omnievolve/research/operator-matrix.json
+omnievolve research plan-selector  -o .omnievolve/research/selector-matrix.json
+omnievolve research plan-context   -o .omnievolve/research/context-matrix.json
+omnievolve research plan-evaluator -o .omnievolve/research/evaluator-matrix.json
+
+# Slow Loop 是显式、独立的门禁协议
 omnievolve research plan-pilot \
   --calibration .omnievolve/research/calibration.json \
   --output .omnievolve/research/pilot-matrix.json
@@ -413,6 +424,7 @@ token_budget = 2_000_000      # 总 token 预算（耗尽自动停止）
 compute_budget_sec = 0         # 0 表示不限时；正数才是硬上限
 health_window_gens = 3        # Slow Loop 评估窗口（代）
 self_evolve_enabled = false   # 默认 fail closed；真实 canary 就绪后才显式启用
+retrieval_budget = 8          # Fast Loop 记忆/上下文检索条数
 async_pipeline_enabled = false # 异步流水线引擎（实验性）
 qd_archive_enabled = false      # 最小行为单元档案（独立消融，默认关闭）
 qd_parent_probability = 0.15    # 从当前岛 QD 档案采样父代的概率

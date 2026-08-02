@@ -5,11 +5,15 @@ import json
 import pytest
 
 from omnievolve.research.matrix import (
+    build_context_matrix,
     build_default_matrix,
+    build_evaluator_matrix,
     build_operator_portfolio_matrix,
     build_pilot_matrix,
     build_qd_archive_matrix,
     build_reference_credit_matrix,
+    build_selector_matrix,
+    build_slow_loop_matrix,
     load_calibration_repetitions,
     summarize_results,
     write_manifest,
@@ -62,6 +66,20 @@ def test_pilot_matrix_uses_per_task_calibrated_evaluator_repetitions():
     assert len({job.run_id for job in jobs}) == len(jobs)
 
 
+def test_slow_loop_formal_matrix_remains_explicit_and_replayable():
+    jobs = build_slow_loop_matrix()
+
+    assert len(jobs) == 9 * 5 * 5
+    assert {job.protocol for job in jobs} == {"formal"}
+    assert {job.variant.name for job in jobs} == {
+        "full",
+        "random_search",
+        "single_agent",
+        "no_novelty",
+        "no_slow_loop",
+    }
+
+
 def test_load_calibration_repetitions_requires_audited_task_entries(tmp_path):
     path = tmp_path / "calibration.json"
     path.write_text(
@@ -83,17 +101,27 @@ def test_load_calibration_repetitions_requires_audited_task_entries(tmp_path):
     ) == {"sort": 3, "nqueens": 5, "circle_packing": 10}
 
 
-def test_default_matrix_has_nine_tasks_five_variants_and_five_seeds(tmp_path):
+def test_default_matrix_is_fast_loop_only_with_four_controls(tmp_path):
     jobs = build_default_matrix()
-    assert len(jobs) == 9 * 5 * 5
+    assert len(jobs) == 9 * 4 * 5
     assert len({job.run_id for job in jobs}) == len(jobs)
     assert all(job.task.initial_code.endswith("initial_code.py") for job in jobs)
+    assert {job.protocol for job in jobs} == {"fast_loop"}
+    assert {job.variant.name for job in jobs} == {
+        "random_search",
+        "single_agent",
+        "no_novelty",
+        "no_slow_loop",
+    }
+    assert all(
+        job.variant.config_overrides["evolution.self_evolve_enabled"] is False for job in jobs
+    )
 
     path = write_manifest(jobs, tmp_path / "matrix.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 2
     assert payload["task_count"] == 9
-    assert payload["run_count"] == 225
+    assert payload["run_count"] == 180
     assert payload["eval_repetitions"]["sort"] == [3]
 
 
@@ -121,6 +149,50 @@ def test_operator_portfolio_ablation_is_separate_and_paired():
     assert all(
         job.variant.config_overrides["evolution.qd_archive_enabled"] is False for job in jobs
     )
+
+
+def test_selector_ablation_is_fast_loop_only_and_paired():
+    jobs = build_selector_matrix()
+
+    assert len(jobs) == 9 * 4 * 5
+    assert {job.protocol for job in jobs} == {"selector"}
+    assert {job.variant.name for job in jobs} == {
+        "selector_lineage_ucb",
+        "selector_tournament",
+        "selector_power_law",
+        "selector_weighted",
+    }
+    assert all(
+        job.variant.config_overrides["evolution.self_evolve_enabled"] is False for job in jobs
+    )
+
+
+def test_context_ablation_changes_only_retrieval_budget():
+    jobs = build_context_matrix()
+
+    assert len(jobs) == 9 * 3 * 5
+    assert {job.protocol for job in jobs} == {"context"}
+    assert {job.variant.config_overrides["evolution.retrieval_budget"] for job in jobs} == {
+        4,
+        8,
+        16,
+    }
+    assert all(
+        job.variant.config_overrides["evolution.self_evolve_enabled"] is False for job in jobs
+    )
+
+
+def test_evaluator_ablation_tracks_actual_repetition_count():
+    jobs = build_evaluator_matrix()
+
+    assert len(jobs) == 9 * 2 * 5
+    assert {job.protocol for job in jobs} == {"evaluator"}
+    assert {job.variant.name for job in jobs} == {
+        "evaluator_repeat_1",
+        "evaluator_repeat_3",
+    }
+    assert {job.eval_repetitions for job in jobs} == {1, 3}
+    assert len({job.run_id for job in jobs}) == len(jobs)
 
 
 def test_qd_archive_ablation_is_separate_and_does_not_enable_operator_bandit():

@@ -39,6 +39,7 @@ class EvolutionSettings(BaseSettings):
     progressive_eval_enabled: bool = False
     eval_repetitions: int = Field(default=1, ge=1, le=100)
     eval_confidence: float = Field(default=0.95, gt=0.0, lt=1.0)
+    retrieval_budget: int = Field(default=8, ge=1, le=100)
     single_agent_mode: bool = False
     random_search_mode: bool = False
     reference_credit_enabled: bool = True
@@ -394,6 +395,7 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         progressive_eval_enabled=e.progressive_eval_enabled,
         eval_repetitions=e.eval_repetitions,
         eval_confidence=e.eval_confidence,
+        retrieval_budget=e.retrieval_budget,
         single_agent_mode=e.single_agent_mode,
         random_search_mode=e.random_search_mode,
         reference_credit_enabled=e.reference_credit_enabled,

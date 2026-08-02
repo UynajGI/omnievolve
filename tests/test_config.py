@@ -279,6 +279,7 @@ class TestBuildEvolutionConfig:
         cfg = build_evolution_config(s)
         assert cfg.max_generations == 50
         assert cfg.population_size == 8
+        assert cfg.retrieval_budget == 8
 
 
 class TestBuildSandboxPolicy:

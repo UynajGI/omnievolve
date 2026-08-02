@@ -113,6 +113,7 @@ class EvolutionConfig:
     progressive_eval_enabled: bool = False  # Phase 3: 渐进式评估
     eval_repetitions: int = 1
     eval_confidence: float = 0.95
+    retrieval_budget: int = 8
     fusion_mode: str = "mechanical"  # 2.2: mechanical / llm
     epiplexity_beta: float = 0.0  # 辅助适应度权重（0=关闭）
     self_evolve_enabled: bool = False
@@ -215,7 +216,8 @@ class EvolutionEngine:
             )
             configured_selector = "lineage_ucb"
         self._search_policy = search_policy or SearchPolicyGenome(
-            parent_selector=configured_selector
+            parent_selector=configured_selector,
+            retrieval_budget=self._config.retrieval_budget,
         )
         # 配置中的 epiplexity_beta 覆盖 genome 默认值（允许不开 Slow Loop 也能用）
         if self._config.epiplexity_beta > 0:

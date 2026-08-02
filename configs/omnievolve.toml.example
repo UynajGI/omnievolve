@@ -14,6 +14,7 @@ token_budget = 2_000_000
 compute_budget_sec = 0            # 0 = unlimited; positive values are hard limits
 health_window_gens = 3
 self_evolve_enabled = false    # fail closed; research full variant enables real canary explicitly
+retrieval_budget = 8           # Fast Loop memory/context items per candidate
 
 [selection]
 parent_selector = "lineage_ucb"
