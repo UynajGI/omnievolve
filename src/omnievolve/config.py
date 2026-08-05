@@ -53,6 +53,9 @@ class EvolutionSettings(BaseSettings):
     operator_portfolio_enabled: bool = False
     operator_portfolio_algorithm: Literal["ucb", "thompson"] = "ucb"
     operator_portfolio_ucb_c: float = Field(default=1.414, ge=0.0)
+    # 3.1: 确定性去重 — 相同 artifact_hash 且已有完成评估时直接复用结果，
+    # 跳过昂贵 sandbox（通过候选 mini-CV 均 16.4s）。关闭即回退重复评估。
+    dedup_reuse_enabled: bool = True
 
 
 class SelectionSettings(BaseSettings):
@@ -83,12 +86,24 @@ class ModelRoutingSettings(BaseSettings):
     role_conditioned: bool = True
 
 
+# 1.1: 角色级输出 token 预算（默认，均低于全局 max_tokens）。
+# 推理/输出 token 占 GLM 实测开销 63%，按角色差异化上限可显著降本；
+# 截断由 LLMGateway 输出完整性守卫自动扩容到全局上限兜底。
+DEFAULT_ROLE_MAX_TOKENS: dict[str, int] = {
+    "director": 2048,
+    "coder": 4096,
+    "critic": 1024,
+    "meta": 2048,
+}
+
+
 class ModelsSettings(BaseSettings):
     """模型配置."""
 
     heavy: list[str] = Field(default_factory=lambda: ["reasoning-model-primary"])
     light: list[str] = Field(default_factory=lambda: ["fast-model-primary"])
     max_tokens: int = Field(default=16384, gt=0)
+    role_max_tokens: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_ROLE_MAX_TOKENS))
     routing: ModelRoutingSettings = Field(default_factory=ModelRoutingSettings)
 
 
@@ -262,6 +277,21 @@ class VerifierSettings(BaseSettings):
     adaptive_benchmark_enabled: bool = False
 
 
+class TieBreakerSettings(BaseSettings):
+    """2.4: 离散集成 tie-breaker 配置（logprobs-free，默认关闭）.
+
+    任务分数打平时用 K 次 A/B 成对比较（奇偶交换位置）聚合偏好，
+    给 search_score 加有界 bonus，只影响 LineageUCB 搜索信用；
+    不触碰 passed/primary_score。
+    """
+
+    enabled: bool = False
+    tolerance: float = Field(default=0.01, ge=0.0, lt=1.0)
+    repetitions: int = Field(default=3, ge=1, le=10)
+    search_bonus_cap: float = Field(default=0.01, ge=0.0, le=1.0)
+    model: str = ""
+
+
 class OmniEvolveSettings(BaseSettings):
     """OmniEvolve 主配置.
 
@@ -288,6 +318,7 @@ class OmniEvolveSettings(BaseSettings):
         default_factory=EvaluationGovernanceSettings
     )
     verifier: VerifierSettings = Field(default_factory=VerifierSettings)
+    tiebreaker: TieBreakerSettings = Field(default_factory=TieBreakerSettings)
 
 
 def load_settings(config_path: str | Path | None = None) -> OmniEvolveSettings:
@@ -340,6 +371,10 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
             heavy=data.get("models", {}).get("heavy", ["reasoning-model-primary"]),
             light=data.get("models", {}).get("light", ["fast-model-primary"]),
             max_tokens=data.get("models", {}).get("max_tokens", 16384),
+            role_max_tokens={
+                **DEFAULT_ROLE_MAX_TOKENS,
+                **data.get("models", {}).get("role_max_tokens", {}),
+            },
             routing=ModelRoutingSettings(**data.get("models", {}).get("routing", {})),
         ),
         embedding=EmbeddingSettings(
@@ -360,6 +395,7 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
         meta_evolution=MetaEvolutionSettings(**data.get("meta_evolution", {})),
         evaluation_governance=EvaluationGovernanceSettings(**data.get("evaluation_governance", {})),
         verifier=VerifierSettings(**data.get("verifier", {})),
+        tiebreaker=TieBreakerSettings(**data.get("tiebreaker", {})),
     )
 
 
@@ -413,6 +449,12 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         operator_portfolio_enabled=e.operator_portfolio_enabled,
         operator_portfolio_algorithm=e.operator_portfolio_algorithm,
         operator_portfolio_ucb_c=e.operator_portfolio_ucb_c,
+        dedup_reuse_enabled=e.dedup_reuse_enabled,
+        tiebreaker_enabled=settings.tiebreaker.enabled,
+        tiebreaker_tolerance=settings.tiebreaker.tolerance,
+        tiebreaker_repetitions=settings.tiebreaker.repetitions,
+        tiebreaker_search_bonus_cap=settings.tiebreaker.search_bonus_cap,
+        tiebreaker_model=settings.tiebreaker.model,
     )
 
 

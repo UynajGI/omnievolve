@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from omnievolve.agents.base import AgentContext
+from omnievolve.agents.base import AgentContext, ThoughtOutput
 from omnievolve.agents.context_builder import (
     ROLE_BUDGET_RATIO,
     AgentRetryHandler,
@@ -121,6 +121,97 @@ class TestContextBuilder:
     def test_role_budget_ratios_sum_to_one(self):
         total = sum(ROLE_BUDGET_RATIO.values())
         assert total == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+#  1.2: AgentContext 完整版构建（fast_loop 生产路径）
+# --------------------------------------------------------------------------- #
+
+
+class TestFullContextBuilders:
+    def _full_ctx(self, **kwargs) -> AgentContext:
+        defaults = {
+            "task_id": "test-task",
+            "experiment_id": "exp-001",
+            "generation": 5,
+            "island_id": "island_0",
+            "parent_thoughts": ["Try vectorization", "Try caching"],
+            "memory_hits": [
+                {"outcome_summary": "memoization helped"},
+                {"outcome_summary": "dp failed"},
+            ],
+            "sibling_summaries": ["Sibling A: reworked loop", "Sibling B: new datastructure"],
+            "rag_context": [{"content": "semantically related thought"}],
+            "meta_scratchpad": "greedy ordering always fails; avoid it",
+            "domain_hints": ["numpy available"],
+            "stagnation_level": 2,
+        }
+        defaults.update(kwargs)
+        return AgentContext(**defaults)
+
+    def test_director_full_message_keeps_known_sections(self):
+        builder = ContextBuilder()
+        result = builder.build_director_user_message(self._full_ctx())
+        assert "## Task: test-task" in result
+        assert "Stagnation Detected (level=2)" in result
+        assert "Tier 3" in result
+        assert "Parent Thoughts" in result
+        assert "Relevant Memories" in result
+        assert "Sibling Approaches" in result
+        assert "Semantically Related Thoughts" in result
+        assert "Failed Directions (AVOID repeating)" in result
+        assert "greedy ordering" in result
+        assert "Propose an innovative improvement thought." in result
+
+    def test_director_no_stagnation_omits_tier(self):
+        builder = ContextBuilder()
+        result = builder.build_director_user_message(self._full_ctx(stagnation_level=0))
+        assert "Stagnation Detected" not in result
+
+    def test_coder_full_message_order_failure_parent_inspiration(self):
+        builder = ContextBuilder()
+        ctx = self._full_ctx(
+            last_eval_failure="NameError: quicksort is not defined",
+            inspiration_programs=[
+                {"is_parent": True, "code": "def old(): pass", "score": 0.5},
+                {"code": "def ref(): return 1", "score": 0.9},
+            ],
+        )
+        result = builder.build_coder_user_message(ctx, ThoughtOutput(thought="fix", rationale="r"))
+        parent_pos = result.find("Current Code to Improve")
+        failure_pos = result.find("Previous Evaluation Failure")
+        inspiration_pos = result.find("High-Scoring Programs")
+        assert parent_pos < failure_pos < inspiration_pos
+        assert "root cause" in result
+        assert "def ref(): return 1" in result
+
+    def test_coder_full_message_without_failure_omits_fix_instruction(self):
+        builder = ContextBuilder()
+        ctx = self._full_ctx(inspiration_programs=[])
+        result = builder.build_coder_user_message(ctx, ThoughtOutput(thought="fix", rationale="r"))
+        assert "root cause" not in result
+        assert "Current Code to Improve" not in result  # 无父代码
+
+    def test_full_builders_respect_token_budget(self):
+        # 极小预算 → 输出被裁剪（优于手写拼接的无上限路径）
+        builder = ContextBuilder(total_token_budget=200, reserve_output=50)
+        ctx = self._full_ctx()
+        director_msg = builder.build_director_user_message(ctx)
+        coder_msg = builder.build_coder_user_message(
+            ctx, ThoughtOutput(thought="x" * 500, rationale="r")
+        )
+        assert "[truncated]" in director_msg or len(director_msg) <= 200 * 4
+        assert "[truncated]" in coder_msg or len(coder_msg) <= 200 * 4
+
+    def test_parent_code_extracted_from_inspiration(self):
+        builder = ContextBuilder()
+        ctx = self._full_ctx(
+            inspiration_programs=[
+                {"is_parent": False, "code": "not-parent"},
+                {"is_parent": True, "code": "the-parent-code"},
+            ]
+        )
+        assert builder._parent_code_from_ctx(ctx) == "the-parent-code"  # noqa: SLF001
 
 
 # --------------------------------------------------------------------------- #

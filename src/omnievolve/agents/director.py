@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from omnievolve.agents.base import AgentContext, ThoughtOutput
 from omnievolve.agents.llm_gateway import LLMGateway
@@ -59,10 +60,15 @@ class Director:
         *,
         model: str | None = None,
         system_prompt: str | None = None,
+        context_builder: Any | None = None,
     ) -> None:
         self._llm = llm
         self._model = model
         self._system_prompt = system_prompt or DIRECTOR_SYSTEM_PROMPT
+        # 1.2: 上下文统一由 ContextBuilder 构建（预算裁剪单一入口）。
+        from omnievolve.agents.context_builder import ContextBuilder
+
+        self._context_builder = context_builder or ContextBuilder()
 
     def evolve_thought(self, ctx: AgentContext) -> ThoughtOutput:
         """进化思想.
@@ -90,56 +96,8 @@ class Director:
         return self._parse_response(response.content)
 
     def _build_user_message(self, ctx: AgentContext) -> str:
-        """构建用户消息 — P2-1: 含停滞层级 + 反例集合."""
-        parts = [
-            f"## Task: {ctx.task_id}",
-            f"## Generation: {ctx.generation}",
-        ]
-
-        # P2-1: 停滞层级指导
-        if ctx.stagnation_level > 0:
-            tier = min(ctx.stagnation_level + 1, 3)  # level 1→Tier2, level 2+→Tier3
-            parts.append(
-                f"\n## ⚠️ Stagnation Detected (level={ctx.stagnation_level})\n"
-                f"Recent attempts have NOT improved scores. "
-                f"You MUST propose a **Tier {tier}** change (see system prompt).\n"
-                f"Do NOT repeat minor tweaks — make a {'fundamental' if tier >= 3 else 'significant'} change."
-            )
-
-        if ctx.parent_thoughts:
-            parts.append("\n## Parent Thoughts:")
-            for i, thought in enumerate(ctx.parent_thoughts[:3]):
-                parts.append(f"{i + 1}. {thought[:500]}")
-
-        if ctx.memory_hits:
-            parts.append("\n## Relevant Memories:")
-            for mem in ctx.memory_hits[:3]:
-                parts.append(f"- {mem.get('outcome_summary', '')[:200]}")
-
-        # 1.2: 兄弟节点摘要（同一 island 最近尝试，避免重复）
-        if ctx.sibling_summaries:
-            parts.append("\n## Sibling Approaches (same island, recent):")
-            for s in ctx.sibling_summaries[:3]:
-                parts.append(f"- {s}")
-
-        # Step 4: 向量 RAG 检索（语义相关的历史 thought）
-        if ctx.rag_context:
-            parts.append("\n## Semantically Related Thoughts (vector retrieval):")
-            for r in ctx.rag_context[:3]:
-                parts.append(f"- {r.get('content', '')[:200]}")
-
-        # P2-1: 反例集合（从 meta_scratchpad 取失败方向）
-        if ctx.meta_scratchpad:
-            parts.append(f"\n## Failed Directions (AVOID repeating):\n{ctx.meta_scratchpad[:500]}")
-
-        if ctx.domain_hints:
-            parts.append("\n## Domain Hints:")
-            for hint in ctx.domain_hints[:3]:
-                parts.append(f"- {hint}")
-
-        parts.append("\nPropose an innovative improvement thought.")
-
-        return "\n".join(parts)
+        """构建用户消息 — 1.2: 统一委托 ContextBuilder（预算裁剪单一入口）."""
+        return self._context_builder.build_director_user_message(ctx)
 
     def _parse_response(self, content: str) -> ThoughtOutput:
         """解析 LLM 响应."""

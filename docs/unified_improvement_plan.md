@@ -59,9 +59,11 @@
   - 模块：`config.py` `ModelsSettings.max_tokens`、`agents/coder.py`、`agents/director.py`。
   - 依据：GLM 推理受 `max_tokens` 约束；输出 token 占 63%。
   - 风险：上限过低导致截断 → 用守卫重试 + 安全下限缓解。回滚：config 还原。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：`role_max_tokens` 角色级预算 + `LLMGateway` 截断守卫（自动扩容重试）。详见 `docs/arch_improvement_log.md`。
 - **1.2 上下文相关性裁剪**：只注入 top-k 相关记忆（复用 embedding 相似度）；压缩 SSWevolve 冻结骨架（EVOLVE-BLOCK 外恒定，可摘要）。
   - 模块：`agents/context_builder.py`、`retrieval_budget`。
   - 回滚：阈值还原。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：ContextBuilder 死代码接线为单一入口（Director/Coder 提示保真迁移 + 角色预算裁剪）。详见 `docs/arch_improvement_log.md`。
 - **1.3 静态 schema 预检（pre-sandbox）**：沙箱前确定性校验 CLOSURE（eq_name 白名单 `U_L/U_M/U_U/W1r/W1i/W2r/W2i/H1/H2`、states≤3、仅 numpy/math import），无效直接短路返回 `fail_reason`。
   - 模块：`examples/sswevolve/evaluator.py`、`runner.py`。
   - 论文关联：这是"准则分解"的本地化落地，但用确定性检查替代 LLM/logprobs。
@@ -77,10 +79,12 @@
 - **2.4 离散集成 tie-breaker**（论文 PR4 的 logprobs-free 版）：任务分数打平（差异 < tolerance 或 CI 重叠）时，用 K 次 A/B 成对比较（奇偶交换位置）聚合，给 `search_score` 加**有界** bonus，影响 LineageUCB。
   - 约束：作为独立诚实模式（不伪装成 logprob 概率）；不触碰 `passed`/`primary_score`。
   - 本地意义：SSWevolve 分数噪声大、打平多；这是**不依赖 logprobs 就能承接论文价值**的关键点。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：`DiscreteTieBreaker`（K 次 A/B + 位置交换 + majority + 有界 bonus），`tiebreaker.enabled` 默认关闭。详见 `docs/arch_improvement_log.md`。
 
 ### Phase 3 — 搜索效率增益
 - **3.1 确定性去重 + 渐进评估**：CAS artifact hash 去重，避免重复评估相同代码；`progressive_eval_enabled` 让候选先过廉价阶段。
   - 模块：`evolution_engine`、`evaluation_service`、config。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：渐进评估既有实现已覆盖；本项补确定性去重（`dedup_reuse_enabled`，复用相同 hash 的已完成评估）。详见 `docs/arch_improvement_log.md`。
 - **3.2 算子组合 / LineageUCB 调优**：`operator_portfolio_enabled`（UCB 学习有效变异算子）。
   - 模块：`engine/operator_portfolio.py`、`engine/selection.py`。成本中性、增益型。
 

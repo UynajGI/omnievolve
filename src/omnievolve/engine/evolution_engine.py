@@ -133,6 +133,12 @@ class EvolutionConfig:
     operator_portfolio_enabled: bool = False
     operator_portfolio_algorithm: str = "ucb"
     operator_portfolio_ucb_c: float = 1.414
+    dedup_reuse_enabled: bool = True  # 3.1: 相同 artifact_hash 复用已完成评估
+    tiebreaker_enabled: bool = False  # 2.4: 离散 A/B tie-breaker
+    tiebreaker_tolerance: float = 0.01
+    tiebreaker_repetitions: int = 3
+    tiebreaker_search_bonus_cap: float = 0.01
+    tiebreaker_model: str = ""
 
 
 @dataclass
@@ -251,15 +257,16 @@ class EvolutionEngine:
         if hasattr(llm, "_budget_guard"):
             llm._budget_guard = self._budget_guard  # noqa: SLF001
 
-        # Agents
-        self._director = Director(llm)
-        self._coder = Coder(llm)
-        self._critic = Critic(use_syntax_check=True)
-
-        # S5-05: ContextBuilder 按 token 预算裁剪上下文
+        # S5-05 / 1.2: ContextBuilder 按 token 预算裁剪上下文（唯一入口，
+        # 注入 Director/Coder，避免各 agent 手写拼接导致预算失控）。
         self._context_builder = ContextBuilder(
             total_token_budget=min(self._config.token_budget, 100_000),
         )
+
+        # Agents
+        self._director = Director(llm, context_builder=self._context_builder)
+        self._coder = Coder(llm, context_builder=self._context_builder)
+        self._critic = Critic(use_syntax_check=True)
 
         # 搜索组件
         self._mcts = LineageUCB(
@@ -302,6 +309,19 @@ class EvolutionEngine:
                     self._config.operator_portfolio_algorithm,
                 ),
                 exploration=self._config.operator_portfolio_ucb_c,
+            )
+
+        # 2.4: 离散集成 tie-breaker（默认关闭；打平时 A/B 偏好加有界 search bonus）
+        self._tie_breaker = None
+        if self._config.tiebreaker_enabled:
+            from omnievolve.engine.tie_breaker import DiscreteTieBreaker
+
+            self._tie_breaker = DiscreteTieBreaker(
+                llm,
+                model=self._config.tiebreaker_model,
+                tolerance=self._config.tiebreaker_tolerance,
+                repetitions=self._config.tiebreaker_repetitions,
+                bonus_cap=self._config.tiebreaker_search_bonus_cap,
             )
 
         # 模型路由

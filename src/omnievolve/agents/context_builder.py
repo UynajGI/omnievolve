@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from omnievolve.agents.base import AgentContext
+from omnievolve.agents.base import AgentContext, ThoughtOutput
 from omnievolve.utils.token_counter import estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,148 @@ class ContextBuilder:
         ]
         context = "\n".join(parts)
         return self._truncate(context, budget)
+
+    # ------------------------------------------------------------------ #
+    # 1.2: AgentContext 完整版构建（fast_loop 生产路径）。
+    # 从 Director/Coder 的 _build_user_message 保真迁移：标题、顺序、
+    # 截断阈值与原先一致，并统一套用角色 token 预算裁剪。
+    # ------------------------------------------------------------------ #
+
+    def build_director_user_message(self, ctx: AgentContext) -> str:
+        """构建 Director 用户消息（完整版）.
+
+        保留 P2-1 停滞层级、反例集合（meta_scratchpad）、兄弟摘要、
+        RAG 检索等既有提示结构；末尾统一按 director 预算截断。
+        """
+        budget = int(self._input_budget * ROLE_BUDGET_RATIO["director"])
+        parts = [
+            f"## Task: {ctx.task_id}",
+            f"## Generation: {ctx.generation}",
+        ]
+
+        # P2-1: 停滞层级指导
+        if ctx.stagnation_level > 0:
+            tier = min(ctx.stagnation_level + 1, 3)  # level 1→Tier2, level 2+→Tier3
+            parts.append(
+                f"\n## ⚠️ Stagnation Detected (level={ctx.stagnation_level})\n"
+                f"Recent attempts have NOT improved scores. "
+                f"You MUST propose a **Tier {tier}** change (see system prompt).\n"
+                f"Do NOT repeat minor tweaks — make a "
+                f"{'fundamental' if tier >= 3 else 'significant'} change."
+            )
+
+        if ctx.parent_thoughts:
+            parts.append("\n## Parent Thoughts:")
+            for i, thought in enumerate(ctx.parent_thoughts[:3]):
+                parts.append(f"{i + 1}. {thought[:500]}")
+
+        if ctx.memory_hits:
+            parts.append("\n## Relevant Memories:")
+            for mem in ctx.memory_hits[:3]:
+                parts.append(f"- {mem.get('outcome_summary', '')[:200]}")
+
+        # 1.2: 兄弟节点摘要（同一 island 最近尝试，避免重复）
+        if ctx.sibling_summaries:
+            parts.append("\n## Sibling Approaches (same island, recent):")
+            for s in ctx.sibling_summaries[:3]:
+                parts.append(f"- {s}")
+
+        # 向量 RAG 检索（语义相关的历史 thought）
+        if ctx.rag_context:
+            parts.append("\n## Semantically Related Thoughts (vector retrieval):")
+            for r in ctx.rag_context[:3]:
+                parts.append(f"- {r.get('content', '')[:200]}")
+
+        # P2-1: 反例集合（从 meta_scratchpad 取失败方向）
+        if ctx.meta_scratchpad:
+            parts.append(f"\n## Failed Directions (AVOID repeating):\n{ctx.meta_scratchpad[:500]}")
+
+        if ctx.domain_hints:
+            parts.append("\n## Domain Hints:")
+            for hint in ctx.domain_hints[:3]:
+                parts.append(f"- {hint}")
+
+        parts.append("\nPropose an innovative improvement thought.")
+
+        return self._truncate("\n".join(parts), budget)
+
+    def build_coder_user_message(self, ctx: AgentContext, thought: ThoughtOutput) -> str:
+        """构建 Coder 用户消息（完整版）.
+
+        保真保留父代码 → 失败反馈 → inspiration → 兄弟摘要 → 记忆的
+        既有顺序与标题（tests/agents/test_eval_feedback.py 依赖该顺序）；
+        末尾统一按 coder 预算截断。
+        """
+        budget = int(self._input_budget * ROLE_BUDGET_RATIO["coder"])
+        parts = [
+            f"## Improvement Thought:\n{thought.thought}",
+            f"\n## Rationale:\n{thought.rationale}",
+        ]
+
+        # 父代码（用于 diff 基础）
+        parent_code = self._parent_code_from_ctx(ctx)
+        if parent_code:
+            parts.append(f"\n## Current Code to Improve:\n```python\n{parent_code}\n```")
+
+        # P0-1: 上次评估失败反馈（如果有）
+        if ctx.last_eval_failure:
+            parts.append(
+                f"\n## ⚠ Previous Evaluation Failure (avoid repeating):\n"
+                f"```\n{ctx.last_eval_failure}\n```"
+            )
+
+        # Inspiration: 高分历史程序
+        if ctx.inspiration_programs:
+            parts.append("\n## High-Scoring Programs for Inspiration:")
+            for prog in ctx.inspiration_programs[:3]:
+                score = prog.get("score", "?")
+                code = prog.get("code", "")
+                if len(code) > 1500:  # P2-2: 截断从 800 提升到 1500
+                    code = code[:1500] + "\n... (truncated)"
+                parts.append(f"Score: {score}\n```python\n{code}\n```")
+
+        # P2-2: 兄弟节点摘要
+        if ctx.sibling_summaries:
+            parts.append("\n## Sibling Approaches (same island, recent):")
+            for s in ctx.sibling_summaries[:3]:
+                parts.append(f"- {s}")
+
+        # 记忆摘要
+        if ctx.memory_hits:
+            parts.append("\n## Past Insights:")
+            for m in ctx.memory_hits[:3]:
+                parts.append(f"- {m.get('outcome_summary', '')[:200]}")
+
+        parts.append("\n## Instructions:")
+        instruction = (
+            "Propose targeted SEARCH/REPLACE edits to improve the current code. "
+            "Make minimal, focused changes."
+        )
+        if ctx.last_eval_failure:
+            instruction += (
+                " Pay special attention to the previous failure above — "
+                "ensure your edits fix the root cause, not just the symptom."
+            )
+        if ctx.generation_mode == "point":
+            instruction += " Make exactly one localized semantic change."
+        elif ctx.generation_mode == "repair":
+            instruction += (
+                " Treat this as a repair operator: preserve working behavior and "
+                "focus on the most likely correctness or execution defect."
+            )
+        elif ctx.generation_mode == "diff":
+            instruction += " Prefer a small atomic SEARCH/REPLACE patch."
+        parts.append(instruction)
+
+        return self._truncate("\n".join(parts), budget)
+
+    @staticmethod
+    def _parent_code_from_ctx(ctx: AgentContext) -> str:
+        """从上下文的 inspiration 程序中提取父代码."""
+        for prog in ctx.inspiration_programs:
+            if prog.get("is_parent") and prog.get("code"):
+                return prog["code"]
+        return ""
 
     def _truncate(self, text: str, budget: int) -> str:
         """在 token 预算内截断文本."""

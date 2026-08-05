@@ -65,6 +65,8 @@ class LLMResponse:
     cost_usd: float | None = None
     latency_ms: float | None = None
     raw_response: dict = field(default_factory=dict)
+    # 1.1: 输出完整性 — finish_reason == "length" 时置 True，供调用方/守卫决策。
+    truncated: bool = False
 
 
 @dataclass
@@ -132,6 +134,7 @@ class LLMGateway:
         budget_guard: Any | None = None,
         request_timeout: float = 120.0,
         default_max_tokens: int = 16384,
+        role_max_tokens: dict[str, int] | None = None,
         deadline_monotonic: float | None = None,
     ) -> None:
         self._db = db
@@ -158,6 +161,13 @@ class LLMGateway:
         self._request_timeout = request_timeout
         # 默认最大输出 token 数（可被 chat() 调用方覆盖）
         self._default_max_tokens = default_max_tokens
+        # 1.1: 角色级输出 token 预算（低于全局上限；越界钳制到全局上限）。
+        # 角色预算用于首选调用，截断时由输出完整性守卫扩容到全局上限兜底。
+        self._role_max_tokens = {
+            role: min(budget, default_max_tokens)
+            for role, budget in (role_max_tokens or {}).items()
+            if budget > 0
+        }
         # Optional hard wall deadline used by isolated policy-canary arms.
         # Unlike BudgetGuard, this is consumed while an HTTP request is active.
         self._deadline_monotonic = deadline_monotonic
@@ -188,8 +198,9 @@ class LLMGateway:
             LLMResponse
         """
         model = model or self._default_model
-        # 未显式指定时用网关默认上限（推理模型需充足预算）
-        max_tokens = max_tokens if max_tokens is not None else self._default_max_tokens
+        # 未显式指定时：先按角色预算（1.1），再回退网关全局上限。
+        if max_tokens is None:
+            max_tokens = self._role_max_tokens.get(agent_role, self._default_max_tokens)
         start_time = time.time()
 
         # P1: 熔断器检查 — OPEN 时快速失败（HALF_OPEN 允许试探）
@@ -260,6 +271,30 @@ class LLMGateway:
                         raise RuntimeError(
                             f"Provider returned an empty final response for model {try_model}"
                         )
+
+                    # 1.1: 输出完整性守卫 — 角色预算内截断时，扩容到全局上限重试一次。
+                    # 复用 attempt 循环：不算失败、不 sleep；但截断响应已产生
+                    # token/费用，必须先行记账（Codex P2-1）再重试。
+                    if self._is_truncated(response) and max_tokens < self._default_max_tokens:
+                        logger.warning(
+                            "Role %s output truncated at max_tokens=%d; "
+                            "retrying with global cap %d",
+                            agent_role,
+                            max_tokens,
+                            self._default_max_tokens,
+                        )
+                        self._account_truncated_attempt(
+                            response,
+                            content,
+                            latency_ms,
+                            try_model,
+                            agent_role=agent_role,
+                            experiment_id=experiment_id,
+                            prompt_version_id=prompt_version_id,
+                            messages=messages,
+                        )
+                        max_tokens = self._default_max_tokens
+                        continue
                     usage = response.usage
 
                     llm_response = LLMResponse(
@@ -273,6 +308,7 @@ class LLMGateway:
                         raw_response=response.model_dump()
                         if hasattr(response, "model_dump")
                         else {},
+                        truncated=self._is_truncated(response),
                     )
 
                     self._total_tokens += llm_response.total_tokens
@@ -642,6 +678,76 @@ class LLMGateway:
             return f"openai/{model}"
         return model
 
+    @staticmethod
+    def _is_truncated(response: Any) -> bool:
+        """1.1: 判断响应是否因 max_tokens 上限被截断（finish_reason == length）.
+
+        provider 返回结构差异大：litellm 对象走属性访问，测试/部分
+        provider 返回普通 dict（``{'choices': [{'finish_reason': ...}]}``），
+        两者都需支持，否则 dict 风格响应会误判为未截断、守卫失效。
+        """
+        try:
+            if isinstance(response, dict):
+                choices = response.get("choices") or []
+                return (choices[0] or {}).get("finish_reason") == "length"
+            return getattr(response.choices[0], "finish_reason", None) == "length"
+        except (AttributeError, IndexError, KeyError, TypeError):
+            return False
+
+    def _account_truncated_attempt(
+        self,
+        response: Any,
+        content: str,
+        latency_ms: float,
+        model: str,
+        *,
+        agent_role: str,
+        experiment_id: str | None,
+        prompt_version_id: str | None,
+        messages: list[dict[str, str]],
+    ) -> None:
+        """1.1/P2: 截断响应的 token/费用记账（扩容重试前必须入账）.
+
+        截断的响应同样被 provider 计费；若不先记账，重试后总花费被
+        低估、BudgetGuard 可能超额。此处只记账不标记熔断成功（最终
+        成功由重试后的响应统一标记）。
+        """
+        usage = response.usage
+        llm_response = LLMResponse(
+            content=content,
+            model=model,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0,
+            cost_usd=self._extract_cost(response, model, usage),
+            latency_ms=latency_ms,
+            raw_response=response.model_dump() if hasattr(response, "model_dump") else {},
+            truncated=True,
+        )
+        self._total_tokens += llm_response.total_tokens
+        if llm_response.cost_usd is not None:
+            self._total_cost += llm_response.cost_usd
+        else:
+            self._cost_known = False
+        if self._budget_guard:
+            self._budget_guard.consume(
+                model=model,
+                input_tokens=llm_response.input_tokens,
+                output_tokens=llm_response.output_tokens,
+                compute_sec=0.0,
+                cost_usd=llm_response.cost_usd,
+                cost_known=llm_response.cost_usd is not None,
+            )
+        if self._db:
+            self._record_call(
+                experiment_id=experiment_id,
+                agent_role=agent_role,
+                model=model,
+                prompt_version_id=prompt_version_id,
+                response=llm_response,
+                messages=messages,
+            )
+
     def fork(
         self,
         db: Database | None = None,
@@ -662,6 +768,7 @@ class LLMGateway:
             fallback_endpoints=list(self._fallback_endpoints),
             request_timeout=(self._request_timeout if request_timeout is None else request_timeout),
             default_max_tokens=self._default_max_tokens,
+            role_max_tokens=dict(self._role_max_tokens),
             deadline_monotonic=deadline_monotonic,
         )
 

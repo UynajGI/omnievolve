@@ -10,7 +10,9 @@ commit_result() 串行执行所有共享状态更新（MCTS/best/router/island�
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -911,6 +913,190 @@ class FastLoopStep:
         )
         return output
 
+    def _load_candidate_code(self, candidate_id: str) -> str:
+        """2.4: 加载候选代码（供 tie-break A/B 比较；查不到返回空串）."""
+        e = self._e
+        row = e._db.fetchone(  # noqa: SLF001
+            "SELECT artifact_hash FROM candidate WHERE id = ?",
+            (candidate_id,),
+        )
+        if not row:
+            return ""
+        return e._artifact_store.load_text(row["artifact_hash"]) or ""  # noqa: SLF001
+
+    def _load_task_name(self) -> str:
+        """2.4: 实验任务名 — 引擎级惰性缓存，避免紧凑评估循环反复查库."""
+        e = self._e
+        cached = getattr(e, "_task_name_cache", None)  # noqa: SLF001
+        if cached:
+            return cached
+        row = e._db.fetchone(  # noqa: SLF001
+            "SELECT task_name FROM experiment WHERE id = ?",
+            (e._experiment_id,),  # noqa: SLF001
+        )
+        name = row["task_name"] if row else "unknown"
+        setattr(e, "_task_name_cache", name)  # noqa: SLF001
+        return name
+
+    def _apply_tie_break_bonus(
+        self,
+        output: EvalOutput,
+        *,
+        candidate_id: str,
+        artifact_hash: str,
+        parent_ids: list[str],
+        parent_best: float,
+    ) -> float:
+        """2.4: 打平时用离散 A/B 偏好给 search_score 加有界 bonus.
+
+        仅在候选 passed 且与父代分数打平（|Δ| ≤ tolerance）时触发；
+        child 被多数偏好时返回 search_score + bonus（有界，≤ bonus_cap），
+        证据写入 output.metrics（``tie_break_*``）可审计；不触碰
+        passed/primary_score。IO（代码/任务名加载）委托给小型 loader。
+        """
+        e = self._e
+        if e._tie_breaker is None or not output.passed or not parent_ids:  # noqa: SLF001
+            return float(output.metrics.get("search_score", output.score))
+        search_score = float(output.metrics.get("search_score", output.score))
+        if not e._tie_breaker.is_tie(search_score, parent_best):  # noqa: SLF001
+            return search_score
+
+        child_code = e._artifact_store.load_text(artifact_hash) or ""  # noqa: SLF001
+        parent_code = self._load_candidate_code(parent_ids[0])
+        if not child_code.strip() or not parent_code.strip():
+            return search_score
+        task = self._load_task_name()
+
+        outcome = e._tie_breaker.break_tie(  # noqa: SLF001
+            task=task,
+            code_a=parent_code,
+            code_b=child_code,
+            score_a=parent_best,
+            score_b=search_score,
+            experiment_id=e._experiment_id,  # noqa: SLF001
+        )
+        metrics = output.metrics
+        metrics["tie_break_a_wins"] = float(outcome.a_wins)
+        metrics["tie_break_b_wins"] = float(outcome.b_wins)
+        metrics["tie_break_invalid"] = float(outcome.invalid)
+        metrics["tie_break_preferred_child"] = float(outcome.preferred == "b")
+        metrics["tie_break_bonus"] = outcome.bonus if outcome.preferred == "b" else 0.0
+        if outcome.preferred == "b":
+            return min(search_score + outcome.bonus, 1.0)
+        return search_score
+
+    def _reuse_duplicate_eval(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+    ) -> EvalOutput | None:
+        """3.1: 确定性去重 — 复用同实验内相同 artifact_hash 的已完成评估.
+
+        命中时返回复用的 ``EvalOutput``（调用方负责跳过 sandbox 执行与
+        job 记录），并为此候选持久化一条 completed evaluation_run；
+        未命中返回 None 走正常评估路径。
+
+        复用语义：CAS 下 artifact_hash 即代码内容 hash，相同代码在相同
+        evaluator/environment/seed 下结果确定；结果在 metrics 中标记
+        ``dedup_reused``/``dedup_source_candidate`` 保证可审计。
+        """
+        e = self._e
+        if not e._config.dedup_reuse_enabled:  # noqa: SLF001
+            return None
+        row = e._db.fetchone(  # noqa: SLF001
+            """
+            SELECT r.candidate_id, r.passed, r.primary_score, r.metrics,
+                   r.stderr_hash, r.stdout_hash,
+                   r.execution_time_ms, r.memory_peak_kb, r.cpu_time_ms
+            FROM evaluation_run r
+            JOIN candidate c ON c.id = r.candidate_id
+            WHERE c.experiment_id = ? AND c.artifact_hash = ? AND c.id != ?
+              AND r.evaluator_version_id = ? AND r.environment_version_id = ? AND r.seed = ?
+              AND r.status = 'completed' AND r.passed IS NOT NULL
+            ORDER BY r.finished_at DESC
+            LIMIT 1
+            """,
+            (
+                e._experiment_id,  # noqa: SLF001
+                artifact_hash,
+                candidate_id,
+                e._evaluator_version_id,  # noqa: SLF001
+                e._environment_version_id,  # noqa: SLF001
+                e._config.seed,  # noqa: SLF001
+            ),
+        )
+        if row is None:
+            return None
+
+        metrics = json.loads(row["metrics"]) if row["metrics"] else {}
+        metrics = {
+            **metrics,
+            "dedup_reused": True,
+            "dedup_source_candidate": row["candidate_id"],
+        }
+        failure_reason = ""
+        if row["stderr_hash"]:
+            try:
+                failure_reason = (
+                    e._artifact_store.load_text(row["stderr_hash"]) or ""  # noqa: SLF001
+                )[:1000]
+            except Exception:
+                logger.debug("Failed to load dedup stderr artifact", exc_info=True)
+        logger.info(
+            "Dedup reuse: candidate %s reuses evaluation of %s (hash=%s)",
+            candidate_id,
+            row["candidate_id"],
+            artifact_hash,
+        )
+        output = EvalOutput(
+            score=float(row["primary_score"] or 0.0),
+            metrics=cast(dict[str, float], metrics),
+            passed=bool(row["passed"]),
+            failure_reason=failure_reason,
+        )
+        self._persist_reused_eval_run(candidate_id, output, dict(row))
+        return output
+
+    def _persist_reused_eval_run(
+        self,
+        candidate_id: str,
+        output: EvalOutput,
+        source_row: Mapping[str, Any],
+    ) -> None:
+        """3.1/P1: 为去重候选持久化一条 completed evaluation_run.
+
+        否则候选进入 island/LineageUCB 后，``_get_candidate_score(parent_id)``
+        按 candidate_id 查不到分数（返回 0），SQL 父代选择/最优候选查询
+        也会漏掉它。结果从被复用的旧 run 复制（含 stdout/stderr hash），
+        metrics 携带 dedup 标记。
+        """
+        e = self._e
+        eval_repo = getattr(e, "_eval_repo", None)  # noqa: SLF001
+        if eval_repo is None:
+            return
+        try:
+            run = eval_repo.create(
+                experiment_id=e._experiment_id,  # noqa: SLF001
+                candidate_id=candidate_id,
+                evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
+                environment_version_id=e._environment_version_id,  # noqa: SLF001
+                seed=e._config.seed,  # noqa: SLF001
+            )
+            eval_repo.start(run.id)
+            eval_repo.complete(
+                run.id,
+                passed=output.passed,
+                primary_score=output.score,
+                metrics=output.metrics,
+                execution_time_ms=source_row.get("execution_time_ms"),
+                memory_peak_kb=source_row.get("memory_peak_kb"),
+                cpu_time_ms=source_row.get("cpu_time_ms"),
+                stdout_hash=source_row.get("stdout_hash"),
+                stderr_hash=source_row.get("stderr_hash"),
+            )
+        except StorageError:
+            logger.debug("Could not persist reused evaluation_run", exc_info=True)
+
     def _execute_sandbox(
         self,
         candidate_id: str,
@@ -924,6 +1110,12 @@ class FastLoopStep:
         返回 (output, eval_run, job, sandbox_result)。
         """
         e = self._e
+
+        # 3.1: 确定性去重 — 同实验内相同 artifact_hash 且已有完成评估时，
+        # 直接复用结果（跳过昂贵 sandbox），保持 candidate 谱系/搜索状态完整。
+        reused_output = self._reuse_duplicate_eval(candidate_id, artifact_hash)
+        if reused_output is not None:
+            return reused_output, None, None, None
 
         candidate_artifact = CandidateArtifact(
             candidate_id=candidate_id,
@@ -1141,6 +1333,14 @@ class FastLoopStep:
             ]
             parent_best = max(parent_scores) if parent_scores else e._get_baseline_score()  # noqa: SLF001
             search_score = float(output.metrics.get("search_score", output.score))
+            # 2.4: 离散集成 tie-breaker — 打平时 A/B 偏好加有界 search bonus
+            search_score = self._apply_tie_break_bonus(
+                output,
+                candidate_id=candidate_id,
+                artifact_hash=artifact_hash,
+                parent_ids=parent_ids or [],
+                parent_best=parent_best,
+            )
             relative_gain = search_score - parent_best
             normalized_gain = 0.5 + 0.5 * max(-1.0, min(1.0, relative_gain))
             e._mcts.backpropagate(candidate_id, normalized_gain)  # noqa: SLF001
