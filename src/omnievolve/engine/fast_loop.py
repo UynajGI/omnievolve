@@ -911,6 +911,63 @@ class FastLoopStep:
         )
         return output
 
+    def _apply_tie_break_bonus(
+        self,
+        output: EvalOutput,
+        *,
+        candidate_id: str,
+        artifact_hash: str,
+        parent_ids: list[str],
+        parent_best: float,
+    ) -> float:
+        """2.4: 打平时用离散 A/B 偏好给 search_score 加有界 bonus.
+
+        仅在候选 passed 且与父代分数打平（|Δ| ≤ tolerance）时触发；
+        child 被多数偏好时返回 search_score + bonus（有界，≤ bonus_cap），
+        证据写入 output.metrics（``tie_break_*``）可审计；不触碰
+        passed/primary_score。
+        """
+        e = self._e
+        if e._tie_breaker is None or not output.passed or not parent_ids:  # noqa: SLF001
+            return float(output.metrics.get("search_score", output.score))
+        search_score = float(output.metrics.get("search_score", output.score))
+        if not e._tie_breaker.is_tie(search_score, parent_best):  # noqa: SLF001
+            return search_score
+
+        child_code = e._artifact_store.load_text(artifact_hash) or ""  # noqa: SLF001
+        parent_row = e._db.fetchone(  # noqa: SLF001
+            "SELECT artifact_hash FROM candidate WHERE id = ?",
+            (parent_ids[0],),
+        )
+        parent_code = ""
+        if parent_row:
+            parent_code = e._artifact_store.load_text(parent_row["artifact_hash"]) or ""  # noqa: SLF001
+        if not child_code.strip() or not parent_code.strip():
+            return search_score
+        task_row = e._db.fetchone(  # noqa: SLF001
+            "SELECT task_name FROM experiment WHERE id = ?",
+            (e._experiment_id,),  # noqa: SLF001
+        )
+        task = task_row["task_name"] if task_row else "unknown"
+
+        outcome = e._tie_breaker.break_tie(  # noqa: SLF001
+            task=task,
+            code_a=parent_code,
+            code_b=child_code,
+            score_a=parent_best,
+            score_b=search_score,
+            experiment_id=e._experiment_id,  # noqa: SLF001
+        )
+        metrics = output.metrics
+        metrics["tie_break_a_wins"] = float(outcome.a_wins)
+        metrics["tie_break_b_wins"] = float(outcome.b_wins)
+        metrics["tie_break_invalid"] = float(outcome.invalid)
+        metrics["tie_break_preferred_child"] = float(outcome.preferred == "b")
+        metrics["tie_break_bonus"] = outcome.bonus if outcome.preferred == "b" else 0.0
+        if outcome.preferred == "b":
+            return min(search_score + outcome.bonus, 1.0)
+        return search_score
+
     def _reuse_duplicate_eval(
         self,
         candidate_id: str,
@@ -1209,6 +1266,14 @@ class FastLoopStep:
             ]
             parent_best = max(parent_scores) if parent_scores else e._get_baseline_score()  # noqa: SLF001
             search_score = float(output.metrics.get("search_score", output.score))
+            # 2.4: 离散集成 tie-breaker — 打平时 A/B 偏好加有界 search bonus
+            search_score = self._apply_tie_break_bonus(
+                output,
+                candidate_id=candidate_id,
+                artifact_hash=artifact_hash,
+                parent_ids=parent_ids or [],
+                parent_best=parent_best,
+            )
             relative_gain = search_score - parent_best
             normalized_gain = 0.5 + 0.5 * max(-1.0, min(1.0, relative_gain))
             e._mcts.backpropagate(candidate_id, normalized_gain)  # noqa: SLF001

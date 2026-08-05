@@ -79,6 +79,7 @@
 - **2.4 离散集成 tie-breaker**（论文 PR4 的 logprobs-free 版）：任务分数打平（差异 < tolerance 或 CI 重叠）时，用 K 次 A/B 成对比较（奇偶交换位置）聚合，给 `search_score` 加**有界** bonus，影响 LineageUCB。
   - 约束：作为独立诚实模式（不伪装成 logprob 概率）；不触碰 `passed`/`primary_score`。
   - 本地意义：SSWevolve 分数噪声大、打平多；这是**不依赖 logprobs 就能承接论文价值**的关键点。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：`DiscreteTieBreaker`（K 次 A/B + 位置交换 + majority + 有界 bonus），`tiebreaker.enabled` 默认关闭。详见 `docs/arch_improvement_log.md`。
 
 ### Phase 3 — 搜索效率增益
 - **3.1 确定性去重 + 渐进评估**：CAS artifact hash 去重，避免重复评估相同代码；`progressive_eval_enabled` 让候选先过廉价阶段。

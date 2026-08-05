@@ -104,9 +104,45 @@ GLM 推理/输出 token 占实测开销 63%。按角色差异化 `max_tokens` �
 
 ---
 
+## 2.4 离散集成 tie-breaker（logprobs-free）— 已实施（2026-08-06）
+
+### 目标
+SSWevolve 分数噪声大、打平多。PR4（概率 search credit）依赖 logprobs，
+GLM 实测不支持；本项以其 logprobs-free 版承接论文价值：任务分数打平时
+用 **K 次 A/B 成对比较**（奇偶交换位置防位置偏差）聚合偏好，
+给 `search_score` 加**有界** bonus，影响 LineageUCB 搜索信用。
+
+### 改动
+| 文件 | 内容 |
+|---|---|
+| `src/omnievolve/engine/tie_breaker.py` | 新增 `DiscreteTieBreaker`：`is_tie`（容差判定）、`break_tie`（K 次 A/B + 位置交换回映射 + majority 聚合 + 有界 bonus）、`_parse_verdict`（响应解析，无法解析计 invalid） |
+| `src/omnievolve/config.py` | 新增 `TieBreakerSettings`（enabled 默认 False / tolerance / repetitions / search_bonus_cap / model）+ `build_evolution_config` 传递 |
+| `src/omnievolve/engine/evolution_engine.py` | `EvolutionConfig` 5 个 tiebreaker 字段；engine 构造 `DiscreteTieBreaker`（默认不建） |
+| `src/omnievolve/engine/fast_loop.py` | `_apply_eval_result` search credit 段调用 `_apply_tie_break_bonus`：打平 + passed 时触发，child 多数偏好 → `search_score + bonus`（≤ cap）；证据写 metrics（`tie_break_*`） |
+
+### 设计决策
+- **独立诚实模式**：不伪装 logprob 概率；`tie_break_preferred_child`/`tie_break_bonus`
+  明确写入 metrics 可审计；不触碰 `passed`/`primary_score`。
+- **位置交换**：奇数次 a 在前、偶数次 b 在前，标签回映射后投票，抵消位置偏差
+  （测试验证：全票投同一方需交替响应）。
+- **有界 bonus**：仅多数偏好时按胜率比例发放（`bonus_cap × wins/total`），
+  只作用于 LineageUCB relative-gain 路径。
+- **默认关闭**：`tiebreaker.enabled=false`，生产行为不变；live 启用独立配置。
+- 偏好调用以 `agent_role="tiebreaker"` 进入 LLM ledger 记账。
+
+### 验证
+- 新增 `tests/engine/test_tie_breaker.py`（10 例）：容差判定 / majority /
+  位置交换回映射 / 无多数零 bonus / invalid 计数 / bonus 有界 / 集成
+  （打平加 bonus、不打平跳过、未启用跳过、失败候选不触发）。
+- e2e + 去重回归通过（tie-breaker 默认关闭，引擎构造不变）。
+
+### 回滚
+- `tiebreaker.enabled = false` 即关闭；或还原 fast_loop 调用点。
+
+---
+
 ## 待办
 
-- [ ] 2.1 结构化失败反馈（框架侧增强）
-- [ ] 2.2 记忆引导反重复（框架侧增强）
-- [ ] 2.4 离散集成 tie-breaker（logprobs-free）
+- [ ] 2.1 结构化失败反馈（框架侧增强 — 核查已基本覆盖，待补强项评估）
+- [ ] 2.2 记忆引导反重复（框架侧增强 — 核查已基本覆盖，待补强项评估）
 - [ ] 3.2 算子组合 / LineageUCB 调优

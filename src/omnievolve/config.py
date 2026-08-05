@@ -277,6 +277,21 @@ class VerifierSettings(BaseSettings):
     adaptive_benchmark_enabled: bool = False
 
 
+class TieBreakerSettings(BaseSettings):
+    """2.4: 离散集成 tie-breaker 配置（logprobs-free，默认关闭）.
+
+    任务分数打平时用 K 次 A/B 成对比较（奇偶交换位置）聚合偏好，
+    给 search_score 加有界 bonus，只影响 LineageUCB 搜索信用；
+    不触碰 passed/primary_score。
+    """
+
+    enabled: bool = False
+    tolerance: float = Field(default=0.01, ge=0.0, lt=1.0)
+    repetitions: int = Field(default=3, ge=1, le=10)
+    search_bonus_cap: float = Field(default=0.01, ge=0.0, le=1.0)
+    model: str = ""
+
+
 class OmniEvolveSettings(BaseSettings):
     """OmniEvolve 主配置.
 
@@ -303,6 +318,7 @@ class OmniEvolveSettings(BaseSettings):
         default_factory=EvaluationGovernanceSettings
     )
     verifier: VerifierSettings = Field(default_factory=VerifierSettings)
+    tiebreaker: TieBreakerSettings = Field(default_factory=TieBreakerSettings)
 
 
 def load_settings(config_path: str | Path | None = None) -> OmniEvolveSettings:
@@ -379,6 +395,7 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
         meta_evolution=MetaEvolutionSettings(**data.get("meta_evolution", {})),
         evaluation_governance=EvaluationGovernanceSettings(**data.get("evaluation_governance", {})),
         verifier=VerifierSettings(**data.get("verifier", {})),
+        tiebreaker=TieBreakerSettings(**data.get("tiebreaker", {})),
     )
 
 
@@ -433,6 +450,11 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         operator_portfolio_algorithm=e.operator_portfolio_algorithm,
         operator_portfolio_ucb_c=e.operator_portfolio_ucb_c,
         dedup_reuse_enabled=e.dedup_reuse_enabled,
+        tiebreaker_enabled=settings.tiebreaker.enabled,
+        tiebreaker_tolerance=settings.tiebreaker.tolerance,
+        tiebreaker_repetitions=settings.tiebreaker.repetitions,
+        tiebreaker_search_bonus_cap=settings.tiebreaker.search_bonus_cap,
+        tiebreaker_model=settings.tiebreaker.model,
     )
 
 

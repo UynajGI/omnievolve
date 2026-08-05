@@ -134,6 +134,11 @@ class EvolutionConfig:
     operator_portfolio_algorithm: str = "ucb"
     operator_portfolio_ucb_c: float = 1.414
     dedup_reuse_enabled: bool = True  # 3.1: 相同 artifact_hash 复用已完成评估
+    tiebreaker_enabled: bool = False  # 2.4: 离散 A/B tie-breaker
+    tiebreaker_tolerance: float = 0.01
+    tiebreaker_repetitions: int = 3
+    tiebreaker_search_bonus_cap: float = 0.01
+    tiebreaker_model: str = ""
 
 
 @dataclass
@@ -304,6 +309,19 @@ class EvolutionEngine:
                     self._config.operator_portfolio_algorithm,
                 ),
                 exploration=self._config.operator_portfolio_ucb_c,
+            )
+
+        # 2.4: 离散集成 tie-breaker（默认关闭；打平时 A/B 偏好加有界 search bonus）
+        self._tie_breaker = None
+        if self._config.tiebreaker_enabled:
+            from omnievolve.engine.tie_breaker import DiscreteTieBreaker
+
+            self._tie_breaker = DiscreteTieBreaker(
+                llm,
+                model=self._config.tiebreaker_model,
+                tolerance=self._config.tiebreaker_tolerance,
+                repetitions=self._config.tiebreaker_repetitions,
+                bonus_cap=self._config.tiebreaker_search_bonus_cap,
             )
 
         # 模型路由
