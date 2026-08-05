@@ -30,7 +30,9 @@ class EvolutionSettings(BaseSettings):
     compute_budget_sec: float = Field(default=0, ge=0)  # 0 表示不单独限制
     sandbox_timeout: float = Field(default=30.0, gt=0)
     sandbox_mem_limit_mb: int = Field(default=4096, gt=0)
-    sandbox_pids_limit: int = Field(default=0, ge=0)  # 0=不施加 RLIMIT_NPROC（科学计算线程需要）；可设有限值收紧
+    sandbox_pids_limit: int = Field(
+        default=0, ge=0
+    )  # 0=不施加 RLIMIT_NPROC（科学计算线程需要）；可设有限值收紧
     health_window_gens: int = Field(default=3, gt=0)
     # Fail closed until an independent equal-budget PolicyReplayExecutor is configured.
     self_evolve_enabled: bool = False
