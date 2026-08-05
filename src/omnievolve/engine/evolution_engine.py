@@ -133,6 +133,7 @@ class EvolutionConfig:
     operator_portfolio_enabled: bool = False
     operator_portfolio_algorithm: str = "ucb"
     operator_portfolio_ucb_c: float = 1.414
+    dedup_reuse_enabled: bool = True  # 3.1: 相同 artifact_hash 复用已完成评估
 
 
 @dataclass

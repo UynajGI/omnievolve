@@ -68,10 +68,45 @@ GLM 推理/输出 token 占实测开销 63%。按角色差异化 `max_tokens` �
 
 ---
 
+## 3.1 确定性去重（渐进评估已存在，补去重）— 已实施（2026-08-06）
+
+### 目标
+计划 §3.1 含"确定性去重 + 渐进评估"两块。核查发现**渐进评估已由
+`EvaluationService` 完整实现**（progressive stages + early stop + repetitions），
+本项补齐缺失的**确定性去重**：相同 `artifact_hash`（CAS 内容 hash）的代码
+已有完成评估时直接复用结果，跳过昂贵 sandbox（通过候选 mini-CV 均 16.4s）。
+
+### 改动
+| 文件 | 内容 |
+|---|---|
+| `src/omnievolve/config.py` | `EvolutionSettings.dedup_reuse_enabled`（默认 True）+ `build_evolution_config` 传递 |
+| `src/omnievolve/engine/evolution_engine.py` | `EvolutionConfig.dedup_reuse_enabled` |
+| `src/omnievolve/engine/fast_loop.py` | `_execute_sandbox` 开头查重；新增 `_reuse_duplicate_eval`：命中时返回复用 `EvalOutput`，跳过 sandbox/job/eval_run |
+
+### 设计决策
+- **复用语义**：CAS 下 `artifact_hash` 即代码内容 hash，相同代码在相同
+  evaluator/environment/seed 下结果确定；复用结果在 metrics 中标记
+  `dedup_reused` + `dedup_source_candidate` 保证可审计。
+- **不重复计 sandbox 预算**：`_apply_eval_result` 中 `result=None` 时
+  BudgetGuard 跳过（既有 None 保护），未执行 sandbox 不消耗预算。
+- **不建新 eval_run**：旧 run 已完整记录该 (hash, evaluator, environment, seed)
+  的评估；新 candidate 复用不违反 EvaluationRun 幂等红线（键含 candidate_id）。
+- 谱系/搜索状态完整：candidate 记录仍创建，仅评估结果复用。
+- 开关默认 True；可回滚（关闭即恢复重复评估）。
+
+### 验证
+- 新增 `tests/engine/test_dedup_reuse.py`（4 例）：命中复用（score/passed/
+  metrics/审计标记/跳过 sandbox）/ 未命中 / 开关关闭不查库 / 失败候选复用。
+- 回归：config 8 例 + e2e 14 例通过。
+
+### 回滚
+- `evolution.dedup_reuse_enabled = false` 即关闭；或还原 fast_loop 查重调用。
+
+---
+
 ## 待办
 
-- [ ] 2.1 结构化失败反馈（框架侧）
+- [ ] 2.1 结构化失败反馈（框架侧增强）
 - [ ] 2.2 记忆引导反重复（框架侧增强）
 - [ ] 2.4 离散集成 tie-breaker（logprobs-free）
-- [ ] 3.1 确定性去重 + 渐进评估
 - [ ] 3.2 算子组合 / LineageUCB 调优

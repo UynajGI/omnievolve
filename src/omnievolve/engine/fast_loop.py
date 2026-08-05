@@ -911,6 +911,68 @@ class FastLoopStep:
         )
         return output
 
+    def _reuse_duplicate_eval(
+        self,
+        candidate_id: str,
+        artifact_hash: str,
+    ) -> tuple[EvalOutput | None, Any, Any, Any] | None:
+        """3.1: 确定性去重 — 复用同实验内相同 artifact_hash 的已完成评估.
+
+        命中时跳过 sandbox 执行与 job 记录（瞬时完成），返回
+        (output, None, None, None)；未命中返回 None 走正常评估路径。
+
+        复用语义：CAS 下 artifact_hash 即代码内容 hash，相同代码在相同
+        evaluator/environment/seed 下结果确定；结果在 metrics 中标记
+        ``dedup_reused``/``dedup_source_candidate`` 保证可审计。
+        """
+        e = self._e
+        if not e._config.dedup_reuse_enabled:  # noqa: SLF001
+            return None
+        row = e._db.fetchone(  # noqa: SLF001
+            """
+            SELECT r.candidate_id, r.passed, r.primary_score, r.metrics, r.stderr_hash
+            FROM evaluation_run r
+            JOIN candidate c ON c.id = r.candidate_id
+            WHERE c.experiment_id = ? AND c.artifact_hash = ? AND c.id != ?
+              AND r.status = 'completed' AND r.passed IS NOT NULL
+            ORDER BY r.finished_at DESC
+            LIMIT 1
+            """,
+            (e._experiment_id, artifact_hash, candidate_id),  # noqa: SLF001
+        )
+        if row is None:
+            return None
+
+        import json
+
+        metrics = json.loads(row["metrics"]) if row["metrics"] else {}
+        metrics = {
+            **metrics,
+            "dedup_reused": True,
+            "dedup_source_candidate": row["candidate_id"],
+        }
+        failure_reason = ""
+        if row["stderr_hash"]:
+            try:
+                failure_reason = (
+                    e._artifact_store.load_text(row["stderr_hash"]) or ""  # noqa: SLF001
+                )[:1000]
+            except Exception:
+                logger.debug("Failed to load dedup stderr artifact", exc_info=True)
+        output = EvalOutput(
+            score=float(row["primary_score"] or 0.0),
+            metrics=cast(dict[str, float], metrics),
+            passed=bool(row["passed"]),
+            failure_reason=failure_reason,
+        )
+        logger.info(
+            "Dedup reuse: candidate %s reuses evaluation of %s (hash=%s)",
+            candidate_id,
+            row["candidate_id"],
+            artifact_hash,
+        )
+        return output, None, None, None
+
     def _execute_sandbox(
         self,
         candidate_id: str,
@@ -924,6 +986,12 @@ class FastLoopStep:
         返回 (output, eval_run, job, sandbox_result)。
         """
         e = self._e
+
+        # 3.1: 确定性去重 — 同实验内相同 artifact_hash 且已有完成评估时，
+        # 直接复用结果（跳过昂贵 sandbox），保持 candidate 谱系/搜索状态完整。
+        reused = self._reuse_duplicate_eval(candidate_id, artifact_hash)
+        if reused is not None:
+            return reused
 
         candidate_artifact = CandidateArtifact(
             candidate_id=candidate_id,

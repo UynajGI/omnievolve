@@ -83,6 +83,7 @@
 ### Phase 3 — 搜索效率增益
 - **3.1 确定性去重 + 渐进评估**：CAS artifact hash 去重，避免重复评估相同代码；`progressive_eval_enabled` 让候选先过廉价阶段。
   - 模块：`evolution_engine`、`evaluation_service`、config。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：渐进评估既有实现已覆盖；本项补确定性去重（`dedup_reuse_enabled`，复用相同 hash 的已完成评估）。详见 `docs/arch_improvement_log.md`。
 - **3.2 算子组合 / LineageUCB 调优**：`operator_portfolio_enabled`（UCB 学习有效变异算子）。
   - 模块：`engine/operator_portfolio.py`、`engine/selection.py`。成本中性、增益型。
 

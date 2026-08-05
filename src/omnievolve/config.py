@@ -53,6 +53,9 @@ class EvolutionSettings(BaseSettings):
     operator_portfolio_enabled: bool = False
     operator_portfolio_algorithm: Literal["ucb", "thompson"] = "ucb"
     operator_portfolio_ucb_c: float = Field(default=1.414, ge=0.0)
+    # 3.1: 确定性去重 — 相同 artifact_hash 且已有完成评估时直接复用结果，
+    # 跳过昂贵 sandbox（通过候选 mini-CV 均 16.4s）。关闭即回退重复评估。
+    dedup_reuse_enabled: bool = True
 
 
 class SelectionSettings(BaseSettings):
@@ -429,6 +432,7 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         operator_portfolio_enabled=e.operator_portfolio_enabled,
         operator_portfolio_algorithm=e.operator_portfolio_algorithm,
         operator_portfolio_ucb_c=e.operator_portfolio_ucb_c,
+        dedup_reuse_enabled=e.dedup_reuse_enabled,
     )
 
 
