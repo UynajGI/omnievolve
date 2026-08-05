@@ -273,7 +273,8 @@ class LLMGateway:
                         )
 
                     # 1.1: 输出完整性守卫 — 角色预算内截断时，扩容到全局上限重试一次。
-                    # 复用 attempt 循环：不算失败、不 sleep、不重复记账。
+                    # 复用 attempt 循环：不算失败、不 sleep；但截断响应已产生
+                    # token/费用，必须先行记账（Codex P2-1）再重试。
                     if self._is_truncated(response) and max_tokens < self._default_max_tokens:
                         logger.warning(
                             "Role %s output truncated at max_tokens=%d; "
@@ -281,6 +282,16 @@ class LLMGateway:
                             agent_role,
                             max_tokens,
                             self._default_max_tokens,
+                        )
+                        self._account_truncated_attempt(
+                            response,
+                            content,
+                            latency_ms,
+                            try_model,
+                            agent_role=agent_role,
+                            experiment_id=experiment_id,
+                            prompt_version_id=prompt_version_id,
+                            messages=messages,
                         )
                         max_tokens = self._default_max_tokens
                         continue
@@ -682,6 +693,60 @@ class LLMGateway:
             return getattr(response.choices[0], "finish_reason", None) == "length"
         except (AttributeError, IndexError, KeyError, TypeError):
             return False
+
+    def _account_truncated_attempt(
+        self,
+        response: Any,
+        content: str,
+        latency_ms: float,
+        model: str,
+        *,
+        agent_role: str,
+        experiment_id: str | None,
+        prompt_version_id: str | None,
+        messages: list[dict[str, str]],
+    ) -> None:
+        """1.1/P2: 截断响应的 token/费用记账（扩容重试前必须入账）.
+
+        截断的响应同样被 provider 计费；若不先记账，重试后总花费被
+        低估、BudgetGuard 可能超额。此处只记账不标记熔断成功（最终
+        成功由重试后的响应统一标记）。
+        """
+        usage = response.usage
+        llm_response = LLMResponse(
+            content=content,
+            model=model,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0,
+            cost_usd=self._extract_cost(response, model, usage),
+            latency_ms=latency_ms,
+            raw_response=response.model_dump() if hasattr(response, "model_dump") else {},
+            truncated=True,
+        )
+        self._total_tokens += llm_response.total_tokens
+        if llm_response.cost_usd is not None:
+            self._total_cost += llm_response.cost_usd
+        else:
+            self._cost_known = False
+        if self._budget_guard:
+            self._budget_guard.consume(
+                model=model,
+                input_tokens=llm_response.input_tokens,
+                output_tokens=llm_response.output_tokens,
+                compute_sec=0.0,
+                cost_usd=llm_response.cost_usd,
+                cost_known=llm_response.cost_usd is not None,
+            )
+        if self._db:
+            self._record_call(
+                experiment_id=experiment_id,
+                agent_role=agent_role,
+                model=model,
+                prompt_version_id=prompt_version_id,
+                response=llm_response,
+                messages=messages,
+            )
 
     def fork(
         self,

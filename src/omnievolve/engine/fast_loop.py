@@ -992,7 +992,8 @@ class FastLoopStep:
         """3.1: 确定性去重 — 复用同实验内相同 artifact_hash 的已完成评估.
 
         命中时返回复用的 ``EvalOutput``（调用方负责跳过 sandbox 执行与
-        job 记录）；未命中返回 None 走正常评估路径。
+        job 记录），并为此候选持久化一条 completed evaluation_run；
+        未命中返回 None 走正常评估路径。
 
         复用语义：CAS 下 artifact_hash 即代码内容 hash，相同代码在相同
         evaluator/environment/seed 下结果确定；结果在 metrics 中标记
@@ -1003,15 +1004,25 @@ class FastLoopStep:
             return None
         row = e._db.fetchone(  # noqa: SLF001
             """
-            SELECT r.candidate_id, r.passed, r.primary_score, r.metrics, r.stderr_hash
+            SELECT r.candidate_id, r.passed, r.primary_score, r.metrics,
+                   r.stderr_hash, r.stdout_hash,
+                   r.execution_time_ms, r.memory_peak_kb, r.cpu_time_ms
             FROM evaluation_run r
             JOIN candidate c ON c.id = r.candidate_id
             WHERE c.experiment_id = ? AND c.artifact_hash = ? AND c.id != ?
+              AND r.evaluator_version_id = ? AND r.environment_version_id = ? AND r.seed = ?
               AND r.status = 'completed' AND r.passed IS NOT NULL
             ORDER BY r.finished_at DESC
             LIMIT 1
             """,
-            (e._experiment_id, artifact_hash, candidate_id),  # noqa: SLF001
+            (
+                e._experiment_id,  # noqa: SLF001
+                artifact_hash,
+                candidate_id,
+                e._evaluator_version_id,  # noqa: SLF001
+                e._environment_version_id,  # noqa: SLF001
+                e._config.seed,  # noqa: SLF001
+            ),
         )
         if row is None:
             return None
@@ -1036,12 +1047,54 @@ class FastLoopStep:
             row["candidate_id"],
             artifact_hash,
         )
-        return EvalOutput(
+        output = EvalOutput(
             score=float(row["primary_score"] or 0.0),
             metrics=cast(dict[str, float], metrics),
             passed=bool(row["passed"]),
             failure_reason=failure_reason,
         )
+        self._persist_reused_eval_run(candidate_id, output, row)
+        return output
+
+    def _persist_reused_eval_run(
+        self,
+        candidate_id: str,
+        output: EvalOutput,
+        source_row: dict,
+    ) -> None:
+        """3.1/P1: 为去重候选持久化一条 completed evaluation_run.
+
+        否则候选进入 island/LineageUCB 后，``_get_candidate_score(parent_id)``
+        按 candidate_id 查不到分数（返回 0），SQL 父代选择/最优候选查询
+        也会漏掉它。结果从被复用的旧 run 复制（含 stdout/stderr hash），
+        metrics 携带 dedup 标记。
+        """
+        e = self._e
+        eval_repo = getattr(e, "_eval_repo", None)  # noqa: SLF001
+        if eval_repo is None:
+            return
+        try:
+            run = eval_repo.create(
+                experiment_id=e._experiment_id,  # noqa: SLF001
+                candidate_id=candidate_id,
+                evaluator_version_id=e._evaluator_version_id,  # noqa: SLF001
+                environment_version_id=e._environment_version_id,  # noqa: SLF001
+                seed=e._config.seed,  # noqa: SLF001
+            )
+            eval_repo.start(run.id)
+            eval_repo.complete(
+                run.id,
+                passed=output.passed,
+                primary_score=output.score,
+                metrics=output.metrics,
+                execution_time_ms=source_row.get("execution_time_ms"),
+                memory_peak_kb=source_row.get("memory_peak_kb"),
+                cpu_time_ms=source_row.get("cpu_time_ms"),
+                stdout_hash=source_row.get("stdout_hash"),
+                stderr_hash=source_row.get("stderr_hash"),
+            )
+        except StorageError:
+            logger.debug("Could not persist reused evaluation_run", exc_info=True)
 
     def _execute_sandbox(
         self,

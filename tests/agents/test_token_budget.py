@@ -135,6 +135,38 @@ class TestTruncationGuard:
         assert LLMGateway._is_truncated(_FakeChatCompletion("x", "length")) is True
         assert LLMGateway._is_truncated(_FakeChatCompletion("x", "stop")) is False
 
+    def test_truncated_attempt_accounted_before_retry(self, monkeypatch):
+        """Codex P2-1：截断响应先记账（token/费用）再扩容重试，避免低估花费."""
+        calls = _patch_completion(
+            monkeypatch,
+            [
+                _FakeChatCompletion("part", finish_reason="length"),
+                _FakeChatCompletion("full", finish_reason="stop"),
+            ],
+        )
+        consumed: list[dict] = []
+
+        class _BudgetGuard:
+            def consume(self, **kwargs):
+                consumed.append(kwargs)
+
+        gw = LLMGateway(
+            default_model="test-model",
+            default_max_tokens=8192,
+            role_max_tokens={"coder": 2048},
+            budget_guard=_BudgetGuard(),
+            max_retries=2,
+            retry_backoff_base=0.01,
+        )
+        response = gw.chat([{"role": "user", "content": "hi"}], agent_role="coder")
+
+        assert [c["max_tokens"] for c in calls] == [2048, 8192]
+        assert response.content == "full"
+        # 两次调用（截断 + 成功）都被记账：usage 每次 30 tokens
+        assert gw._total_tokens == 60
+        assert len(consumed) == 2
+        assert all(c["output_tokens"] == 20 for c in consumed)
+
 
 class TestConfig:
     def test_default_role_max_tokens(self):
