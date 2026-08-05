@@ -226,6 +226,8 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
             os.environ.get("OMNIEVOLVE_LLM_API_BASE") or os.environ.get("OPENAI_BASE_URL")
         ),
         "default_max_tokens": max_tokens,
+        # 1.1: 角色级输出预算（网关内钳制到全局上限）
+        "role_max_tokens": settings.models.role_max_tokens,
         "fallback_endpoints": fallback_endpoints,
     }
 

@@ -1,0 +1,47 @@
+# OmniEvolve 架构改进实施日志
+
+> 分支：`feature/arch-improvement`（与 `main` 研究线隔离，仅框架本体 `src/omnievolve/`）
+> 计划来源：`docs/unified_improvement_plan.md`（SSWevolve 比赛侧改动不进入本分支）
+
+每完成一个改进项追加一节，记录：改动、设计决策、验证、回滚方式。
+
+---
+
+## 1.1 推理/输出 token 预算化 — 已实施（2026-08-06）
+
+### 目标
+GLM 推理/输出 token 占实测开销 63%。按角色差异化 `max_tokens` 上限直接约束推理 token，
+截断时由输出完整性守卫兜底，避免"上限过低 → 内容截断"的质量损失。
+
+### 改动
+| 文件 | 内容 |
+|---|---|
+| `src/omnievolve/config.py` | 新增 `DEFAULT_ROLE_MAX_TOKENS`（director=2048 / coder=4096 / critic=1024 / meta=2048）；`ModelsSettings.role_max_tokens`；`_build_settings` 支持 TOML 部分覆盖（与默认合并） |
+| `src/omnievolve/agents/llm_gateway.py` | `LLMResponse.truncated` 字段；`LLMGateway(role_max_tokens=...)` 构造参数（越界钳制到全局上限）；`chat()` 未显式 `max_tokens` 时按 `agent_role` 应用角色预算；截断守卫（`finish_reason=="length"` 且预算 < 全局上限时复用 attempt 循环扩容重试一次）；`fork()` 继承角色预算 |
+| `src/omnievolve/cli.py` | `_apply_llm_env_overrides` 返回 `role_max_tokens`，随 `**llm_kwargs` 注入网关 |
+
+### 设计决策
+- **网关层自动应用角色预算**：coder/director/critic 等 agent 零改动，仅按既有 `agent_role` 参数路由。
+- **截断守卫复用 attempt 循环**：不算失败、不 sleep、不重复记账；默认 `max_retries=3` 足够覆盖"一次截断扩容 + 一次成功"。
+- **钳制语义**：角色预算永远 ≤ 全局 `max_tokens`；已到全局上限仍截断时不再扩容，`truncated=True` 留给调用方。
+- `score_tokens()`（verifier 通道）不受影响——granularity 固定，不适用角色预算。
+
+### 验证
+- 新增 `tests/agents/test_token_budget.py`（13 例）：角色预算生效 / 未知角色回退全局 / 显式参数优先 /
+  越界钳制 / 截断扩容重试（2048→8192）/ 全局上限标记 truncated / config 默认与 TOML 部分覆盖。
+- `tests/test_config.py`、`tests/test_cli.py` 回归通过（`test_cli.py` 断言 `kwargs["default_max_tokens"]` 不变）。
+
+### 回滚
+- config 还原 `role_max_tokens` 默认空（网关回退全局上限）；或仅还原 `config.py`/`cli.py` 的传递链。
+- `LLMResponse.truncated` 为带默认值新字段，无破坏性。
+
+---
+
+## 待办
+
+- [ ] 1.2 上下文相关性裁剪（ContextBuilder 接线）
+- [ ] 2.1 结构化失败反馈（框架侧）
+- [ ] 2.2 记忆引导反重复（框架侧增强）
+- [ ] 2.4 离散集成 tie-breaker（logprobs-free）
+- [ ] 3.1 确定性去重 + 渐进评估
+- [ ] 3.2 算子组合 / LineageUCB 调优

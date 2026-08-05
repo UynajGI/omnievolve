@@ -83,12 +83,26 @@ class ModelRoutingSettings(BaseSettings):
     role_conditioned: bool = True
 
 
+# 1.1: 角色级输出 token 预算（默认，均低于全局 max_tokens）。
+# 推理/输出 token 占 GLM 实测开销 63%，按角色差异化上限可显著降本；
+# 截断由 LLMGateway 输出完整性守卫自动扩容到全局上限兜底。
+DEFAULT_ROLE_MAX_TOKENS: dict[str, int] = {
+    "director": 2048,
+    "coder": 4096,
+    "critic": 1024,
+    "meta": 2048,
+}
+
+
 class ModelsSettings(BaseSettings):
     """模型配置."""
 
     heavy: list[str] = Field(default_factory=lambda: ["reasoning-model-primary"])
     light: list[str] = Field(default_factory=lambda: ["fast-model-primary"])
     max_tokens: int = Field(default=16384, gt=0)
+    role_max_tokens: dict[str, int] = Field(
+        default_factory=lambda: dict(DEFAULT_ROLE_MAX_TOKENS)
+    )
     routing: ModelRoutingSettings = Field(default_factory=ModelRoutingSettings)
 
 
@@ -340,6 +354,10 @@ def _build_settings(data: dict[str, Any]) -> OmniEvolveSettings:
             heavy=data.get("models", {}).get("heavy", ["reasoning-model-primary"]),
             light=data.get("models", {}).get("light", ["fast-model-primary"]),
             max_tokens=data.get("models", {}).get("max_tokens", 16384),
+            role_max_tokens={
+                **DEFAULT_ROLE_MAX_TOKENS,
+                **data.get("models", {}).get("role_max_tokens", {}),
+            },
             routing=ModelRoutingSettings(**data.get("models", {}).get("routing", {})),
         ),
         embedding=EmbeddingSettings(

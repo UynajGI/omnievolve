@@ -59,6 +59,7 @@
   - 模块：`config.py` `ModelsSettings.max_tokens`、`agents/coder.py`、`agents/director.py`。
   - 依据：GLM 推理受 `max_tokens` 约束；输出 token 占 63%。
   - 风险：上限过低导致截断 → 用守卫重试 + 安全下限缓解。回滚：config 还原。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：`role_max_tokens` 角色级预算 + `LLMGateway` 截断守卫（自动扩容重试）。详见 `docs/arch_improvement_log.md`。
 - **1.2 上下文相关性裁剪**：只注入 top-k 相关记忆（复用 embedding 相似度）；压缩 SSWevolve 冻结骨架（EVOLVE-BLOCK 外恒定，可摘要）。
   - 模块：`agents/context_builder.py`、`retrieval_budget`。
   - 回滚：阈值还原。
