@@ -92,9 +92,17 @@ class TestTieBreakerUnit:
             score_a=0.5,
             score_b=0.5,
         )
-        # "maybe A is better" 含 A → 计 a；"not sure" 无 A/B → invalid
-        assert outcome.invalid == 1
+        # 首 token 非 A/B（"MAYBE"/"NOT"）→ invalid；仅 "B" 有效
+        assert outcome.invalid == 2
+        assert outcome.b_wins == 1
         assert outcome.total == 3
+
+    def test_verdict_rejects_both_text(self):
+        # review 场景："BOTH are similar" 不应误判为 B
+        assert DiscreteTieBreaker._parse_verdict("BOTH are similar") is None
+        assert DiscreteTieBreaker._parse_verdict("A is better") == "a"
+        assert DiscreteTieBreaker._parse_verdict("A.") == "a"
+        assert DiscreteTieBreaker._parse_verdict(" b ") == "b"
 
     def test_bonus_scales_with_win_ratio_and_caps(self):
         # 全票投 child 需交替响应（位置交换回映射）→ bonus = cap × 1.0

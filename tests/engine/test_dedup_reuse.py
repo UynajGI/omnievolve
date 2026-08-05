@@ -53,7 +53,7 @@ class TestDedupReuse:
             "stderr_hash": "stderr-artifact",
         }
         step = self._step(_EngineStub(row=row))
-        output, eval_run, job, sandbox_result = step._reuse_duplicate_eval("cand-2", "hash-x")
+        output = step._reuse_duplicate_eval("cand-2", "hash-x")
 
         assert output is not None
         assert output.score == pytest.approx(0.75)
@@ -63,8 +63,6 @@ class TestDedupReuse:
         assert output.metrics["dedup_reused"] is True
         assert output.metrics["dedup_source_candidate"] == "cand-1"
         assert output.metrics["task_score"] == 0.75
-        # 跳过 sandbox：无 eval_run / job / outcome
-        assert eval_run is None and job is None and sandbox_result is None
 
     def test_hit_failed_candidate_reuses_failure(self):
         row = {
@@ -75,7 +73,7 @@ class TestDedupReuse:
             "stderr_hash": None,
         }
         step = self._step(_EngineStub(row=row))
-        output, _, _, _ = step._reuse_duplicate_eval("cand-2", "hash-x")
+        output = step._reuse_duplicate_eval("cand-2", "hash-x")
         assert output is not None
         assert output.passed is False
         assert output.score == 0.0

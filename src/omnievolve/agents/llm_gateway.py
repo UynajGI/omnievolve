@@ -671,11 +671,16 @@ class LLMGateway:
     def _is_truncated(response: Any) -> bool:
         """1.1: 判断响应是否因 max_tokens 上限被截断（finish_reason == length）.
 
-        provider 返回结构差异大（litellm 对象 / 测试 dict），统一安全取值。
+        provider 返回结构差异大：litellm 对象走属性访问，测试/部分
+        provider 返回普通 dict（``{'choices': [{'finish_reason': ...}]}``），
+        两者都需支持，否则 dict 风格响应会误判为未截断、守卫失效。
         """
         try:
+            if isinstance(response, dict):
+                choices = response.get("choices") or []
+                return (choices[0] or {}).get("finish_reason") == "length"
             return getattr(response.choices[0], "finish_reason", None) == "length"
-        except (AttributeError, IndexError):
+        except (AttributeError, IndexError, KeyError, TypeError):
             return False
 
     def fork(

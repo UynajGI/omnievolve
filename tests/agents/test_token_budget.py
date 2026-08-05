@@ -125,6 +125,16 @@ class TestTruncationGuard:
         response = gw.chat([{"role": "user", "content": "hi"}], agent_role="coder")
         assert response.truncated is True  # 已到全局上限，不再扩容
 
+    def test_is_truncated_handles_dict_style_responses(self):
+        """review 修复：dict 风格响应（测试/部分 provider）不应误判未截断."""
+        assert LLMGateway._is_truncated({"choices": [{"finish_reason": "length"}]}) is True
+        assert LLMGateway._is_truncated({"choices": [{"finish_reason": "stop"}]}) is False
+        assert LLMGateway._is_truncated({"choices": []}) is False
+        assert LLMGateway._is_truncated({}) is False
+        # litellm 对象路径不受影响
+        assert LLMGateway._is_truncated(_FakeChatCompletion("x", "length")) is True
+        assert LLMGateway._is_truncated(_FakeChatCompletion("x", "stop")) is False
+
 
 class TestConfig:
     def test_default_role_max_tokens(self):

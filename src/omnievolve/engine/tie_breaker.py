@@ -194,9 +194,14 @@ class DiscreteTieBreaker:
 
     @staticmethod
     def _parse_verdict(content: str) -> str | None:
-        """解析响应中的首个 A/B 标记."""
-        stripped = content.strip().upper()
-        for token in ("A", "B"):
-            if token in stripped:
-                return token.lower()
+        """解析响应裁决：仅接受第一个非空白 token（去尾部标点）恰为 A 或 B.
+
+        避免任意文本误匹配（如 "BOTH are similar" 不应判为 B）；
+        常见 LLM 输出 "A"、"A."、"A\n..." 均能解析。
+        """
+        first_token = content.strip().split(None, 1)[0] if content.strip() else ""
+        clean = first_token.rstrip(".,;:!?")
+        upper = clean.upper()
+        if upper in ("A", "B"):
+            return upper.lower()
         return None
