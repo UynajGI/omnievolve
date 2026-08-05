@@ -98,6 +98,7 @@ class EmbeddingCodeSettings(BaseSettings):
     dimension: int = 1024
     normalization: str = "provider_default"
     input_type: str = "document"
+    device: str = "cpu"  # 本地嵌入设备: "cpu" 或 "cuda"（GPU 环境设为 cuda）
 
 
 class EmbeddingThoughtSettings(BaseSettings):
@@ -109,6 +110,7 @@ class EmbeddingThoughtSettings(BaseSettings):
     dimension: int = 1024
     normalization: str = "l2"
     input_type: str = "document"
+    device: str = "cpu"  # 本地嵌入设备: "cpu" 或 "cuda"（GPU 环境设为 cuda）
 
 
 class EmbeddingSettings(BaseSettings):

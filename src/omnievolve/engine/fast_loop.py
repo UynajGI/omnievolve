@@ -975,6 +975,10 @@ class FastLoopStep:
         policy = SandboxPolicy(
             timeout_sec=e._config.sandbox_timeout,  # noqa: SLF001
             mem_limit_mb=e._config.sandbox_mem_limit_mb,  # noqa: SLF001
+            # pids_limit=0: 不施加 RLIMIT_NPROC。默认 64 会让使用线程的科学计算
+            # 候选 (numpy/OpenBLAS、threading) 触发 "can't start new thread"。
+            # trusted_subprocess 本就无隔离，放开进程数限制是安全的。
+            pids_limit=0,
         )
         service = EvaluationService(
             e._task_evaluator,  # noqa: SLF001

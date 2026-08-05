@@ -312,6 +312,7 @@ def _build_engine_components(
             provider=settings.embedding.code.provider,
             model=settings.embedding.code.model,
             dimension=settings.embedding.code.dimension,
+            device=settings.embedding.code.device,
         )
 
         # 优先 zvec（HNSW ANN），不可用时回退 NumPy
