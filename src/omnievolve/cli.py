@@ -416,7 +416,16 @@ def run(
     from omnievolve.eval.evaluator_registry import EvaluatorRegistry
 
     registry = EvaluatorRegistry(db)
-    evaluator_version_id = registry.register(task_evaluator)
+    # 尊重评估器自声明的 version_id（如 "sswevolve-sde@2.1.0"）中的语义版本，
+    # 否则 register 默认 1.0.0 会让评估口径升级无法体现在版本记录中。
+    evaluator_version_id = registry.register(
+        task_evaluator,
+        semantic_version=(
+            getattr(task_evaluator, "version_id", "").split("@", 1)[1]
+            if "@" in getattr(task_evaluator, "version_id", "")
+            else "1.0.0"
+        ),
+    )
     environment_version_id = sandbox.environment_version_id
 
     # LLM Gateway
