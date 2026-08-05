@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785684797881,
+  "lastUpdate": 1785943888167,
   "repoUrl": "https://github.com/UynajGI/omnievolve",
   "entries": {
     "Benchmark": [
@@ -2175,6 +2175,93 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 6.094624817005001e-8",
             "extra": "mean: 404.31621881735634 nsec\nrounds: 107551"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "59381036+UynajGI@users.noreply.github.com",
+            "name": "結凪",
+            "username": "UynajGI"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e8fa1acff1c3d7bdb30458968ae4146bc6334848",
+          "message": "feat: add local embedding device config and relax sandbox pids limit (#7)\n\n* chore: isolate SSWevolve experiments from version control\n\n* feat: add local embedding device config and relax sandbox pids limit\n\n* fix(config): address review - constrain device enum, drop dead thought device, make sandbox pids limit configurable\n\n* style: ruff format config.py",
+          "timestamp": "2026-08-05T23:30:23+08:00",
+          "tree_id": "c906d47b7e70ef9e852e5d4043171b87222e34ca",
+          "url": "https://github.com/UynajGI/omnievolve/commit/e8fa1acff1c3d7bdb30458968ae4146bc6334848"
+        },
+        "date": 1785943887114,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_store_throughput",
+            "value": 1561.8017758197325,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004315798725807551",
+            "extra": "mean: 640.2861204810301 usec\nrounds: 83"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_load_throughput",
+            "value": 36742.717344335775,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000021567336318459697",
+            "extra": "mean: 27.216277735488692 usec\nrounds: 14467"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestArtifactStorePerformance::test_sha256_throughput",
+            "value": 1337.9124640545215,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007493186355239887",
+            "extra": "mean: 747.4330547527128 usec\nrounds: 1315"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_select_throughput",
+            "value": 31156.657232205973,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002328406334300021",
+            "extra": "mean: 32.09586935296516 usec\nrounds: 19258"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestMCTSPerformance::test_backpropagate_throughput",
+            "value": 49427.10241618072,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017318446165465958",
+            "extra": "mean: 20.231815160433815 usec\nrounds: 31292"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestNoveltyGatePerformance::test_ast_signature_throughput",
+            "value": 42380.771448314576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000025755919222169866",
+            "extra": "mean: 23.595606352271073 usec\nrounds: 8312"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_numpy_query_throughput",
+            "value": 1525.9673988855452,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007853860044210288",
+            "extra": "mean: 655.3219949065274 usec\nrounds: 589"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestVectorPerformance::test_zvec_upsert_throughput",
+            "value": 2184.392564721612,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007806163672780821",
+            "extra": "mean: 457.793171497745 usec\nrounds: 2070"
+          },
+          {
+            "name": "tests/test_benchmark.py::TestProfilerOverhead::test_profiler_disabled_overhead",
+            "value": 2057578.8478270513,
+            "unit": "iter/sec",
+            "range": "stddev: 2.2416400182505128e-7",
+            "extra": "mean: 486.0081065938594 nsec\nrounds: 183554"
           }
         ]
       }
