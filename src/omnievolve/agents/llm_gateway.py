@@ -274,10 +274,7 @@ class LLMGateway:
 
                     # 1.1: 输出完整性守卫 — 角色预算内截断时，扩容到全局上限重试一次。
                     # 复用 attempt 循环：不算失败、不 sleep、不重复记账。
-                    if (
-                        self._is_truncated(response)
-                        and max_tokens < self._default_max_tokens
-                    ):
+                    if self._is_truncated(response) and max_tokens < self._default_max_tokens:
                         logger.warning(
                             "Role %s output truncated at max_tokens=%d; "
                             "retrying with global cap %d",

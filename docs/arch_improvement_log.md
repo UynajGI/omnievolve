@@ -37,9 +37,39 @@ GLM 推理/输出 token 占实测开销 63%。按角色差异化 `max_tokens` �
 
 ---
 
+## 1.2 上下文相关性裁剪（ContextBuilder 接线）— 已实施（2026-08-06）
+
+### 目标
+`ContextBuilder` 自 S5-05 起被实例化却从未接线（死代码），Director/Coder 各自手写
+拼接提示，输入 token 无统一预算控制。本项将其接为上下文构建的**单一入口**。
+
+### 改动
+| 文件 | 内容 |
+|---|---|
+| `src/omnievolve/agents/context_builder.py` | 新增 `build_director_user_message(ctx)` / `build_coder_user_message(ctx, thought)`（AgentContext 完整版）；从 Director/Coder 的 `_build_user_message` **保真迁移**（标题、顺序、截断阈值不变）；末尾统一按角色预算截断 |
+| `src/omnievolve/agents/director.py` | 构造注入 `context_builder`；`_build_user_message` 委托 builder |
+| `src/omnievolve/agents/coder.py` | 同上（`_get_parent_code` 保留给 diff 解析） |
+| `src/omnievolve/engine/evolution_engine.py` | 共享 `ContextBuilder(total_token_budget=min(token_budget, 100_000))` 注入 Director/Coder |
+
+### 设计决策
+- **保真迁移**：`tests/agents/test_eval_feedback.py` 断言 prompt 标题顺序
+  （父代码 → 失败反馈 → inspiration），迁移后顺序一致，测试零改动通过。
+- **单一逻辑源**：agents 默认构造也建 builder（无引擎注入时行为一致），
+  消除双份提示逻辑漂移风险。
+- 保留旧 `build_director_context`/`build_coder_context`（简单参数版）为兼容 API。
+
+### 验证
+- 新增 `TestFullContextBuilders`（7 例）：已知区块齐全 / 无停滞省略 Tier /
+  顺序保真 + root cause / 预算裁剪生效 / 父代码提取。
+- 回归：agents 70 例 + e2e 14 例全部通过。
+
+### 回滚
+- agents 构造不传 `context_builder` 即回退默认实例；行为与迁移前一致。
+
+---
+
 ## 待办
 
-- [ ] 1.2 上下文相关性裁剪（ContextBuilder 接线）
 - [ ] 2.1 结构化失败反馈（框架侧）
 - [ ] 2.2 记忆引导反重复（框架侧增强）
 - [ ] 2.4 离散集成 tie-breaker（logprobs-free）

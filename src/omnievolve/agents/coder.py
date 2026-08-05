@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from enum import Enum
+from typing import Any
 
 from omnievolve.agents.base import AgentContext, CodeOutput, ThoughtOutput
 from omnievolve.agents.llm_gateway import LLMGateway
@@ -67,10 +68,15 @@ class Coder:
         *,
         model: str | None = None,
         system_prompt: str | None = None,
+        context_builder: Any | None = None,
     ) -> None:
         self._llm = llm
         self._model = model
         self._system_prompt = system_prompt or CODER_SYSTEM_PROMPT
+        # 1.2: 上下文统一由 ContextBuilder 构建（预算裁剪单一入口）。
+        from omnievolve.agents.context_builder import ContextBuilder
+
+        self._context_builder = context_builder or ContextBuilder()
 
     def generate_code(self, ctx: AgentContext, thought: ThoughtOutput) -> CodeOutput:
         """生成代码 — 2.3: 根据停滞等级自动选择生成模式."""
@@ -137,68 +143,8 @@ class Coder:
         return GenerationMode.TARGETED_DIFF
 
     def _build_user_message(self, ctx: AgentContext, thought: ThoughtOutput) -> str:
-        """构建用户消息 — 含父代码 + 高分历史程序 + 上次失败反馈."""
-        parts = [
-            f"## Improvement Thought:\n{thought.thought}",
-            f"\n## Rationale:\n{thought.rationale}",
-        ]
-
-        # 父代码（用于 diff 基础）
-        parent_code = self._get_parent_code(ctx)
-        if parent_code:
-            parts.append(f"\n## Current Code to Improve:\n```python\n{parent_code}\n```")
-
-        # P0-1: 上次评估失败反馈（如果有）
-        if ctx.last_eval_failure:
-            parts.append(
-                f"\n## ⚠ Previous Evaluation Failure (avoid repeating):\n"
-                f"```\n{ctx.last_eval_failure}\n```"
-            )
-
-        # Inspiration: 高分历史程序
-        if ctx.inspiration_programs:
-            parts.append("\n## High-Scoring Programs for Inspiration:")
-            for prog in ctx.inspiration_programs[:3]:
-                score = prog.get("score", "?")
-                code = prog.get("code", "")
-                if len(code) > 1500:  # P2-2: 截断从 800 提升到 1500
-                    code = code[:1500] + "\n... (truncated)"
-                parts.append(f"Score: {score}\n```python\n{code}\n```")
-
-        # P2-2: 兄弟节点摘要
-        if ctx.sibling_summaries:
-            parts.append("\n## Sibling Approaches (same island, recent):")
-            for s in ctx.sibling_summaries[:3]:
-                parts.append(f"- {s}")
-
-        # 记忆摘要
-        if ctx.memory_hits:
-            parts.append("\n## Past Insights:")
-            for m in ctx.memory_hits[:3]:
-                parts.append(f"- {m.get('outcome_summary', '')[:200]}")
-
-        parts.append("\n## Instructions:")
-        instruction = (
-            "Propose targeted SEARCH/REPLACE edits to improve the current code. "
-            "Make minimal, focused changes."
-        )
-        if ctx.last_eval_failure:
-            instruction += (
-                " Pay special attention to the previous failure above — "
-                "ensure your edits fix the root cause, not just the symptom."
-            )
-        if ctx.generation_mode == "point":
-            instruction += " Make exactly one localized semantic change."
-        elif ctx.generation_mode == "repair":
-            instruction += (
-                " Treat this as a repair operator: preserve working behavior and "
-                "focus on the most likely correctness or execution defect."
-            )
-        elif ctx.generation_mode == "diff":
-            instruction += " Prefer a small atomic SEARCH/REPLACE patch."
-        parts.append(instruction)
-
-        return "\n".join(parts)
+        """构建用户消息 — 1.2: 统一委托 ContextBuilder（预算裁剪单一入口）."""
+        return self._context_builder.build_coder_user_message(ctx, thought)
 
     def _parse_response(self, content: str, ctx: AgentContext) -> CodeOutput:
         """解析 LLM 响应 — 优先 SEARCH/REPLACE diff，回退 JSON/全量."""

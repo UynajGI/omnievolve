@@ -251,15 +251,16 @@ class EvolutionEngine:
         if hasattr(llm, "_budget_guard"):
             llm._budget_guard = self._budget_guard  # noqa: SLF001
 
-        # Agents
-        self._director = Director(llm)
-        self._coder = Coder(llm)
-        self._critic = Critic(use_syntax_check=True)
-
-        # S5-05: ContextBuilder 按 token 预算裁剪上下文
+        # S5-05 / 1.2: ContextBuilder 按 token 预算裁剪上下文（唯一入口，
+        # 注入 Director/Coder，避免各 agent 手写拼接导致预算失控）。
         self._context_builder = ContextBuilder(
             total_token_budget=min(self._config.token_budget, 100_000),
         )
+
+        # Agents
+        self._director = Director(llm, context_builder=self._context_builder)
+        self._coder = Coder(llm, context_builder=self._context_builder)
+        self._critic = Critic(use_syntax_check=True)
 
         # 搜索组件
         self._mcts = LineageUCB(

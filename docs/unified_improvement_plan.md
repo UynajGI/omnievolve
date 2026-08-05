@@ -63,6 +63,7 @@
 - **1.2 上下文相关性裁剪**：只注入 top-k 相关记忆（复用 embedding 相似度）；压缩 SSWevolve 冻结骨架（EVOLVE-BLOCK 外恒定，可摘要）。
   - 模块：`agents/context_builder.py`、`retrieval_budget`。
   - 回滚：阈值还原。
+  - **✅ 已实施（2026-08-06，`feature/arch-improvement`）**：ContextBuilder 死代码接线为单一入口（Director/Coder 提示保真迁移 + 角色预算裁剪）。详见 `docs/arch_improvement_log.md`。
 - **1.3 静态 schema 预检（pre-sandbox）**：沙箱前确定性校验 CLOSURE（eq_name 白名单 `U_L/U_M/U_U/W1r/W1i/W2r/W2i/H1/H2`、states≤3、仅 numpy/math import），无效直接短路返回 `fail_reason`。
   - 模块：`examples/sswevolve/evaluator.py`、`runner.py`。
   - 论文关联：这是"准则分解"的本地化落地，但用确定性检查替代 LLM/logprobs。
