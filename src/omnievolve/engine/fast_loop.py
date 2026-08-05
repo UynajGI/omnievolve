@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -934,7 +935,7 @@ class FastLoopStep:
             (e._experiment_id,),  # noqa: SLF001
         )
         name = row["task_name"] if row else "unknown"
-        e._task_name_cache = name  # noqa: SLF001
+        setattr(e, "_task_name_cache", name)  # noqa: SLF001
         return name
 
     def _apply_tie_break_bonus(
@@ -1053,14 +1054,14 @@ class FastLoopStep:
             passed=bool(row["passed"]),
             failure_reason=failure_reason,
         )
-        self._persist_reused_eval_run(candidate_id, output, row)
+        self._persist_reused_eval_run(candidate_id, output, dict(row))
         return output
 
     def _persist_reused_eval_run(
         self,
         candidate_id: str,
         output: EvalOutput,
-        source_row: dict,
+        source_row: Mapping[str, Any],
     ) -> None:
         """3.1/P1: 为去重候选持久化一条 completed evaluation_run.
 
