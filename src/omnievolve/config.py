@@ -30,6 +30,9 @@ class EvolutionSettings(BaseSettings):
     compute_budget_sec: float = Field(default=0, ge=0)  # 0 表示不单独限制
     sandbox_timeout: float = Field(default=30.0, gt=0)
     sandbox_mem_limit_mb: int = Field(default=4096, gt=0)
+    sandbox_pids_limit: int = Field(
+        default=0, ge=0
+    )  # 0=不施加 RLIMIT_NPROC（科学计算线程需要）；可设有限值收紧
     health_window_gens: int = Field(default=3, gt=0)
     # Fail closed until an independent equal-budget PolicyReplayExecutor is configured.
     self_evolve_enabled: bool = False
@@ -98,6 +101,7 @@ class EmbeddingCodeSettings(BaseSettings):
     dimension: int = 1024
     normalization: str = "provider_default"
     input_type: str = "document"
+    device: Literal["cpu", "cuda"] = "cpu"  # 本地嵌入设备: "cpu" 或 "cuda"（GPU 环境设为 cuda）
 
 
 class EmbeddingThoughtSettings(BaseSettings):
@@ -109,6 +113,8 @@ class EmbeddingThoughtSettings(BaseSettings):
     dimension: int = 1024
     normalization: str = "l2"
     input_type: str = "document"
+    # 注意: thought embedder 尚未在 CLI/引擎中接线，device 等字段待贯通后再添加，
+    # 避免死配置。
 
 
 class EmbeddingSettings(BaseSettings):
@@ -383,6 +389,7 @@ def build_evolution_config(settings: OmniEvolveSettings):  # -> EvolutionConfig
         compute_budget_sec=e.compute_budget_sec or None,
         sandbox_timeout=e.sandbox_timeout,
         sandbox_mem_limit_mb=e.sandbox_mem_limit_mb,
+        sandbox_pids_limit=e.sandbox_pids_limit,
         health_window_gens=e.health_window_gens,
         meta_canary_budget_ratio=settings.meta_evolution.meta_canary_budget_ratio,
         parent_selector=settings.selection.parent_selector,

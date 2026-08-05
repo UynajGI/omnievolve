@@ -102,6 +102,7 @@ class EvolutionConfig:
     compute_budget_sec: float | None = None
     sandbox_timeout: float = 30.0
     sandbox_mem_limit_mb: int = 4096
+    sandbox_pids_limit: int = 0  # 0=不施加 RLIMIT_NPROC（科学计算线程需要）
     health_window_gens: int = 3
     meta_canary_budget_ratio: float = 0.1
     parent_selector: str = "lineage_ucb"

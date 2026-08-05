@@ -174,3 +174,8 @@ tmp/
 .agents/
 .qoder/
 .qwen/
+
+# SSWevolve 实验（本地数据保留，不纳入版本控制）
+/references/SSWevolve/
+/examples/sswevolve/
+/scripts/_fix_stage4_eval.py
