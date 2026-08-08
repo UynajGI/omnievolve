@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -48,6 +49,7 @@ class OperatorPortfolio:
         self._operators = operator_tuple
         self._exploration = float(exploration)
         self._state: dict[str, dict[str, dict[str, float]]] = {}
+        self._lock = threading.Lock()
 
     @staticmethod
     def _context_key(task: str, stage: str) -> str:
@@ -73,31 +75,32 @@ class OperatorPortfolio:
         candidates = [operator for operator in self._operators if operator in eligible_set]
         if not candidates:
             raise ValueError("operator portfolio has no eligible operator")
-        state = self._ensure_context(task, stage)
+        with self._lock:
+            state = self._ensure_context(task, stage)
 
-        if self._algorithm == "thompson":
-            chosen = max(
-                candidates,
-                key=lambda operator: (
-                    random.betavariate(state[operator]["alpha"], state[operator]["beta"]),
-                    -self._operators.index(operator),
-                ),
-            )
-        else:
-            untried = [operator for operator in candidates if state[operator]["count"] == 0]
-            if untried:
-                chosen = untried[0]
-            else:
-                total = max(1.0, sum(state[operator]["count"] for operator in candidates))
+            if self._algorithm == "thompson":
                 chosen = max(
                     candidates,
                     key=lambda operator: (
-                        state[operator]["reward_sum"] / state[operator]["count"]
-                        + self._exploration
-                        * math.sqrt(math.log(total + 1.0) / state[operator]["count"]),
+                        random.betavariate(state[operator]["alpha"], state[operator]["beta"]),
                         -self._operators.index(operator),
                     ),
                 )
+            else:
+                untried = [operator for operator in candidates if state[operator]["count"] == 0]
+                if untried:
+                    chosen = untried[0]
+                else:
+                    total = max(1.0, sum(state[operator]["count"] for operator in candidates))
+                    chosen = max(
+                        candidates,
+                        key=lambda operator: (
+                            state[operator]["reward_sum"] / state[operator]["count"]
+                            + self._exploration
+                            * math.sqrt(math.log(total + 1.0) / state[operator]["count"]),
+                            -self._operators.index(operator),
+                        ),
+                    )
         return OperatorDecision(chosen, task, stage, self._algorithm)
 
     def update(
@@ -109,14 +112,15 @@ class OperatorPortfolio:
     ) -> None:
         if decision.algorithm != self._algorithm:
             raise ValueError("operator decision algorithm does not match portfolio")
-        state = self._ensure_context(decision.task, decision.stage)[decision.operator]
-        normalized = 0.5 + 0.5 * max(-1.0, min(1.0, float(relative_gain)))
-        if not passed:
-            normalized = 0.0
-        state["count"] += 1.0
-        state["reward_sum"] += normalized
-        state["alpha"] += normalized
-        state["beta"] += 1.0 - normalized
+        with self._lock:
+            state = self._ensure_context(decision.task, decision.stage)[decision.operator]
+            normalized = 0.5 + 0.5 * max(-1.0, min(1.0, float(relative_gain)))
+            if not passed:
+                normalized = 0.0
+            state["count"] += 1.0
+            state["reward_sum"] += normalized
+            state["alpha"] += normalized
+            state["beta"] += 1.0 - normalized
 
     def get_stats(self) -> dict[str, Any]:
         return {

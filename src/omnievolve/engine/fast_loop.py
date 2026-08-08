@@ -333,6 +333,7 @@ class FastLoopStep:
             model=director_model,
             generation_mode=(operator_decision.operator if operator_decision is not None else ""),
             prompt_version_id=e._load_champion_prompt("director"),  # noqa: SLF001
+            domain_hints=e._domain_hints_for(task_name),  # noqa: SLF001
         )
 
         # 步骤 4: Director

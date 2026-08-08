@@ -29,8 +29,9 @@ import random
 import signal
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from omnievolve.agents.coder import Coder
 from omnievolve.agents.context_builder import ContextBuilder
@@ -75,6 +76,9 @@ from omnievolve.storage.repositories.experiment_repo import ExperimentRepository
 from omnievolve.storage.repositories.prompt_repo import PromptVersionRepository
 from omnievolve.storage.vector_indexer import VectorIndexer
 from omnievolve.utils.token_counter import BudgetGuard, BudgetState
+
+if TYPE_CHECKING:
+    from omnievolve.engine.fast_loop import PreparedCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +373,9 @@ class EvolutionEngine:
 
         discover_plugins()
         logger.info("Engine initialized, plugins loaded")
+
+        # 领域插件提示收集器 (路线 2: 领域知识随 evolve 注入 Director)
+        self._domain_plugins: dict = {}
 
         # 向量 Outbox + Prompt 版本化
         self._vector_indexer = vector_indexer
@@ -731,15 +738,53 @@ class EvolutionEngine:
     # ------------------------------------------------------------------ #
 
     def _step_generation(self, generation: int, task_name: str) -> None:
-        """执行一代进化（Fast Loop 11 步 × population_size 个候选）."""
+        """执行一代进化（Fast Loop 11 步 × population_size 个候选）.
+
+        Phase 3 并发：prepare()（LLM + sandbox 评估，无引擎状态变更）在
+        population 内并行执行；commit_result()（MCTS expand / island assign /
+        best / router 更新）回到主线程串行合并，保证状态原子性。
+        """
+        assert self._fast_loop is not None
+        slots: list[tuple[int, str]] = []
         for i in range(self._config.population_size):
             if self._shutdown_requested or not self._budget_guard.can_proceed():
                 break
+            island_id = f"island_{i % self._config.island_count}"
+            slots.append((i, island_id))
+
+        prepared_list: list[tuple[int, PreparedCandidate | None]] = []
+        if slots:
+            with ThreadPoolExecutor(
+                max_workers=len(slots),
+                thread_name_prefix="evolve",
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        self._fast_loop.prepare,
+                        generation,
+                        task_name,
+                        island_id,
+                        slot=slot,
+                    ): slot
+                    for slot, island_id in slots
+                }
+                for future in as_completed(futures):
+                    slot = futures[future]
+                    try:
+                        prepared = future.result()
+                    except (EvolutionError, LLMError, SandboxError, StorageError):
+                        logger.exception("Evolution failed for candidate slot %d", slot)
+                        prepared = None
+                    prepared_list.append((slot, prepared))
+
+        # 串行 commit（保持 MCTS/island/best/router 状态原子）
+        for slot, prepared in sorted(prepared_list):
+            if prepared is None or self._shutdown_requested:
+                continue
             try:
-                island_id = f"island_{i % self._config.island_count}"
-                self._evolve_one(generation, task_name, island_id, slot=i)
+                self._fast_loop.commit_result(prepared)
             except (EvolutionError, LLMError, SandboxError, StorageError):
-                logger.exception("Evolution failed for candidate slot %d", i)
+                logger.exception("Commit failed for candidate slot %d", slot)
 
         # Stagnation is a generation-level signal, never a per-candidate pass flag.
         stagnation_updates = self._island_manager.finalize_generation(generation)
@@ -1191,8 +1236,13 @@ class EvolutionEngine:
         *,
         top_k: int = 3,
         random_k: int = 2,
+        reference_k: int = 1,
     ) -> list[dict]:
-        """ShinkaEvolve/AlphaEvolve inspiration programs（T1: 委托给 InspirationCollector）."""
+        """ShinkaEvolve/AlphaEvolve inspiration programs（T1: 委托给 InspirationCollector）.
+
+        reference_k: P0 跨分支引用回流 —— candidate_reference_edge 中被引用的
+        高分候选以完整代码注入生成（档 1 新增）。
+        """
         return self._inspiration.collect_inspiration(
             self._experiment_id,
             self._evaluator_version_id,
@@ -1200,6 +1250,7 @@ class EvolutionEngine:
             exclude_parent_ids,
             top_k=top_k,
             random_k=random_k,
+            reference_k=reference_k,
         )
 
     def _update_meta_scratchpad(self, thought: str, score: float) -> None:
@@ -1221,6 +1272,26 @@ class EvolutionEngine:
             self._meta_scratchpad = "Previously failed directions to avoid:\n" + "\n".join(
                 f"- {d}" for d in self._failed_directions
             )
+
+    def _domain_hints_for(self, task_name: str) -> list[str]:
+        """收集所有领域插件对该任务的提示 (路线 2: 领域知识注入 Director).
+
+        懒加载插件 (引擎已 discover_plugins); 每个提示只注入一次,
+        失败静默 (不阻塞进化主流程).
+        """
+        try:
+            from omnievolve.plugins.discovery import _REGISTERED_PLUGINS
+
+            hints: list[str] = []
+            for plugin in _REGISTERED_PLUGINS.values():
+                try:
+                    hints.extend(plugin.get_domain_hints(task_name or ""))
+                except Exception:
+                    logger.debug("Plugin domain hints failed", exc_info=True)
+            return hints[:6]
+        except Exception:
+            logger.debug("Domain hints collection failed", exc_info=True)
+            return []
 
     def _lookup_island(self, candidate_id: str) -> str | None:
         """查询候选所属岛屿."""

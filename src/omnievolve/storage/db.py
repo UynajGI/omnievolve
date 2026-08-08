@@ -12,12 +12,13 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 _CONNECTION_INIT_LOCK = threading.Lock()
+_NULL_CONTEXT = nullcontext()
 
 
 class Database:
@@ -42,6 +43,12 @@ class Database:
         self._local = threading.local()
         self._lock = threading.Lock()
         self._all_connections: list[sqlite3.Connection] = []
+        # 内存库（测试用）：SQLite 内存库每连接是独立空库，且跨连接表锁
+        # 不响应 busy_timeout。因此内存库使用**单连接 + RLock 串行化**：
+        # 所有线程共享同一连接（schema 可见），所有操作互斥（无锁竞争）。
+        self._memory = str(self._db_path) == ":memory:"
+        self._memory_lock = threading.RLock() if self._memory else None
+        self._memory_conn: sqlite3.Connection | None = None
 
         # 确保父目录存在
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +102,17 @@ class Database:
             return False
 
     def get_connection(self) -> sqlite3.Connection:
-        """获取当前线程的连接（惰性创建）."""
+        """获取当前线程的连接（惰性创建）.
+
+        内存库返回进程内共享的单连接（所有线程共用，配合 _memory_lock
+        串行化操作）。
+        """
+        if self._memory:
+            with self._lock:
+                if self._memory_conn is None:
+                    self._memory_conn = self._create_connection()
+                    self._all_connections.append(self._memory_conn)
+                return self._memory_conn
         if not hasattr(self._local, "conn") or self._local.conn is None:
             conn = self._create_connection()
             self._local.conn = conn
@@ -114,13 +131,15 @@ class Database:
                 conn.execute("INSERT ...")
         """
         conn = self.get_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
+        guard = self._memory_lock if self._memory_lock is not None else _NULL_CONTEXT
+        with guard:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def read_transaction(self) -> Generator[sqlite3.Connection, None, None]:
@@ -129,33 +148,51 @@ class Database:
         使用 BEGIN DEFERRED 允许并发读。
         """
         conn = self.get_connection()
-        conn.execute("BEGIN DEFERRED")
-        try:
-            yield conn
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
+        guard = self._memory_lock if self._memory_lock is not None else _NULL_CONTEXT
+        with guard:
+            conn.execute("BEGIN DEFERRED")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
         """执行单条 SQL（自动提交模式）."""
         conn = self.get_connection()
-        return conn.execute(sql, params)
+        guard = self._memory_lock if self._memory_lock is not None else _NULL_CONTEXT
+        with guard:
+            return conn.execute(sql, params)
 
     def executemany(self, sql: str, params_seq: list[tuple[Any, ...]]) -> sqlite3.Cursor:
         """批量执行 SQL."""
         conn = self.get_connection()
-        return conn.executemany(sql, params_seq)
+        guard = self._memory_lock if self._memory_lock is not None else _NULL_CONTEXT
+        with guard:
+            return conn.executemany(sql, params_seq)
 
     def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
         """查询单行."""
-        cursor = self.execute(sql, params)
-        return cursor.fetchone()
+        conn = self.get_connection()
+        guard = self._memory_lock if self._memory_lock is not None else _NULL_CONTEXT
+        with guard:
+            cursor = conn.execute(sql, params)
+            try:
+                return cursor.fetchone()
+            finally:
+                cursor.close()
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         """查询所有行."""
-        cursor = self.execute(sql, params)
-        return cursor.fetchall()
+        conn = self.get_connection()
+        guard = self._memory_lock if self._memory_lock is not None else _NULL_CONTEXT
+        with guard:
+            cursor = conn.execute(sql, params)
+            try:
+                return cursor.fetchall()
+            finally:
+                cursor.close()
 
     def checkpoint(self) -> None:
         """执行 WAL checkpoint，将 WAL 日志合并到主数据库文件.

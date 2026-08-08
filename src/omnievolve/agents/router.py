@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import math
 import random
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -68,12 +69,17 @@ class SlidingWindowUCB:
         # 按角色维护历史
         self._rewards: dict[str, dict[str, deque]] = {}  # role -> model -> rewards
         self._total_pulls: dict[str, int] = {}  # role -> total
+        self._lock = threading.Lock()
 
         for role in ["director", "coder", "critic", "meta"]:
             self._rewards[role] = {name: deque(maxlen=window_size) for name in self._slots}
 
     def select(self, ctx: RouteContext) -> str:
         """选择模型."""
+        with self._lock:
+            return self._select_locked(ctx)
+
+    def _select_locked(self, ctx: RouteContext) -> str:
         role_rewards = self._rewards[ctx.role]
         total = self._total_pulls.get(ctx.role, 0) + 1
 
@@ -119,8 +125,9 @@ class SlidingWindowUCB:
         if model not in self._rewards[role]:
             return
 
-        self._rewards[role][model].append(reward)
-        self._total_pulls[role] = self._total_pulls.get(role, 0) + 1
+        with self._lock:
+            self._rewards[role][model].append(reward)
+            self._total_pulls[role] = self._total_pulls.get(role, 0) + 1
 
 
 class DiscountedUCB:

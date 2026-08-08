@@ -6,6 +6,7 @@ S5-12: token/费用预算硬门
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -200,6 +201,7 @@ class BudgetGuard:
     def __init__(self, state: BudgetState) -> None:
         self._state = state
         self._counter = TokenCounter()
+        self._lock = threading.Lock()
 
     @property
     def state(self) -> BudgetState:
@@ -211,11 +213,12 @@ class BudgetGuard:
 
     def can_proceed(self, estimated_tokens: int = 0) -> bool:
         """检查是否可以继续."""
-        if self._state.is_exhausted:
-            return False
-        if self._state.remaining_tokens < estimated_tokens:
-            return False
-        return True
+        with self._lock:
+            if self._state.is_exhausted:
+                return False
+            if self._state.remaining_tokens < estimated_tokens:
+                return False
+            return True
 
     def consume(
         self,
@@ -228,58 +231,61 @@ class BudgetGuard:
         cost_known: bool | None = None,
     ) -> UsageRecord:
         """消耗预算."""
-        record = self._counter.record(
-            model,
-            input_tokens,
-            output_tokens,
-            compute_sec,
-            cost_usd=cost_usd,
-            cost_known=cost_known,
-        )
-
-        self._state.used_tokens += record.input_tokens + record.output_tokens
-        if record.cost_usd is not None:
-            self._state.used_cost_usd += record.cost_usd
-        if not record.cost_known:
-            self._state.cost_known = False
-        self._state.used_compute_sec += record.compute_sec
-
-        if self._state.is_exhausted:
-            logger.warning(
-                f"Budget exhausted: tokens={self._state.used_tokens}/{self._state.token_budget}, "
-                f"cost=${self._state.used_cost_usd:.2f}/${self._state.cost_budget_usd:.2f}, "
-                f"cost_known={self._state.cost_known}"
+        with self._lock:
+            record = self._counter.record(
+                model,
+                input_tokens,
+                output_tokens,
+                compute_sec,
+                cost_usd=cost_usd,
+                cost_known=cost_known,
             )
 
-        return record
+            self._state.used_tokens += record.input_tokens + record.output_tokens
+            if record.cost_usd is not None:
+                self._state.used_cost_usd += record.cost_usd
+            if not record.cost_known:
+                self._state.cost_known = False
+            self._state.used_compute_sec += record.compute_sec
+
+            if self._state.is_exhausted:
+                logger.warning(
+                    f"Budget exhausted: tokens={self._state.used_tokens}/{self._state.token_budget}, "
+                    f"cost=${self._state.used_cost_usd:.2f}/${self._state.cost_budget_usd:.2f}, "
+                    f"cost_known={self._state.cost_known}"
+                )
+
+            return record
 
     def check_budget(self) -> dict[str, Any]:
         """检查预算状态."""
-        return {
-            "token_budget": self._state.token_budget,
-            "token_used": self._state.used_tokens,
-            "token_remaining": self._state.remaining_tokens,
-            "token_ratio": self._state.token_ratio,
-            "cost_budget": self._state.cost_budget_usd,
-            "cost_used": (self._state.used_cost_usd if self._state.cost_known else None),
-            "known_cost_used": self._state.used_cost_usd,
-            "cost_known": self._state.cost_known,
-            "cost_remaining": self._state.remaining_cost,
-            "is_exhausted": self._state.is_exhausted,
-        }
+        with self._lock:
+            return {
+                "token_budget": self._state.token_budget,
+                "token_used": self._state.used_tokens,
+                "token_remaining": self._state.remaining_tokens,
+                "token_ratio": self._state.token_ratio,
+                "cost_budget": self._state.cost_budget_usd,
+                "cost_used": (self._state.used_cost_usd if self._state.cost_known else None),
+                "known_cost_used": self._state.used_cost_usd,
+                "cost_known": self._state.cost_known,
+                "cost_remaining": self._state.remaining_cost,
+                "is_exhausted": self._state.is_exhausted,
+            }
 
     def snapshot_state(self) -> dict[str, Any]:
         """Serialize hard-budget and aggregate usage state."""
-        return {
-            "token_budget": self._state.token_budget,
-            "cost_budget_usd": self._state.cost_budget_usd,
-            "compute_budget_sec": self._state.compute_budget_sec,
-            "used_tokens": self._state.used_tokens,
-            "used_cost_usd": self._state.used_cost_usd,
-            "cost_known": self._state.cost_known,
-            "used_compute_sec": self._state.used_compute_sec,
-            "counter": self._counter.get_stats(),
-        }
+        with self._lock:
+            return {
+                "token_budget": self._state.token_budget,
+                "cost_budget_usd": self._state.cost_budget_usd,
+                "compute_budget_sec": self._state.compute_budget_sec,
+                "used_tokens": self._state.used_tokens,
+                "used_cost_usd": self._state.used_cost_usd,
+                "cost_known": self._state.cost_known,
+                "used_compute_sec": self._state.used_compute_sec,
+                "counter": self._counter.get_stats(),
+            }
 
     def restore_state(self, state: dict[str, Any] | None) -> None:
         """Restore usage while rejecting incompatible budget ceilings."""

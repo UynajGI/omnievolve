@@ -10,6 +10,7 @@ TokenBucketRateLimiter: fixed-window refill token bucket.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -58,11 +59,16 @@ class CircuitBreaker:
         self._last_error: str | None = None
         self._total_failures = 0
         self._total_successes = 0
+        self._lock = threading.Lock()
 
     # ── state transitions ─────────────────────────────────────
 
     def on_success(self) -> None:
         """记录一次成功调用."""
+        with self._lock:
+            self._on_success_locked()
+
+    def _on_success_locked(self) -> None:
         if self._state == CircuitState.HALF_OPEN:
             self._half_open_count += 1
             if self._half_open_count >= self._half_open_max:
@@ -75,6 +81,10 @@ class CircuitBreaker:
 
     def on_failure(self, error: str = "") -> None:
         """记录一次失败调用."""
+        with self._lock:
+            self._on_failure_locked(error)
+
+    def _on_failure_locked(self, error: str) -> None:
         self._failure_count += 1
         self._total_failures += 1
         self._last_error = error
@@ -86,6 +96,10 @@ class CircuitBreaker:
 
     def can_execute(self) -> bool:
         """检查是否可以执行请求."""
+        with self._lock:
+            return self._can_execute_locked()
+
+    def _can_execute_locked(self) -> bool:
         if self._state == CircuitState.CLOSED:
             return True
         if self._state == CircuitState.OPEN:
@@ -159,6 +173,7 @@ class TokenBucketRateLimiter:
         self._tokens = capacity
         self._last_refill = time.time()
         self._total_waited = 0.0
+        self._lock = threading.Lock()
 
     def acquire(self, tokens: int = 1) -> float:
         """获取令牌（如果不足则等待）.
@@ -166,18 +181,19 @@ class TokenBucketRateLimiter:
         Returns:
             等待的秒数
         """
-        self._refill()
+        with self._lock:
+            self._refill()
 
-        if tokens <= self._tokens:
-            self._tokens -= tokens
-            return 0.0
+            if tokens <= self._tokens:
+                self._tokens -= tokens
+                return 0.0
 
-        # 令牌不足 → 等待到下一次补充
-        wait_time = self._refill_interval
-        time.sleep(wait_time)
-        self._tokens = self._capacity - tokens
-        self._total_waited += wait_time
-        return wait_time
+            # 令牌不足 → 等待到下一次补充
+            wait_time = self._refill_interval
+            time.sleep(wait_time)
+            self._tokens = self._capacity - tokens
+            self._total_waited += wait_time
+            return wait_time
 
     def _refill(self) -> None:
         now = time.time()
@@ -189,8 +205,9 @@ class TokenBucketRateLimiter:
 
     @property
     def available(self) -> int:
-        self._refill()
-        return self._tokens
+        with self._lock:
+            self._refill()
+            return self._tokens
 
     @property
     def stats(self) -> dict:
