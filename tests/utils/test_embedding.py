@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import threading
+
+import numpy as np
 import pytest
 
+import omnievolve.utils.embedding as emb_mod
 from omnievolve.utils.embedding import (
     Embedder,
     EmbeddingProfile,
@@ -204,3 +208,82 @@ class TestCreateEmbedder:
         # LiteLLMEmbedder falls back to fake on import error
         api = LiteLLMEmbedder(dimension=64)
         assert isinstance(api, Embedder)
+
+
+class TestModelCacheShared:
+    """模块级模型缓存：多实例/多线程只加载一次（并发 prepare 场景）."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        emb_mod._MODEL_CACHE.clear()
+        yield
+        emb_mod._MODEL_CACHE.clear()
+
+    @staticmethod
+    def _fake_loader_factory(calls: list[int]):
+        def fake_load(self):  # noqa: ANN001
+            calls.append(1)
+
+            class Fake:
+                def get_embedding_dimension(self):
+                    return 64
+
+                def encode(self, texts, **kwargs):  # noqa: ANN001
+                    return np.zeros((len(texts), 64))
+
+            return Fake()
+
+        return fake_load
+
+    def test_instances_share_model(self, monkeypatch):
+        """两个实例同 (model, device) 只加载一次."""
+        calls: list[int] = []
+        monkeypatch.setattr(
+            emb_mod.SentenceTransformerEmbedder,
+            "_load_from_huggingface",
+            self._fake_loader_factory(calls),
+        )
+        e1 = emb_mod.SentenceTransformerEmbedder(model="test-model")
+        e2 = emb_mod.SentenceTransformerEmbedder(model="test-model")
+        e1.embed(["a"])
+        e2.embed(["b"])
+        assert len(calls) == 1, f"模型应只加载一次, 实际 {len(calls)}"
+
+    def test_concurrent_first_load_single(self, monkeypatch):
+        """并发首次调用：锁保证只加载一次."""
+        calls: list[int] = []
+        monkeypatch.setattr(
+            emb_mod.SentenceTransformerEmbedder,
+            "_load_from_huggingface",
+            self._fake_loader_factory(calls),
+        )
+        barrier = threading.Barrier(4)
+        errors: list[Exception] = []
+
+        def worker() -> None:
+            e = emb_mod.SentenceTransformerEmbedder(model="test-model")
+            try:
+                barrier.wait(timeout=5)
+                e.embed(["x"])
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert not errors, f"并发 embed 失败: {errors}"
+        assert len(calls) == 1, f"并发下模型应只加载一次, 实际 {len(calls)}"
+
+    def test_different_device_separate_cache(self, monkeypatch):
+        """不同 device 各自独立缓存（不误共享）."""
+        calls: list[int] = []
+        monkeypatch.setattr(
+            emb_mod.SentenceTransformerEmbedder,
+            "_load_from_huggingface",
+            self._fake_loader_factory(calls),
+        )
+        emb_mod.SentenceTransformerEmbedder(model="m", device="cpu").embed(["a"])
+        emb_mod.SentenceTransformerEmbedder(model="m", device="cuda").embed(["b"])
+        assert len(calls) == 2

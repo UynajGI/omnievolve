@@ -8,10 +8,17 @@ S6-03: 实现 API/Local Embedder Adapter
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+# 模块级模型缓存：同一 (model, device) 只加载一次，进程内所有
+# SentenceTransformerEmbedder 实例共享底层模型（并发 prepare 下避免
+# 每个实例重新加载 Qwen3-Embedding-0.6B ~1min）。
+_MODEL_CACHE: dict[tuple[str, str], Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -149,47 +156,58 @@ class SentenceTransformerEmbedder:
         if self._model is not None:
             return
 
+        key = (self._model_name, self._device)
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.get(key)
+            if cached is not None:
+                self._model = cached
+                return
+            self._model = self._load_from_any_source()
+            _MODEL_CACHE[key] = self._model
+
+    def _load_from_any_source(self) -> Any:
+        """依次尝试 HF 官方 / hf-mirror / ModelScope 加载模型."""
         errors: list[str] = []
 
         # 1. HuggingFace 官方
         try:
-            self._model = self._load_from_huggingface()
-            assert self._model is not None
+            model = self._load_from_huggingface()
+            assert model is not None
             logger.info(
                 "Loaded local embedding model from HuggingFace: %s (dim=%d, device=%s)",
                 self._model_name,
-                self._model.get_embedding_dimension(),
+                model.get_embedding_dimension(),
                 self._device,
             )
-            return
+            return model
         except Exception as e:
             errors.append(f"HuggingFace: {e}")
 
         # 2. HF 镜像（hf-mirror.com）
         try:
-            self._model = self._load_from_hf_mirror()
-            assert self._model is not None
+            model = self._load_from_hf_mirror()
+            assert model is not None
             logger.info(
                 "Loaded local embedding model from HF mirror: %s (dim=%d, device=%s)",
                 self._model_name,
-                self._model.get_embedding_dimension(),
+                model.get_embedding_dimension(),
                 self._device,
             )
-            return
+            return model
         except Exception as e:
             errors.append(f"HF mirror: {e}")
 
         # 3. ModelScope（魔塔）
         try:
-            self._model = self._load_from_modelscope()
-            assert self._model is not None
+            model = self._load_from_modelscope()
+            assert model is not None
             logger.info(
                 "Loaded local embedding model from ModelScope: %s (dim=%d, device=%s)",
                 self._model_name,
-                self._model.get_embedding_dimension(),
+                model.get_embedding_dimension(),
                 self._device,
             )
-            return
+            return model
         except Exception as e:
             errors.append(f"ModelScope: {e}")
 
