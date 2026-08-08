@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from omnievolve.storage.artifact_store import ArtifactStore
@@ -137,12 +137,29 @@ class InspirationCollector:
         *,
         top_k: int = 3,
         random_k: int = 2,
+        reference_k: int = 1,
     ) -> list[dict]:
-        """ShinkaEvolve/AlphaEvolve inspiration programs."""
-        inspirations: list[dict] = []
-        exclude = set(exclude_parent_ids)
+        """ShinkaEvolve/AlphaEvolve inspiration programs + P0 cross-branch references.
 
-        # Top-K 高分候选 — 批量加载
+        三个来源（全部注入**完整代码**，context_builder 按 token 预算截断）：
+        - top_k: 全局高分候选
+        - random_k: 随机已评估候选（探索）
+        - reference_k: candidate_reference_edge 中得分最高的被引用候选 ——
+          P0 跨分支引用真正回流到生成（此前只记录不查询）。
+        所有来源按 candidate_id 统一去重。
+        """
+        inspirations: list[dict] = []
+        seen: set[str] = set(exclude_parent_ids)
+
+        def _append(cand_id: str, score: float, code: str, source: str) -> None:
+            if not code or cand_id in seen:
+                return
+            seen.add(cand_id)
+            inspirations.append(
+                {"candidate_id": cand_id, "score": score, "code": code, "source": source}
+            )
+
+        # 1) Top-K 高分候选 — 批量加载（完整代码）
         try:
             bests = self._candidate_repo.get_best_candidates(
                 experiment_id,
@@ -150,25 +167,19 @@ class InspirationCollector:
                 environment_version_id,
                 limit=top_k * 2,
             )
-            top_candidates = [(cand, score) for cand, score in bests if cand.id not in exclude]
-            if top_candidates:
-                top_codes = self._batch_load_artifacts([c.artifact_hash for c, _ in top_candidates])
-                for (cand, score), code in zip(top_candidates, top_codes, strict=False):
-                    if code:
-                        inspirations.append(
-                            {
-                                "candidate_id": cand.id,
-                                "score": score,
-                                "code_preview": code[:500],
-                                "source": "top_k",
-                            }
-                        )
-                    if len([i for i in inspirations if i["source"] == "top_k"]) >= top_k:
-                        break
+            for cand, score in bests:
+                if len([i for i in inspirations if i["source"] == "top_k"]) >= top_k:
+                    break
+                try:
+                    code = self._artifact_store.load_text(cand.artifact_hash)
+                except Exception:
+                    logger.debug("Cannot load artifact %s", cand.artifact_hash)
+                    continue
+                _append(cand.id, float(score), code, "top_k")
         except Exception:
             logger.debug("Failed to collect top-K inspirations", exc_info=True)
 
-        # Random-K 已评估候选
+        # 2) Random-K 已评估候选（完整代码）
         try:
             rows = (
                 self._db.fetchall(
@@ -179,10 +190,12 @@ class InspirationCollector:
                 WHERE c.experiment_id = ? AND er.status = 'completed'
                   AND c.id NOT IN ({})
                 ORDER BY RANDOM() LIMIT ?
-                """.format(",".join(["?"] * len(exclude)) if exclude else "''"),
-                    (experiment_id, *exclude, random_k * 3),
+                """.format(
+                        ",".join(["?"] * len(exclude_parent_ids)) if exclude_parent_ids else "''"
+                    ),
+                    (experiment_id, *exclude_parent_ids, random_k * 3),
                 )
-                if exclude
+                if exclude_parent_ids
                 else self._db.fetchall(
                     """
                 SELECT c.id, c.artifact_hash, er.primary_score
@@ -194,27 +207,73 @@ class InspirationCollector:
                     (experiment_id, random_k * 3),
                 )
             )
-            count = 0
             for row in rows or []:
+                if len([i for i in inspirations if i["source"] == "random"]) >= random_k:
+                    break
                 try:
                     code = self._artifact_store.load_text(row["artifact_hash"])
-                    inspirations.append(
-                        {
-                            "candidate_id": row["id"],
-                            "score": row["primary_score"],
-                            "code_preview": code[:300],
-                            "source": "random",
-                        }
-                    )
-                    count += 1
-                    if count >= random_k:
-                        break
                 except Exception:
-                    logger.debug("Failed to collect random inspiration candidate", exc_info=True)
+                    logger.debug("Cannot load artifact %s", row["artifact_hash"])
+                    continue
+                _append(str(row["id"]), float(row["primary_score"] or 0.0), code, "random")
         except Exception:
             logger.debug("Failed to collect random inspirations", exc_info=True)
 
+        # 3) Reference-edge 高分候选（P0 跨分支回流）— 被引用且得分最高者
+        if reference_k > 0:
+            try:
+                exclude_sql = (
+                    ",".join(["?"] * len(exclude_parent_ids)) if exclude_parent_ids else "''"
+                )
+                params: tuple[Any, ...] = tuple(exclude_parent_ids)
+                ref_rows = self._db.fetchall(
+                    f"""
+                    SELECT e.src_candidate_id AS cid,
+                           MAX(er.primary_score) AS best_score,
+                           COUNT(*) AS ref_count
+                    FROM candidate_reference_edge e
+                    JOIN evaluation_run er
+                      ON er.candidate_id = e.src_candidate_id AND er.status = 'completed'
+                    WHERE e.src_candidate_id NOT IN ({exclude_sql})
+                    GROUP BY e.src_candidate_id
+                    ORDER BY best_score DESC, ref_count DESC
+                    LIMIT ?
+                    """,
+                    (*params, reference_k * 2),
+                )
+                for row in ref_rows or []:
+                    if (
+                        len([i for i in inspirations if i["source"] == "reference_edge"])
+                        >= reference_k
+                    ):
+                        break
+                    try:
+                        code = self._artifact_store.load_text(
+                            self._artifact_hash_for(str(row["cid"]))
+                        )
+                    except Exception:
+                        logger.debug("Cannot load reference-edge artifact %s", row["cid"])
+                        continue
+                    _append(
+                        str(row["cid"]),
+                        float(row["best_score"] or 0.0),
+                        code,
+                        "reference_edge",
+                    )
+            except Exception:
+                logger.debug("Failed to collect reference-edge inspirations", exc_info=True)
+
         return inspirations
+
+    def _artifact_hash_for(self, candidate_id: str) -> str:
+        """按 candidate_id 取 artifact_hash（reference-edge 查询用）."""
+        row = self._db.fetchone(
+            "SELECT artifact_hash FROM candidate WHERE id = ?",
+            (candidate_id,),
+        )
+        if row is None:
+            raise KeyError(f"candidate not found: {candidate_id}")
+        return str(row["artifact_hash"])
 
     def write_reference_edges(
         self,
@@ -247,13 +306,3 @@ class InspirationCollector:
                 )
             except Exception:
                 logger.warning("Failed to write reference edge (P0 cross-branch)", exc_info=True)
-
-    def _batch_load_artifacts(self, artifact_hashes: list[str]) -> list[str]:
-        """批量加载 artifact 内容."""
-        results: list[str] = []
-        for h in artifact_hashes:
-            try:
-                results.append(self._artifact_store.load_text(h))
-            except Exception:
-                results.append("")
-        return results
