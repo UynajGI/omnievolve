@@ -229,6 +229,16 @@ def _apply_llm_env_overrides(settings: OmniEvolveSettings) -> dict[str, Any]:
         # 1.1: 角色级输出预算（网关内钳制到全局上限）
         "role_max_tokens": settings.models.role_max_tokens,
         "fallback_endpoints": fallback_endpoints,
+        # 多 key 场景（fallback keys 已配置）轮换首选端点，均摊并发负载
+        "rotate_endpoints": bool(fallback_endpoints),
+        # deepseek 系推理模型禁用 thinking（长提示下 reasoning 占满输出预算
+        # 导致 content 为空被误判空响应）
+        "disable_thinking": os.environ.get("OMNIEVOLVE_LLM_DISABLE_THINKING") == "1",
+        # deepseek 系思考预算：>0 时保留思考但限制 reasoning token（防挤空
+        # content）；0 = 不限制（完全思考）。
+        "thinking_budget_tokens": int(
+            os.environ.get("OMNIEVOLVE_LLM_THINKING_BUDGET_TOKENS", "0") or "0"
+        ),
     }
 
 

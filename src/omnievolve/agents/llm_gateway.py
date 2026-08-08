@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -129,6 +130,9 @@ class LLMGateway:
         retry_backoff_base: float = 1.0,
         fallback_model: str | None = None,
         fallback_endpoints: list[LLMEndpoint] | None = None,
+        rotate_endpoints: bool = False,
+        disable_thinking: bool = False,
+        thinking_budget_tokens: int = 0,
         circuit_breaker: Any | None = None,
         rate_limiter: Any | None = None,
         budget_guard: Any | None = None,
@@ -145,6 +149,14 @@ class LLMGateway:
         self._retry_backoff_base = retry_backoff_base
         self._fallback_model = fallback_model
         self._fallback_endpoints = tuple(fallback_endpoints or ())
+        # 多 key 轮换 opt-in：仅显式配置（CLI 检测到 fallback keys）时启用，
+        # 默认保持 primary-first 顺序（既有 fallback 契约不变）。
+        self._rotate_endpoints = rotate_endpoints
+        # deepseek 系推理模型禁用 thinking（见 chat()）；避免空 content 误判。
+        self._disable_thinking = disable_thinking
+        # deepseek 系思考预算（token）：>0 时 thinking enabled + budget 限制，
+        # 保留思考且不让 reasoning 挤空 content（见 chat()）。
+        self._thinking_budget_tokens = thinking_budget_tokens
         # Avoid paying the same permanent provider/model failure on every role
         # call. These sets are process-local and intentionally never serialized.
         self._disabled_credentials: set[tuple[str | None, str | None]] = set()
@@ -152,6 +164,9 @@ class LLMGateway:
         self._total_tokens = 0
         self._total_cost = 0.0
         self._cost_known = True
+        self._stats_lock = threading.Lock()
+        # 多 key 轮换游标（见 chat() 端点轮换）
+        self._endpoint_rotation = 0
         # P1: 熔断器 + 限流
         self._circuit_breaker = circuit_breaker
         self._rate_limiter = rate_limiter
@@ -225,9 +240,21 @@ class LLMGateway:
             endpoints_to_try.append(
                 LLMEndpoint(self._fallback_model, self._api_key, self._api_base)
             )
+        # 只剔除与首选完全相同的端点（model+key+base 全同）；
+        # 同模型不同 key 的 fallback（多 key 并行）必须保留。
+        primary_identity = (model, self._api_key, self._api_base)
         endpoints_to_try.extend(
-            endpoint for endpoint in self._fallback_endpoints if endpoint.model != model
+            endpoint
+            for endpoint in self._fallback_endpoints
+            if (endpoint.model, endpoint.api_key, endpoint.api_base) != primary_identity
         )
+        # 多 key 轮换：交替作为首选端点，均摊并发调用负载（减少单 key 限流）；
+        # 失败时仍按顺序回退到其余端点（冗余保底）。
+        if self._rotate_endpoints and len(endpoints_to_try) > 1:
+            with self._stats_lock:
+                self._endpoint_rotation = (self._endpoint_rotation + 1) % len(endpoints_to_try)
+                rotation = self._endpoint_rotation
+            endpoints_to_try = endpoints_to_try[rotation:] + endpoints_to_try[:rotation]
 
         failed_credentials: set[tuple[str | None, str | None]] = set()
         for endpoint_index, endpoint in enumerate(endpoints_to_try):
@@ -251,6 +278,21 @@ class LLMGateway:
                         if remaining is None
                         else min(self._request_timeout, max(0.001, remaining))
                     )
+                    # deepseek 系推理模型：思考保留但限制预算
+                    # （thinking.budget_tokens）。无限制时 reasoning 会吃掉
+                    # 全部输出预算 → content 为空被误判空响应（实测 32k
+                    # max_tokens 下仍发生）；budget 4096 时 content 正常且更快。
+                    extra_body = None
+                    if "deepseek" in try_model.lower():
+                        if self._thinking_budget_tokens > 0:
+                            extra_body = {
+                                "thinking": {
+                                    "type": "enabled",
+                                    "budget_tokens": self._thinking_budget_tokens,
+                                }
+                            }
+                        elif self._disable_thinking:
+                            extra_body = {"thinking": {"type": "disabled"}}
                     response = litellm.completion(
                         model=provider_model,
                         messages=messages,
@@ -259,6 +301,7 @@ class LLMGateway:
                         api_key=endpoint.api_key,
                         api_base=endpoint.api_base,
                         timeout=request_timeout,
+                        extra_body=extra_body,
                         # OmniEvolve owns retries, backoff, fallback, deadlines,
                         # and attempt provenance. Hidden SDK retries would make
                         # one recorded attempt exceed its wall-clock budget.
@@ -311,11 +354,12 @@ class LLMGateway:
                         truncated=self._is_truncated(response),
                     )
 
-                    self._total_tokens += llm_response.total_tokens
-                    if llm_response.cost_usd is not None:
-                        self._total_cost += llm_response.cost_usd
-                    else:
-                        self._cost_known = False
+                    with self._stats_lock:
+                        self._total_tokens += llm_response.total_tokens
+                        if llm_response.cost_usd is not None:
+                            self._total_cost += llm_response.cost_usd
+                        else:
+                            self._cost_known = False
 
                     # 1.1: 传播 LLM token 消耗到 BudgetGuard
                     if self._budget_guard:
@@ -564,11 +608,12 @@ class LLMGateway:
                         else {},
                     )
 
-                    self._total_tokens += token_response.total_tokens
-                    if token_response.cost_usd is not None:
-                        self._total_cost += token_response.cost_usd
-                    else:
-                        self._cost_known = False
+                    with self._stats_lock:
+                        self._total_tokens += token_response.total_tokens
+                        if token_response.cost_usd is not None:
+                            self._total_cost += token_response.cost_usd
+                        else:
+                            self._cost_known = False
 
                     if self._budget_guard:
                         self._budget_guard.consume(
@@ -724,11 +769,12 @@ class LLMGateway:
             raw_response=response.model_dump() if hasattr(response, "model_dump") else {},
             truncated=True,
         )
-        self._total_tokens += llm_response.total_tokens
-        if llm_response.cost_usd is not None:
-            self._total_cost += llm_response.cost_usd
-        else:
-            self._cost_known = False
+        with self._stats_lock:
+            self._total_tokens += llm_response.total_tokens
+            if llm_response.cost_usd is not None:
+                self._total_cost += llm_response.cost_usd
+            else:
+                self._cost_known = False
         if self._budget_guard:
             self._budget_guard.consume(
                 model=model,
