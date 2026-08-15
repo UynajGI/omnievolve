@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-08-08 — 架构提速与跨分支参考（并行 fast-loop、多 key 轮换、embedding 缓存）
+
+### 新能力
+
+- **并行 population fast-loop**（`c681534`）：候选 prepare 阶段 ThreadPoolExecutor 并发（4→6 候选/代，单代墙钟不变，产出 +50%）；prepare/commit 拆分为两阶段，6 处线程安全补丁（CircuitBreaker/TokenBucketRateLimiter/BudgetGuard/OperatorPortfolio bandit/SlidingWindowUCB/gateway 计数）。
+- **多 key 端点轮换**（`a3be041`）：`rotate_endpoints` 按完整 `(model, key, base)` 身份去重轮换，规避单 key 余额/限流；thinking 预算可配、网关统计加锁。
+- **跨分支 reference-edge 回流**（`8a8db98`）：`collect_inspiration` 查询 edge 表高分被引用候选，将其完整代码注入 Director（High-Scoring Programs 段），实现跨搜索线结构借鉴。
+- **embedding 模块级缓存**（`7701478`）：同一 `(model, device)` 全进程共享 + 锁保护，消除每代 novelty 检查反复加载模型的开销（实测单代 8min → 2min）。
+- **SSWevolve 插件 v0.2.0**（`e0c3e1e`）：7 条领域提示 + 边级跨分支重组方法论（移植/替换/组合），DOMAIN_HINTS/RAG 自动注入 Director。
+
+### 修复
+
+- 评估器按声明的语义版本注册（`85b8556`），保证实验 traceability。
+
 ## 2026-08-01 — LLM-as-a-Verifier 概率验证层（PR 1-3，默认关闭）
 
 ### 新能力
